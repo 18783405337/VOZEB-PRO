@@ -17,6 +17,7 @@ description: VOZEB PRO 环境变量、模型渠道、服务器媒体与支付配
 | `VOZEB_PRO_DATABASE_POOL_MAX`              | 否               | 连接池上限，默认 10，低内存或托管数据库可设置 5                                       |
 | `VOZEB_PRO_DATABASE_SSL`                   | 否               | 本机/Docker 通常为 0，云 PostgreSQL 按要求使用 1                                      |
 | `VOZEB_PRO_ENCRYPTION_KEY`                 | 生产必填         | 64 位十六进制或精确 32 字节 Base64 密钥，部署后必须保持稳定                           |
+| `VOZEB_PRO_INSTALL_TOKEN`                  | 首次安装必填     | 至少 32 个字符；只用于初始化数据库和创建首个管理员，安装完成后可移除                  |
 | `VOZEB_PRO_INTERNAL_ORIGIN`                | 推荐             | 服务端回调自身 API，Docker 默认 `http://127.0.0.1:3000`                               |
 | `VOZEB_PRO_DATA_DIR`                       | 否               | 服务器媒体和文件模式数据目录                                                          |
 | `VOZEB_PRO_COOKIE_SECURE`                  | 否               | 留空自动判断；特殊代理可强制 `true/false`                                             |
@@ -56,7 +57,7 @@ POSTGRES_USER=vozeb_pro
 POSTGRES_PASSWORD=replace-with-a-strong-database-password
 ```
 
-安装页不会保存数据库密码。GET 状态检查只执行连接与表存在性查询；只有点击“初始化表结构”才会创建 `vozeb_pro_` 前缀表。加密密钥无效时初始化和首个管理员注册都会被阻止。
+安装页不会保存数据库密码或一次性安装令牌。GET 状态检查只执行连接与表存在性查询；只有提交与服务器 `VOZEB_PRO_INSTALL_TOKEN` 一致的令牌并点击“初始化表结构”才会创建 `vozeb_pro_` 前缀表。创建首个管理员必须再次提交同一令牌，普通公开注册永远只创建普通用户。安装完成后可从 App 环境变量移除该令牌，不影响站点继续运行。
 
 使用宝塔宿主机 PostgreSQL 时，应用通过 `docker-compose.baota.yml` 的 host 网络连接 `127.0.0.1:5432`；不要同时启动默认 Compose 中的 PostgreSQL 服务。
 
@@ -133,7 +134,7 @@ cd web
 npm run worker:generation
 ```
 
-Worker 与主应用必须使用同一个至少 32 字符的 `VOZEB_PRO_MAINTENANCE_TOKEN`。独立部署 Worker 时再设置 `VOZEB_PRO_WORKER_API_ORIGIN`；同一实例的 Worker ID 应保持稳定，便于就绪检查和故障诊断。`/api/health/ready` 会把缺少维护令牌、从未收到心跳或心跳过期报告为生成 Worker 未就绪。
+Worker 与主应用必须使用同一个至少 32 字符的 `VOZEB_PRO_MAINTENANCE_TOKEN`。独立部署 Worker 时再设置 `VOZEB_PRO_WORKER_API_ORIGIN`；Worker 不应读取 App 的完整 `.env`，也不得获得 `VOZEB_PRO_INSTALL_TOKEN`、数据库、支付、模型或存储密钥。同一实例的 Worker ID 应保持稳定，便于就绪检查和故障诊断。`/api/health/ready` 会把缺少维护令牌、从未收到心跳或心跳过期报告为生成 Worker 未就绪。
 
 上游支持回调时，可设置 `VOZEB_PRO_GENERATION_WEBHOOK_SECRET` 并让上游调用 `/api/generation-webhooks/{channelId}`。回调原始 JSON 使用该密钥做 HMAC-SHA256 签名；事件 ID 与上游任务 ID 必须稳定。回调只推进已有图片、视频或音频任务，不能代替任务创建；未匹配事件会保留用于对账。该幂等处理要求 PostgreSQL。
 

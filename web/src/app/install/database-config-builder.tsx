@@ -15,11 +15,12 @@ export function DatabaseConfigBuilder() {
     const [password, setPassword] = useState("");
     const [ssl, setSsl] = useState(false);
     const [encryptionKey, setEncryptionKey] = useState("");
+    const [installToken, setInstallToken] = useState("");
     const [maintenanceToken, setMaintenanceToken] = useState("");
     const [copiedKey, setCopiedKey] = useState("");
     const [activeSnippet, setActiveSnippet] = useState<SnippetKey>("env");
     const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const configurationReady = Boolean(password && encryptionKey && maintenanceToken);
+    const configurationReady = Boolean(password && encryptionKey && installToken && maintenanceToken);
     const snippets = useMemo(
         () =>
             buildDeploymentSnippets({
@@ -31,9 +32,10 @@ export function DatabaseConfigBuilder() {
                 password,
                 ssl,
                 encryptionKey,
+                installToken,
                 maintenanceToken,
             }),
-        [database, encryptionKey, host, maintenanceToken, mode, password, port, ssl, username],
+        [database, encryptionKey, host, installToken, maintenanceToken, mode, password, port, ssl, username],
     );
     const snippetOptions: SnippetOption[] = [
         { key: "env", label: "环境变量", title: mode === "local" ? "web/.env.local" : "项目根目录 .env", description: "数据库、加密密钥与 App/Worker 共享令牌", icon: FileCode2, text: snippets.envText },
@@ -46,6 +48,7 @@ export function DatabaseConfigBuilder() {
 
     useEffect(() => {
         setEncryptionKey(generateDeploymentSecret());
+        setInstallToken(generateDeploymentSecret());
         setMaintenanceToken(generateDeploymentSecret());
         return () => {
             if (timerRef.current) clearTimeout(timerRef.current);
@@ -130,6 +133,21 @@ export function DatabaseConfigBuilder() {
                         </span>
                     </label>
                     <label className="block space-y-1.5 sm:col-span-2">
+                        <span className="text-xs font-medium text-slate-500">Install Token</span>
+                        <span className="flex gap-2">
+                            <input className="h-11 min-w-0 flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 font-mono text-xs text-slate-700 outline-none" value={installToken} readOnly aria-label="一次性安装令牌" />
+                            <button
+                                type="button"
+                                onClick={() => setInstallToken(generateDeploymentSecret())}
+                                className="inline-flex size-11 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-950"
+                                title="重新生成安装令牌"
+                                aria-label="重新生成安装令牌"
+                            >
+                                <RefreshCw className="size-4" />
+                            </button>
+                        </span>
+                    </label>
+                    <label className="block space-y-1.5 sm:col-span-2">
                         <span className="text-xs font-medium text-slate-500">Maintenance Token</span>
                         <span className="flex gap-2">
                             <input className="h-11 min-w-0 flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 font-mono text-xs text-slate-700 outline-none" value={maintenanceToken} readOnly aria-label="App 与 Worker 共享维护令牌" />
@@ -158,6 +176,7 @@ export function DatabaseConfigBuilder() {
                     <FieldNote title="Database / User" text="建议使用独立库和独立账号，避免和同一 PostgreSQL 内其他项目混用。" />
                     <FieldNote title="Password" text="安装页只生成配置文本，不会把数据库密码保存到浏览器或服务端。" />
                     <FieldNote title="Encryption Key" text="随机生成 32 字节密钥；部署后必须保持不变，否则已保存密钥无法解密。" />
+                    <FieldNote title="Install Token" text="只用于初始化数据库和创建首个管理员；安装完成后可从服务器环境变量中移除。" />
                     <FieldNote title="Maintenance Token" text="App 与生成 Worker 使用同一个 32 字节令牌；复制配置时会一并带上。" />
                 </div>
 

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
     provider: "postgres" as "file" | "postgres",
@@ -31,6 +31,7 @@ import { getInstallStatus, initializeInstallDatabase, invalidateInstallStatusCac
 
 describe("install status cache", () => {
     beforeEach(() => {
+        vi.stubEnv("VOZEB_PRO_INSTALL_TOKEN", "install-token-".padEnd(48, "x"));
         invalidateInstallStatusCache();
         mocks.provider = "postgres";
         mocks.connectionString = "postgres://vozeb:test@localhost:5432/vozeb";
@@ -39,6 +40,10 @@ describe("install status cache", () => {
         mocks.postgresQuery.mockReset();
         mocks.getPublicUserSummary.mockReset();
         mocks.encryption = { ready: true, message: "加密密钥已就绪。" };
+    });
+
+    afterEach(() => {
+        vi.unstubAllEnvs();
     });
 
     it("reuses a completed healthy installation check", async () => {
@@ -84,10 +89,41 @@ describe("install status cache", () => {
     it("runs schema DDL only through the explicit initializer", async () => {
         mockHealthySchema(["0"]);
 
-        await expect(initializeInstallDatabase()).resolves.toMatchObject({ firstAdminRequired: true, database: { schemaReady: true } });
+        await expect(initializeInstallDatabase(process.env.VOZEB_PRO_INSTALL_TOKEN)).resolves.toMatchObject({ firstAdminRequired: true, database: { schemaReady: true } });
 
         expect(mocks.initializePostgresSchema).toHaveBeenCalledTimes(1);
         expect(mocks.ensurePostgresSchema).not.toHaveBeenCalled();
+    });
+
+    it("allows an empty database to be initialized", async () => {
+        let schemaReady = false;
+        mocks.initializePostgresSchema.mockImplementation(async () => {
+            schemaReady = true;
+        });
+        mocks.postgresQuery.mockImplementation(async (statement: string) => {
+            if (statement === "SELECT 1") return { rows: [{ connected: 1 }] };
+            if (statement.includes("to_regclass")) return { rows: [{ table_name: schemaReady ? "users" : null }] };
+            return { rows: [{ total: "0" }] };
+        });
+
+        await expect(initializeInstallDatabase(process.env.VOZEB_PRO_INSTALL_TOKEN)).resolves.toMatchObject({ firstAdminRequired: true, database: { schemaReady: true } });
+        expect(mocks.initializePostgresSchema).toHaveBeenCalledTimes(1);
+    });
+
+    it("rejects repeated initialization after the first user exists", async () => {
+        mockHealthySchema(["1"]);
+
+        await expect(initializeInstallDatabase(process.env.VOZEB_PRO_INSTALL_TOKEN)).rejects.toMatchObject({ status: 409 });
+        expect(mocks.initializePostgresSchema).not.toHaveBeenCalled();
+    });
+
+    it("rejects a missing or incorrect install token before schema DDL", async () => {
+        mockHealthySchema(["0", "0"]);
+
+        await expect(initializeInstallDatabase(undefined)).rejects.toMatchObject({ status: 403 });
+        invalidateInstallStatusCache();
+        await expect(initializeInstallDatabase("wrong-token".padEnd(48, "x"))).rejects.toMatchObject({ status: 403 });
+        expect(mocks.initializePostgresSchema).not.toHaveBeenCalled();
     });
 });
 

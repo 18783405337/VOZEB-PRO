@@ -15,19 +15,17 @@ export default async function RegisterPage({ searchParams }: RegisterPageProps) 
     const referralCode = firstValue(params.ref)?.trim().toUpperCase() || "";
     const inviteError = firstValue(params.invite) === "invalid" ? "邀请链接无效或已停用，你仍可清空邀请码后正常注册。" : undefined;
     const install = await getInstallStatus();
-    if (!install.database.healthy) redirect("/install");
+    if (!install.ready) redirect("/install");
 
     const [user, settings] = await Promise.all([getCurrentUser(), getAuthSettings()]);
     if (user) redirect(nextPath);
 
-    const firstUser = install.userCount === 0;
     return (
         <AuthForm
             mode="register"
             nextPath={nextPath}
-            registrationEnabled={settings.registrationEnabled || firstUser}
-            emailRegistrationEnabled={!firstUser && settings.emailRegistrationEnabled}
-            firstUser={firstUser}
+            registrationEnabled={settings.registrationEnabled}
+            emailRegistrationEnabled={settings.emailRegistrationEnabled}
             initialReferralCode={referralCode}
             referralSource={referralCode ? "invite-link" : "registration-form"}
             inviteError={inviteError}

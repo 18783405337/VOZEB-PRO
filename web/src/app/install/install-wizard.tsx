@@ -26,10 +26,11 @@ const steps = [
 export function InstallWizard({ install }: { install: InstallStatus }) {
     const [activeStep, setActiveStep] = useState<InstallStepId>("intro");
     const [currentInstall, setCurrentInstall] = useState(install);
+    const [installToken, setInstallToken] = useState("");
     const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: "VOZEB PRO", logoUrl: "/logo.svg" };
     const databaseReady = currentInstall.database.healthy && currentInstall.database.schemaReady;
     const schemaPending = currentInstall.database.healthy && !currentInstall.database.schemaReady;
-    const runtimeReady = databaseReady && currentInstall.security.encryptionReady;
+    const runtimeReady = databaseReady && currentInstall.security.encryptionReady && currentInstall.security.installTokenReady;
     const status = useMemo(() => installStatusView(currentInstall), [currentInstall]);
 
     useEffect(() => {
@@ -89,7 +90,7 @@ export function InstallWizard({ install }: { install: InstallStatus }) {
                     <div className="mt-4 rounded-lg border border-slate-200/80 bg-white/70 p-4">
                         <div className="grid grid-cols-3 gap-3">
                             <StatusMetric label="数据库" value={databaseReady ? "已初始化" : schemaPending ? "待初始化" : currentInstall.database.configured ? "连接失败" : "未配置"} />
-                            <StatusMetric label="加密" value={currentInstall.security.encryptionReady ? "已就绪" : "未就绪"} />
+                            <StatusMetric label="安装令牌" value={currentInstall.security.installTokenReady ? "已就绪" : "未配置"} />
                             <StatusMetric label="用户" value={currentInstall.userCount ? `${currentInstall.userCount} 个` : "未创建"} />
                         </div>
                         <p className="mt-3 text-xs leading-5 text-slate-500">{currentInstall.database.message}</p>
@@ -98,8 +99,18 @@ export function InstallWizard({ install }: { install: InstallStatus }) {
 
                 <div className="min-w-0 bg-white/50">
                     {activeStep === "intro" ? <IntroStep onNext={() => setActiveStep("database")} /> : null}
-                    {activeStep === "database" ? <DatabaseStep install={currentInstall} runtimeReady={runtimeReady} onInstallChange={setCurrentInstall} onPrev={() => setActiveStep("intro")} onNext={() => setActiveStep("admin")} /> : null}
-                    {activeStep === "admin" ? <AdminStep install={currentInstall} runtimeReady={runtimeReady} onPrev={() => setActiveStep("database")} /> : null}
+                    {activeStep === "database" ? (
+                        <DatabaseStep
+                            install={currentInstall}
+                            installToken={installToken}
+                            onInstallTokenChange={setInstallToken}
+                            runtimeReady={runtimeReady}
+                            onInstallChange={setCurrentInstall}
+                            onPrev={() => setActiveStep("intro")}
+                            onNext={() => setActiveStep("admin")}
+                        />
+                    ) : null}
+                    {activeStep === "admin" ? <AdminStep install={currentInstall} installToken={installToken} onInstallTokenChange={setInstallToken} runtimeReady={runtimeReady} onPrev={() => setActiveStep("database")} /> : null}
                 </div>
             </section>
         </div>
@@ -128,17 +139,33 @@ function IntroStep({ onNext }: { onNext: () => void }) {
     );
 }
 
-function DatabaseStep({ install, runtimeReady, onInstallChange, onPrev, onNext }: { install: InstallStatus; runtimeReady: boolean; onInstallChange: (install: InstallStatus) => void; onPrev: () => void; onNext: () => void }) {
+function DatabaseStep({
+    install,
+    installToken,
+    onInstallTokenChange,
+    runtimeReady,
+    onInstallChange,
+    onPrev,
+    onNext,
+}: {
+    install: InstallStatus;
+    installToken: string;
+    onInstallTokenChange: (value: string) => void;
+    runtimeReady: boolean;
+    onInstallChange: (install: InstallStatus) => void;
+    onPrev: () => void;
+    onNext: () => void;
+}) {
     const [initializing, setInitializing] = useState(false);
     const [initializeError, setInitializeError] = useState("");
-    const canInitialize = install.database.configured && install.database.healthy && !install.database.schemaReady && install.security.encryptionReady;
+    const canInitialize = install.database.configured && install.database.healthy && !install.database.schemaReady && install.security.encryptionReady && install.security.installTokenReady && installToken.trim().length >= 32;
     const schemaPending = install.database.healthy && !install.database.schemaReady;
 
     const initializeDatabase = async () => {
         setInitializing(true);
         setInitializeError("");
         try {
-            const response = await fetch("/api/install/initialize", { method: "POST" });
+            const response = await fetch("/api/install/initialize", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ installToken: installToken.trim() }) });
             const payload = (await response.json().catch(() => ({}))) as { data?: { install?: InstallStatus }; msg?: string };
             if (!response.ok || !payload.data?.install) throw new Error(payload.msg || "数据库初始化失败");
             onInstallChange(payload.data.install);
@@ -174,6 +201,23 @@ function DatabaseStep({ install, runtimeReady, onInstallChange, onPrev, onNext }
                         敏感配置加密
                     </div>
                     <p className="mt-2 text-xs leading-5">{install.security.message}</p>
+                </div>
+
+                <div className={`mt-3 rounded-lg border p-4 text-sm ${install.security.installTokenReady ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-rose-200 bg-rose-50 text-rose-900"}`}>
+                    <div className="flex items-center gap-2 font-semibold">
+                        <ShieldCheck className="size-4" />
+                        一次性安装令牌
+                    </div>
+                    <p className="mt-2 text-xs leading-5">{install.security.installTokenMessage}</p>
+                    <input
+                        className="mt-3 h-10 w-full rounded-lg border border-current/20 bg-white px-3 font-mono text-xs text-slate-950 outline-none placeholder:text-slate-400"
+                        type="password"
+                        value={installToken}
+                        onChange={(event) => onInstallTokenChange(event.target.value)}
+                        placeholder="从服务器 .env 粘贴安装令牌"
+                        autoComplete="off"
+                        aria-label="提交一次性安装令牌"
+                    />
                 </div>
 
                 <div className="mt-5 border-l-2 border-slate-300 pl-4">
@@ -212,7 +256,7 @@ function DatabaseStep({ install, runtimeReady, onInstallChange, onPrev, onNext }
     );
 }
 
-function AdminStep({ install, runtimeReady, onPrev }: { install: InstallStatus; runtimeReady: boolean; onPrev: () => void }) {
+function AdminStep({ install, installToken, onInstallTokenChange, runtimeReady, onPrev }: { install: InstallStatus; installToken: string; onInstallTokenChange: (value: string) => void; runtimeReady: boolean; onPrev: () => void }) {
     if (!runtimeReady) {
         return (
             <section className="p-5 sm:p-8">
@@ -240,15 +284,25 @@ function AdminStep({ install, runtimeReady, onPrev }: { install: InstallStatus; 
     return (
         <section className="grid gap-0 xl:grid-cols-[minmax(0,1fr)_300px]">
             <div className="min-w-0 bg-white/40">
-                <AuthForm mode="register" nextPath="/admin" registrationEnabled emailRegistrationEnabled={false} firstUser variant="embedded" className="!border-0 !bg-transparent !shadow-none" />
+                <AuthForm
+                    mode="register"
+                    nextPath="/admin"
+                    registrationEnabled
+                    emailRegistrationEnabled={false}
+                    firstUser
+                    installToken={installToken}
+                    onInstallTokenChange={onInstallTokenChange}
+                    variant="embedded"
+                    className="!border-0 !bg-transparent !shadow-none"
+                />
             </div>
             <aside className="border-t border-slate-200/70 bg-slate-50/70 p-5 xl:border-l xl:border-t-0">
                 <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-emerald-900 shadow-sm">
                     <div className="flex items-center gap-2 text-sm font-semibold">
                         <ShieldCheck className="size-4" />
-                        首个账号自动成为管理员
+                        首个管理员需要安装令牌
                     </div>
-                    <p className="mt-2 text-xs leading-5">创建成功后会直接进入后台。后续普通用户注册会按后台注册策略控制。</p>
+                    <p className="mt-2 text-xs leading-5">只有安装向导可创建首个管理员。后续公开注册始终创建普通用户，并按后台注册策略控制。</p>
                 </div>
                 <button type="button" onClick={onPrev} className={`mt-5 ${ghostButtonClass}`}>
                     <ArrowLeft className="size-4" />

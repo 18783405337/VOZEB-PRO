@@ -17,6 +17,7 @@ export const docsComposeProfiles = [
 ];
 
 const maintenanceToken = "${VOZEB_PRO_MAINTENANCE_TOKEN:?请在 .env 中配置至少 32 位维护令牌}";
+const installToken = "${VOZEB_PRO_INSTALL_TOKEN:?请在 .env 中配置至少 32 位一次性安装令牌}";
 
 export function validateComposeContracts({ repoRoot }) {
     return composeProfiles.map((profile) => {
@@ -74,7 +75,9 @@ export function validateComposeContract(source, profile) {
     ensure(sameImage(app.image, worker.image), "app 与 generation-worker 必须使用同一镜像");
     ensure(JSON.stringify(worker.command) === JSON.stringify(["node", "/app/web/scripts/generation-worker.mjs"]), "Worker 启动命令不正确");
     ensure(app.env_file?.includes(".env"), "app 必须读取 .env");
-    ensure(worker.env_file?.includes(".env"), "generation-worker 必须读取 .env");
+    ensure(!worker.env_file, "generation-worker 不得读取包含安装令牌和业务密钥的 .env");
+    ensure(appEnvironment.VOZEB_PRO_INSTALL_TOKEN === installToken, "app 未声明强制一次性安装令牌");
+    ensure(!("VOZEB_PRO_INSTALL_TOKEN" in workerEnvironment), "generation-worker 不得获得一次性安装令牌");
     ensure(appEnvironment.VOZEB_PRO_MAINTENANCE_TOKEN === maintenanceToken, "app 未声明强制维护令牌");
     ensure(workerEnvironment.VOZEB_PRO_MAINTENANCE_TOKEN === maintenanceToken, "generation-worker 未声明同一强制维护令牌");
     ensure(workerEnvironment.VOZEB_PRO_WORKER_API_ORIGIN === profile.workerOrigin, `Worker API 地址必须为 ${profile.workerOrigin}`);

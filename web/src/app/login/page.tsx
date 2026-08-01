@@ -13,7 +13,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
     const nextPath = safeNextPath(firstValue(params.next));
     const authError = authErrorMessage(firstValue(params.error));
     const install = await getInstallStatus();
-    if (!install.database.healthy || install.firstAdminRequired) redirect("/install");
+    if (!install.ready) redirect("/install");
 
     const user = await getCurrentUser();
     if (user) redirect(nextPath);

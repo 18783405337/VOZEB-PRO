@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const memory = vi.hoisted(() => ({ value: undefined as unknown }));
 
@@ -16,15 +16,24 @@ vi.mock("@/lib/server/data-adapter", () => ({
     }),
 }));
 
-import { consumeUserPoints, createUser, listPublicUsers, refundUserPoints, setAuthSettings, updateUserByAdmin } from "./store";
+import { consumeUserPoints, createFirstAdmin, createUser, listPublicUsers, refundUserPoints, setAuthSettings, updateUserByAdmin } from "./store";
+
+const INSTALL_TOKEN = "install-token-".padEnd(48, "x");
 
 describe("normalizePointAmount allows negative values", () => {
     beforeEach(() => {
         memory.value = undefined;
+        vi.stubEnv("VOZEB_PRO_INSTALL_TOKEN", INSTALL_TOKEN);
     });
 
+    afterEach(() => {
+        vi.unstubAllEnvs();
+    });
+
+    const createAdmin = () => createFirstAdmin({ username: "admin", password: "password123", installToken: INSTALL_TOKEN });
+
     it("creates new users without permanent signup points", async () => {
-        await createUser({ username: "admin", password: "password123" });
+        await createAdmin();
         const user = await createUser({ username: "new-user", password: "password123" });
 
         expect(user.permanentPointsBalance).toBe(0);
@@ -32,7 +41,7 @@ describe("normalizePointAmount allows negative values", () => {
     });
 
     it("persists a negative balance set by admin", async () => {
-        const admin = await createUser({ username: "admin", password: "password123" });
+        const admin = await createAdmin();
         const user = await createUser({ username: "tester", password: "password123" });
 
         await updateUserByAdmin(admin.id, user.id, { pointsBalance: -50 });
@@ -43,14 +52,14 @@ describe("normalizePointAmount allows negative values", () => {
     });
 
     it("rejects refunds without an original consumption record", async () => {
-        await createUser({ username: "admin", password: "password123" });
+        await createAdmin();
         const user = await createUser({ username: "tester", password: "password123" });
 
         await expect(refundUserPoints(user.id, "test-model", 10, "api", 1)).rejects.toThrow("退款缺少原消费流水");
     });
 
     it("keeps a manually adjusted balance at 0", async () => {
-        const admin = await createUser({ username: "admin", password: "password123" });
+        const admin = await createAdmin();
         const user = await createUser({ username: "tester", password: "password123" });
 
         await updateUserByAdmin(admin.id, user.id, { pointsBalance: 0 });
@@ -60,7 +69,7 @@ describe("normalizePointAmount allows negative values", () => {
     });
 
     it("correctly adds refund to zero balance", async () => {
-        const admin = await createUser({ username: "admin", password: "password123" });
+        const admin = await createAdmin();
         const user = await createUser({ username: "tester", password: "password123" });
 
         await updateUserByAdmin(admin.id, user.id, { pointsBalance: 50 });
@@ -72,7 +81,7 @@ describe("normalizePointAmount allows negative values", () => {
     });
 
     it("charges a logical text model using its configured upstream alias price", async () => {
-        const admin = await createUser({ username: "admin", password: "password123" });
+        const admin = await createAdmin();
         const user = await createUser({ username: "tester", password: "password123" });
         await updateUserByAdmin(admin.id, user.id, { pointsBalance: 10 });
         await setAuthSettings({
@@ -87,7 +96,7 @@ describe("normalizePointAmount allows negative values", () => {
     });
 
     it("allows a text model configured with zero points", async () => {
-        await createUser({ username: "admin", password: "password123" });
+        await createAdmin();
         const user = await createUser({ username: "tester", password: "password123" });
         await setAuthSettings({ modelPointCosts: { "free-text": 0 } });
 

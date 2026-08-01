@@ -222,6 +222,8 @@ description: VOZEB PRO 当前版本需要人工或真实环境确认的事项
 
 ## 安全与并发加固
 
+- 公共媒体代理与系统渠道 `_media` 不再信任上游 `Content-Type`，会按文件字节识别真实图片、视频或音频；HTML、JavaScript、SVG、未知二进制和超限内容会在响应前拒绝，`application/octet-stream` 中的真实媒体仍可使用。GET、HEAD 和非零 Range 共用 30 秒下载、300MB 总量与 32MB 分段保护，失败会取消上游流并释放并发许可。41 项媒体代理定向测试已通过；仍需用真实大视频、私有对象存储和会返回错误 MIME 的正式渠道复核拖动播放、Range、超时与连接释放。
+- 首次数据库初始化和首个管理员创建现在必须提交与服务器 `VOZEB_PRO_INSTALL_TOKEN` 一致的一次性令牌；普通 `createUser` 在空库会拒绝，安装完成后的公开注册始终创建普通用户，并发首管理员请求只能成功一个。安装页会生成令牌并写入可复制配置，公开状态只返回是否就绪；App Compose 与 Render Web 持有令牌，生成 Worker 不再读取完整 `.env` 且不会获得令牌。52 项安装、认证、Compose 与 Render 定向测试及 TypeScript 检查已通过；仍需在干净 Docker、宝塔、外部 PostgreSQL 和 Render 实例完成真实初始化、错误令牌、并发请求、安装后移除令牌与重启验收。
 - 系统 AI 代理普通请求体限制为 4MB、multipart 限制为 25MB，支付回调限制为 256KB；同时检查 `Content-Length` 并对无长度流式请求累计字节，超限返回 413。
 - 文本、图片、视频、音频、Agent 和短剧整集合成的并发检查与任务创建已进入用户+任务类型原子锁；PostgreSQL 使用事务 advisory lock，文件 Provider 使用进程内串行队列。仍需在多实例 PostgreSQL 环境执行并发压力验收。
 - 商品更新按更新后的最终价格和积分组合重新校验，积分商品不能通过局部更新变成零元商品。

@@ -422,12 +422,14 @@ cp .env.example .env
 NEXT_PUBLIC_SITE_URL=https://vozeb-pro.example.com
 POSTGRES_PASSWORD=replace-with-a-strong-password
 VOZEB_PRO_ENCRYPTION_KEY=replace-with-openssl-rand-hex-32
+VOZEB_PRO_INSTALL_TOKEN=replace-with-one-time-openssl-rand-hex-32
 VOZEB_PRO_MAINTENANCE_TOKEN=replace-with-another-openssl-rand-hex-32
 ```
 
-分别生成加密密钥和维护令牌，再写入 `.env` 并启动：
+分别生成加密密钥、一次性安装令牌和维护令牌，再写入 `.env` 并启动：
 
 ```bash
+openssl rand -hex 32
 openssl rand -hex 32
 openssl rand -hex 32
 docker compose pull
@@ -435,7 +437,7 @@ docker compose up -d
 docker compose ps
 ```
 
-`VOZEB_PRO_MAINTENANCE_TOKEN` 是服务器部署密钥，不在管理后台填写。安装页会自动生成并放入可复制的环境变量；选择 Docker、宝塔或云数据库时，可复制的 Compose 模板同时包含 App 与 `generation-worker`，两个服务使用同一个令牌并一起启动。单独部署 Worker 时也必须注入完全相同的值。完整变量说明见[配置说明](docs/content/docs/overview/configuration.mdx)。
+`VOZEB_PRO_INSTALL_TOKEN` 只用于初始化数据库和创建首个管理员，必须从服务器 `.env` 粘贴到安装向导；安装完成后可从环境变量中移除。`VOZEB_PRO_MAINTENANCE_TOKEN` 是 App 与生成 Worker 共用的服务器维护密钥，Worker 不读取包含数据库、支付和安装令牌的完整 `.env`。完整变量说明见[配置说明](docs/content/docs/overview/configuration.mdx)。
 
 打开 `https://你的域名/install`，依次检查数据库、初始化表结构并创建首个管理员。
 
