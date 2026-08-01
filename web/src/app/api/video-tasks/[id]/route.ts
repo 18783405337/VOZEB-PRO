@@ -1,21 +1,21 @@
 import { after, NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth/session";
-import { canReconcileVideoTask, getVideoTask, transitionVideoTask, type VideoTaskStatus } from "@/lib/server/video-task-store";
+import { canReconcileVideoTask, getVideoTask, transitionVideoTask } from "@/lib/server/video-task-store";
 import { refundUserPoints } from "@/lib/auth/store";
 import { fetchInternalApi, resolveInternalOrigin } from "@/lib/server/internal-origin";
 import { pointsResponseHeaders } from "@/lib/server/points-response";
-import { canTransitionVideoTask } from "@/lib/server/video-task-registration";
 import { generationModelId } from "@/lib/server/generation-channel";
 import { providerTaskPath } from "@/lib/server/provider-task-config";
 import { runGenerationTaskRecoveryBatch } from "@/lib/server/generation-task-recovery-service";
+import { systemAiBillingHeaders } from "@/lib/server/system-ai-billing";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
     const user = await getCurrentUser(request);
-    let task = user ? await getVideoTask((await params).id) : null;
+    const task = user ? await getVideoTask((await params).id) : null;
     if (!user || !task || (task.userId !== user.id && user.role !== "admin")) return NextResponse.json({ error: "视频任务不存在" }, { status: user ? 404 : 401 });
     if (canReconcileVideoTask(task)) {
         const origin = resolveInternalOrigin(new URL(request.url).origin);
@@ -30,20 +30,17 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     const id = (await params).id;
     const task = user ? await getVideoTask(id) : null;
     if (!user || !task || (task.userId !== user.id && user.role !== "admin")) return NextResponse.json({ error: "视频任务不存在" }, { status: user ? 404 : 401 });
-    const body = (await request.json().catch(() => ({}))) as { status?: VideoTaskStatus; result?: VideoTask["result"]; error?: string };
-    if (!body.status || !canTransitionVideoTask(task.status, body.status)) return NextResponse.json({ error: "当前任务状态无法修改" }, { status: 409 });
-    const status = body.status as Exclude<VideoTaskStatus, "running">;
-    const next = await transitionVideoTask(task, {
-        status,
-        result: status === "success" ? sanitizeResult(body.result) : undefined,
-        error: status === "error" ? String(body.error || "视频生成失败").slice(0, 500) : undefined,
-    });
-    if (!next) return NextResponse.json({ error: "当前任务状态无法修改" }, { status: 409 });
-    if (status === "cancelled") {
-        if (task.upstream.pointsCost !== undefined && task.upstream.pointsRecordId)
-            await refundUserPoints(task.userId, generationModelId(task.config), task.upstream.pointsCost, "video", task.upstream.pointsUnits || 1, `video-task:${task.id}:refund`, task.upstream.pointsRecordId);
-        after(() => cancelUpstreamVideo(task, resolveInternalOrigin(new URL(request.url).origin), request.headers.get("cookie") || ""));
+    const body = (await request.json().catch(() => ({}))) as { action?: string; status?: string; result?: unknown; error?: unknown };
+    if (body.result !== undefined || body.error !== undefined || (body.status && body.status !== "cancelled")) {
+        return NextResponse.json({ error: "视频任务终态和结果只能由服务端更新" }, { status: 403 });
     }
+    if (body.action !== "cancel" && body.status !== "cancelled") return NextResponse.json({ error: "不支持的视频任务操作" }, { status: 400 });
+    if (task.status !== "running") return NextResponse.json({ error: "当前任务无法取消" }, { status: 409 });
+    const next = await transitionVideoTask(task, { status: "cancelled" });
+    if (!next) return NextResponse.json({ error: "当前任务状态无法修改" }, { status: 409 });
+    if (task.upstream.pointsCost !== undefined && task.upstream.pointsRecordId)
+        await refundUserPoints(task.userId, generationModelId(task.config), task.upstream.pointsCost, "video", task.upstream.pointsUnits || 1, `video-task:${task.id}:refund`, task.upstream.pointsRecordId);
+    after(() => cancelUpstreamVideo(task, resolveInternalOrigin(new URL(request.url).origin), request.headers.get("cookie") || ""));
     const refreshedUser = await getCurrentUser();
     return NextResponse.json({ task: next ? publicTask(next) : null }, { headers: pointsResponseHeaders(refreshedUser) });
 }
@@ -63,7 +60,7 @@ async function cancelUpstreamVideo(task: VideoTask, origin: string, cookie: stri
     for (const attempt of attempts) {
         const response = await fetchInternalApi(`${origin}${task.config.baseUrl.replace(/\/+$/, "")}${attempt.path}`, {
             method: attempt.method,
-            headers: { cookie },
+            headers: { ...(cookie ? { cookie } : {}), ...systemAiBillingHeaders(generationModelId(task.config), undefined, task.config.model) },
             signal: AbortSignal.timeout(10_000),
         }).catch(() => null);
         if (response?.ok) return;
@@ -71,16 +68,6 @@ async function cancelUpstreamVideo(task: VideoTask, origin: string, cookie: stri
 }
 
 type VideoTask = NonNullable<Awaited<ReturnType<typeof getVideoTask>>>;
-
-function sanitizeResult(result?: VideoTask["result"]) {
-    if (!result) return undefined;
-    return {
-        url: typeof result.url === "string" ? result.url : undefined,
-        remoteUrl: typeof result.remoteUrl === "string" ? result.remoteUrl : undefined,
-        mimeType: typeof result.mimeType === "string" ? result.mimeType : undefined,
-        durationMs: Number.isFinite(Number(result.durationMs)) && Number(result.durationMs) > 0 ? Math.floor(Number(result.durationMs)) : undefined,
-    };
-}
 
 function publicTask(task: VideoTask) {
     return { id: task.id, status: task.status, model: generationModelId(task.config), upstreamId: task.upstream.id, durationSeconds: task.requestedDurationSeconds, result: task.result, error: task.error, canRetry: task.retryable === true };

@@ -146,8 +146,8 @@ async function refundImageCandidate(task: ImageTask) {
 async function completeImageResult(task: ImageTask, result: ImageTaskRunResult, origin: string, authContext: string) {
     const remoteUrl = typeof result.remoteUrl === "string" ? result.remoteUrl : undefined;
     const safeResult: ImageTaskResult = directRemoteImageResult(remoteUrl) || (await inlineRemoteImageResult(result.dataUrl, origin, authContext, remoteUrl));
-    const log = await writeImageGenerationLog(task, "success", safeResult, Date.now() - task.createdAt);
-    const asset = log?.assets[0];
+    const logged = await writeImageGenerationLog(task, "success", safeResult, Date.now() - task.createdAt);
+    const asset = logged.asset;
     const current = await getImageTask(task.id);
     if (!current || current.status === "cancelled") return current;
     const completed = await transitionImageTask(current, ["pending", "running"], {

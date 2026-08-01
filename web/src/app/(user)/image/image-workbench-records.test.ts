@@ -11,7 +11,7 @@ describe("image workbench records", () => {
         const log = generationLog({
             images: [image("ok-1", { slotIndex: 2 })],
             imageTasks: [pendingTask],
-            failures: [{ resultId: "fail-1", index: 1, error: "上游失败" }],
+            failures: [{ resultId: "fail-1", index: 1, error: "上游失败", canRetry: true }],
             pendingCount: 1,
             failCount: 1,
             imageCount: 3,
@@ -20,13 +20,13 @@ describe("image workbench records", () => {
 
         expect(resultsFromLog(log)).toEqual([
             { id: "pending-1", status: "pending", task: pendingTask },
-            { id: "fail-1", status: "failed", error: "上游失败" },
+            { id: "fail-1", status: "failed", error: "上游失败", canRetry: true },
             { id: "ok-1", status: "success", image: image("ok-1", { slotIndex: 2 }) },
         ]);
     });
 
     it("builds a failed log from failed generation results", () => {
-        const log = buildLogFromResults(null, { text: "生成图片", config: baseConfig(), references: [] }, [{ id: "result-1", status: "failed", error: "生成失败" }], 1200, "1");
+        const log = buildLogFromResults(null, { text: "生成图片", config: baseConfig(), references: [] }, [{ id: "result-1", status: "failed", error: "生成失败", canRetry: true }], 1200, "1");
 
         expect(log).toMatchObject({
             prompt: "生成图片",
@@ -35,8 +35,9 @@ describe("image workbench records", () => {
             successCount: 0,
             failCount: 1,
             imageCount: 1,
-            failures: [{ resultId: "result-1", index: 0, error: "生成失败" }],
+            failures: [{ resultId: "result-1", index: 0, error: "生成失败", canRetry: true }],
         });
+        expect(log.requestSnapshot?.slots[0]).toMatchObject({ status: "failed", canRetry: true });
     });
 
     it("keeps the user request separate from the internal execution prompt", () => {
@@ -47,6 +48,21 @@ describe("image workbench records", () => {
         expect(log.requestSnapshot?.userPrompt).toBe("生成一张发布会主视觉");
         expect(generationLogPublicPrompt(log)).toBe("生成一张发布会主视觉");
         expect(snapshotFromLog(log, baseConfig())).toMatchObject({ text: "内部改写后的执行提示词", userText: "生成一张发布会主视觉" });
+    });
+
+    it("persists a taskless pending request identity and clears the old task on explicit retry", () => {
+        const snapshot = { text: "生成图片", config: baseConfig(), references: [] };
+        const firstTask: PendingImageTask = { resultId: "slot-1", clientRequestId: "image-workbench:conversation:slot-1", taskId: "task-old", kind: "generation", model: "image-v1", index: 0, startedAt: 1000 };
+        const firstLog = buildLogFromResults(null, snapshot, [{ id: "slot-1", status: "pending", task: firstTask }], 0, "1");
+        const retryTask: PendingImageTask = { resultId: "slot-1", clientRequestId: "image-workbench-retry:slot-1:new", kind: "generation", model: "image-v1", index: 0, startedAt: 2000 };
+        const retryLog = buildLogFromResults(firstLog, snapshot, [{ id: "slot-1", status: "pending", task: retryTask }], 0, "1");
+
+        expect(firstLog.requestSnapshot?.slots[0]).toMatchObject({ clientRequestId: "image-workbench:conversation:slot-1", taskId: "task-old" });
+        expect(retryLog.requestSnapshot?.slots[0]).toMatchObject({ clientRequestId: "image-workbench-retry:slot-1:new" });
+        expect(retryLog.requestSnapshot?.slots[0].taskId).toBeUndefined();
+        const restored = resultsFromLog(retryLog)[0];
+        expect(restored).toMatchObject({ status: "pending", task: { clientRequestId: "image-workbench-retry:slot-1:new" } });
+        expect(restored.task?.taskId).toBeUndefined();
     });
 
     it("does not expose a legacy execution prompt while its conversation is loading", () => {

@@ -36,6 +36,7 @@ export async function GET(request: Request, context: RouteContext) {
                 model: generationModelId(task.config),
                 result: task.result,
                 error: task.error,
+                canRetry: task.status === "error",
                 needsReview: task.executionPhase === "needs_review",
                 executionPhase: task.executionPhase,
             },

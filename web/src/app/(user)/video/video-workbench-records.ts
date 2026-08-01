@@ -4,7 +4,7 @@ import { nanoid } from "nanoid";
 
 import { normalizeVideoResolutionValue, normalizeVideoSizeValue } from "@/components/video-settings-panel";
 import { browserReadableMediaUrl, isRemoteMediaUrl } from "@/lib/browser-media-url";
-import { generationLogPublicPrompt, type GenerationLogReferenceSnapshot, type GenerationLogRequestSnapshot, type GenerationLogSlotSnapshot, type GenerationLogSnapshotParameters } from "@/lib/generation-log-snapshot";
+import { generationLogDraftSnapshot, generationLogPublicPrompt, type GenerationLogReferenceSnapshot, type GenerationLogRequestSnapshot, type GenerationLogSlotSnapshot, type GenerationLogSnapshotParameters } from "@/lib/generation-log-snapshot";
 import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceRatio } from "@/lib/seedance-video";
 import { resolveMediaUrl } from "@/services/file-storage";
 import { resolveImageUrl } from "@/services/image-storage";
@@ -74,6 +74,7 @@ export type GenerationLog = {
 export type GenerationLogConfig = Pick<AiConfig, "model" | "videoModel" | "size" | "vquality" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark">;
 export type GenerationSnapshot = { text: string; userText?: string; config: AiConfig; references: ReferenceImage[]; videoReferences: ReferenceVideo[]; audioReferences: ReferenceAudio[] };
 export type ReferenceDropTarget = "image" | "video" | "audio";
+export type PendingVideoRequest = { taskResultId: string; clientRequestId?: string; task?: VideoGenerationTask; startedAt?: number };
 
 export async function readStoredLogs(userId: string) {
     return (await readServerVideoLogs()).map((log) => withLogOwner(log, userId));
@@ -175,43 +176,21 @@ export async function serverVideoLogToWorkbenchLog(record: StoredGenerationLogRe
 }
 
 export async function recordVideoGenerationLog(log: GenerationLog) {
-    const videos = log.videos?.length ? log.videos : log.video ? [log.video] : [];
-    const assets = videos.flatMap((video) => {
-        const assetUrl = video.serverUrl || (video.url && !video.url.startsWith("blob:") ? video.url : "") || video.remoteUrl || "";
-        if (!assetUrl) return [];
-        return [
-            {
-                type: "video" as const,
-                url: assetUrl,
-                remoteUrl: video.remoteUrl,
-                serverUrl: video.serverUrl,
-                mimeType: video.mimeType,
-                width: video.width,
-                height: video.height,
-                bytes: video.bytes,
-            },
-        ];
-    });
     return (
         await recordGenerationLog({
             conversationId: log.creativeConversationId,
             id: `video-workbench:${log.id}`,
             kind: "video",
             source: "video-workbench",
-            status: log.status === "成功" ? "success" : log.status === "失败" ? "failed" : "pending",
+            status: "pending",
             title: log.title,
             prompt: log.prompt,
             model: log.model || log.config.videoModel || log.config.model,
-            summary: log.status === "成功" ? "视频生成完成" : log.status === "失败" ? "视频生成失败" : "视频生成中",
+            summary: "视频生成中",
             durationMs: log.durationMs,
             count: Math.max(1, resultsFromLog(log).length),
-            successCount: videos.length,
-            failCount: log.failures?.length || (log.status === "失败" ? 1 : 0),
-            assets,
-            requestSnapshot: log.requestSnapshot,
-            error: log.error,
+            requestSnapshot: generationLogDraftSnapshot(log.requestSnapshot),
             createdAt: log.createdAt,
-            completedAt: log.status === "生成中" ? undefined : Date.now(),
         })
     ).assets[0];
 }
@@ -282,7 +261,9 @@ export function resultsFromLog(log: GenerationLog): GenerationResult[] {
     if (log.resultDeleted) return [];
     const results: GenerationResult[] = (log.videos?.length ? log.videos : log.video ? [log.video] : []).map((video) => ({ id: video.slotId || video.id, status: "success", video }));
     (log.failures || []).forEach((failure) => results.push({ id: failure.resultId, status: "failed", error: failure.error, ...(failure.canRetry ? { canRetry: true } : {}) }));
-    if (log.status === "生成中" && log.task) results.push({ id: log.taskResultId || log.id, status: "pending" });
+    const pendingSlot = log.requestSnapshot?.slots.find((slot) => slot.status === "pending");
+    const pendingResultId = log.taskResultId || pendingSlot?.id || (log.task ? log.id : "");
+    if (log.status === "生成中" && pendingResultId && !results.some((result) => result.id === pendingResultId)) results.push({ id: pendingResultId, status: "pending" });
     if (!results.length && log.error) results.push({ id: log.id, status: "failed", error: log.error });
     return results;
 }
@@ -321,7 +302,7 @@ export function replaceResult(results: GenerationResult[], resultId: string, nex
     return replaced ? nextResults : [...nextResults, nextResult];
 }
 
-export function buildLogFromVideoResults(baseLog: GenerationLog | null, snapshot: GenerationSnapshot, results: GenerationResult[], durationMs: number, error?: string, pending?: { task: VideoGenerationTask; taskResultId: string }): GenerationLog {
+export function buildLogFromVideoResults(baseLog: GenerationLog | null, snapshot: GenerationSnapshot, results: GenerationResult[], durationMs: number, error?: string, pending?: PendingVideoRequest): GenerationLog {
     const videos = results.flatMap((result) => (result.status === "success" && result.video ? [result.video] : []));
     const failures = results.flatMap((result) => (result.status === "failed" ? [{ resultId: result.id, error: result.error || error || "生成失败", canRetry: result.canRetry === true }] : []));
     const hasPending = results.some((result) => result.status === "pending");
@@ -339,6 +320,7 @@ export function buildLogFromVideoResults(baseLog: GenerationLog | null, snapshot
         durationMs,
         status,
         task: pending?.task,
+        taskStartedAt: pending?.startedAt,
         taskResultId: pending?.taskResultId,
         video: latestVideo,
         videos,
@@ -392,6 +374,7 @@ export function buildLog({
     durationMs,
     status,
     task,
+    taskStartedAt,
     taskResultId,
     video,
     videos,
@@ -410,6 +393,7 @@ export function buildLog({
     durationMs: number;
     status: GenerationLog["status"];
     task?: VideoGenerationTask;
+    taskStartedAt?: number;
     taskResultId?: string;
     video?: GeneratedVideo;
     videos?: GeneratedVideo[];
@@ -446,7 +430,7 @@ export function buildLog({
         seconds: logConfig.videoSeconds,
         status,
         task,
-        taskStartedAt: task ? Date.now() : undefined,
+        taskStartedAt: taskStartedAt || (task ? Date.now() : baseLog?.taskStartedAt),
         taskResultId,
         video: video || nextVideos[nextVideos.length - 1],
         videos: nextVideos,
@@ -501,13 +485,7 @@ export function normalizeLogConfig(log: Partial<GenerationLog>): GenerationLogCo
     };
 }
 
-function mergeVideoRequestSnapshot(
-    base: GenerationLogRequestSnapshot | undefined,
-    snapshot: GenerationSnapshot,
-    results: GenerationResult[],
-    pending: { task: VideoGenerationTask; taskResultId: string } | undefined,
-    error?: string,
-): GenerationLogRequestSnapshot {
+function mergeVideoRequestSnapshot(base: GenerationLogRequestSnapshot | undefined, snapshot: GenerationSnapshot, results: GenerationResult[], pending: PendingVideoRequest | undefined, error?: string): GenerationLogRequestSnapshot {
     const parameters = videoSnapshotParameters(snapshot.config);
     const currentReferences = [...snapshot.references.map(imageReferenceSnapshot), ...snapshot.videoReferences.map(videoReferenceSnapshot), ...snapshot.audioReferences.map(audioReferenceSnapshot)];
     const references = Array.from(new Map([...(base?.references || []), ...currentReferences].map((item) => [item.id, item])).values());
@@ -517,6 +495,8 @@ function mergeVideoRequestSnapshot(
     const slots = results.map((result, index): GenerationLogSlotSnapshot => {
         const previous = previousSlots.get(result.id);
         const task = pending?.taskResultId === result.id ? pending.task : undefined;
+        const clientRequestId = pending?.taskResultId === result.id ? pending.clientRequestId : undefined;
+        const freshPendingRequest = result.status === "pending" && Boolean(clientRequestId) && clientRequestId !== previous?.clientRequestId;
         const slot: GenerationLogSlotSnapshot = {
             ...previous,
             id: result.id,
@@ -526,13 +506,14 @@ function mergeVideoRequestSnapshot(
             parameters: previous?.parameters || parameters,
             referenceIds: previous?.referenceIds || currentReferenceIds,
             assetIndex: result.status === "success" ? assetIndex : undefined,
-            taskId: task?.id || previous?.taskId,
-            taskProvider: task?.provider || previous?.taskProvider,
+            clientRequestId: clientRequestId || previous?.clientRequestId,
+            taskId: task?.id || (freshPendingRequest ? undefined : previous?.taskId),
+            taskProvider: task?.provider || (freshPendingRequest ? undefined : previous?.taskProvider),
             taskModel: task?.model || previous?.taskModel || parameters.model,
-            taskPollPath: task?.pollPath || previous?.taskPollPath,
-            taskResultUrl: task?.resultUrl || previous?.taskResultUrl,
-            serverTaskId: task?.serverTaskId || previous?.serverTaskId,
-            startedAt: task ? Date.now() : previous?.startedAt,
+            taskPollPath: task?.pollPath || (freshPendingRequest ? undefined : previous?.taskPollPath),
+            taskResultUrl: task?.resultUrl || (freshPendingRequest ? undefined : previous?.taskResultUrl),
+            serverTaskId: task?.serverTaskId || (freshPendingRequest ? undefined : previous?.serverTaskId),
+            startedAt: pending?.taskResultId === result.id ? pending.startedAt || previous?.startedAt || Date.now() : previous?.startedAt,
             error: result.status === "failed" ? result.error || error || previous?.error || "生成失败" : undefined,
             canRetry: result.status === "failed" ? result.canRetry === true : undefined,
         };

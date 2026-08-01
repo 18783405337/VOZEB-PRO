@@ -16,7 +16,15 @@ vi.mock("@/lib/server/data-adapter", () => ({
 }));
 
 import { getDatabaseProvider, postgresQuery } from "@/lib/server/database";
-import { createStoredGenerationTask, getStoredGenerationTask, listStoredGenerationTaskRecords, mutateStoredGenerationTask, summarizeStoredGenerationTaskCosts, withGenerationConcurrencyLimit } from "./generation-task-store";
+import {
+    createStoredGenerationTask,
+    getStoredGenerationTask,
+    getStoredGenerationTaskByRequest,
+    listStoredGenerationTaskRecords,
+    mutateStoredGenerationTask,
+    summarizeStoredGenerationTaskCosts,
+    withGenerationConcurrencyLimit,
+} from "./generation-task-store";
 
 type TestTask = {
     id: string;
@@ -97,6 +105,9 @@ describe("mutateStoredGenerationTask", () => {
         expect(retry.id).toBe("video-retry");
         expect(mocks.records).toHaveLength(2);
         expect(mocks.records.every((record) => record.executionPhase === "created")).toBe(true);
+        await expect(getStoredGenerationTaskByRequest<{ id: string }>("video", "user", "request-one", 1)).resolves.toMatchObject({ id: "video-one" });
+        await expect(getStoredGenerationTaskByRequest<{ id: string }>("video", "user", "request-one", 2)).resolves.toMatchObject({ id: "video-retry" });
+        await expect(getStoredGenerationTaskByRequest<{ id: string }>("video", "user", "request-one", 3)).resolves.toBeNull();
     });
 });
 

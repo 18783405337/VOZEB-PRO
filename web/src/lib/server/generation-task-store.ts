@@ -15,6 +15,8 @@ export type GenerationTaskContext = {
     parentTaskId?: string;
     attemptNo?: number;
     clientRequestId?: string;
+    generationLogId?: string;
+    generationSlotId?: string;
 };
 
 export type StoredGenerationTaskRecord = {
@@ -684,6 +686,8 @@ function normalizeGenerationTaskContext(context: GenerationTaskContext): Generat
         parentTaskId: cleanContextText(context.parentTaskId),
         attemptNo: Number.isFinite(attempt) && attempt >= 0 ? Math.floor(attempt) : undefined,
         clientRequestId: cleanContextText(context.clientRequestId),
+        generationLogId: cleanContextText(context.generationLogId),
+        generationSlotId: cleanContextText(context.generationSlotId),
     };
 }
 
@@ -699,6 +703,8 @@ function preserveTaskContext(previous: StoredGenerationTaskRecord | undefined, n
         parentTaskId: next.parentTaskId || previous?.parentTaskId,
         attemptNo: next.attemptNo ?? previous?.attemptNo,
         clientRequestId: next.clientRequestId || previous?.clientRequestId,
+        generationLogId: next.generationLogId || previous?.generationLogId,
+        generationSlotId: next.generationSlotId || previous?.generationSlotId,
     };
 }
 

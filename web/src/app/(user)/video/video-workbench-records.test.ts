@@ -54,6 +54,38 @@ describe("video workbench records", () => {
         expect(snapshotFromLog(log, baseConfig())).toMatchObject({ text: "内部视频执行提示词", userText: "让产品自然旋转五秒" });
     });
 
+    it("restores a taskless pending video from its stable request identity", () => {
+        const snapshot = { text: "生成视频", config: baseConfig(), references: [], videoReferences: [], audioReferences: [] };
+        const log = buildLogFromVideoResults(null, snapshot, [{ id: "slot-1", status: "pending" }], 0, undefined, {
+            taskResultId: "slot-1",
+            clientRequestId: "video-workbench:conversation:slot-1",
+            startedAt: 1000,
+        });
+
+        expect(log.task).toBeUndefined();
+        expect(log.requestSnapshot?.slots[0]).toMatchObject({ status: "pending", clientRequestId: "video-workbench:conversation:slot-1", startedAt: 1000 });
+        expect(resultsFromLog(log)).toEqual([{ id: "slot-1", status: "pending" }]);
+    });
+
+    it("replaces the previous video task identity only for an explicit fresh retry", () => {
+        const snapshot = { text: "生成视频", config: baseConfig(), references: [], videoReferences: [], audioReferences: [] };
+        const first = buildLogFromVideoResults(null, snapshot, [{ id: "slot-1", status: "pending" }], 0, undefined, {
+            taskResultId: "slot-1",
+            clientRequestId: "video-workbench:first",
+            task: { id: "task-old", provider: "generation", model: "video-v1", serverTaskId: "task-old" },
+            startedAt: 1000,
+        });
+        const retry = buildLogFromVideoResults(first, snapshot, [{ id: "slot-1", status: "pending" }], 0, undefined, {
+            taskResultId: "slot-1",
+            clientRequestId: "video-workbench-retry:new",
+            startedAt: 2000,
+        });
+
+        expect(retry.requestSnapshot?.slots[0]).toMatchObject({ clientRequestId: "video-workbench-retry:new", startedAt: 2000 });
+        expect(retry.requestSnapshot?.slots[0].taskId).toBeUndefined();
+        expect(retry.requestSnapshot?.slots[0].serverTaskId).toBeUndefined();
+    });
+
     it("keeps audio references within duration limits and warns once", () => {
         const warn = vi.fn();
         const accepted = filterAudioReferencesByDuration(

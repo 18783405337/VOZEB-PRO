@@ -38,10 +38,16 @@ describe("generation log asset normalization", () => {
         const log = normalizeStoredLog({
             ...storedLogWithAssets(1),
             prompt: "内部执行提示词",
-            requestSnapshot: { version: 1, userPrompt: "用户原始需求", parameters: {}, references: [], slots: [{ id: "slot-1", index: 0, status: "pending", prompt: "内部执行提示词" }] },
+            requestSnapshot: {
+                version: 1,
+                userPrompt: "用户原始需求",
+                parameters: {},
+                references: [],
+                slots: [{ id: "slot-1", index: 0, status: "pending", prompt: "内部执行提示词", clientRequestId: "image-workbench:conversation:slot-1", canRetry: true }],
+            },
         });
 
         expect(log.prompt).toBe("内部执行提示词");
-        expect(log.requestSnapshot).toMatchObject({ userPrompt: "用户原始需求", slots: [{ prompt: "内部执行提示词" }] });
+        expect(log.requestSnapshot).toMatchObject({ userPrompt: "用户原始需求", slots: [{ prompt: "内部执行提示词", clientRequestId: "image-workbench:conversation:slot-1", canRetry: true }] });
     });
 });

@@ -8,7 +8,6 @@ import { ImageIcon, List, Music2, Settings2, Video } from "lucide-react";
 import { saveAs } from "file-saver";
 
 import { createImageGenerationTask, waitForImageGenerationTask, type ImageGenerationTask } from "@/services/api/image";
-import { recordGenerationLog } from "@/services/api/generation-logs";
 import { createTextGenerationTask, waitForTextGenerationTask, type TextGenerationTask } from "@/services/api/text";
 import { createServerVideoGenerationTask, storeGeneratedVideo, waitForVideoGenerationTask } from "@/services/api/video";
 import { defaultConfig, modelMatchesCapability, modelOptionName, type AiConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";

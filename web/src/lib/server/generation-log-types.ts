@@ -61,6 +61,32 @@ export type GenerationLogInput = Partial<Pick<StoredGenerationLog, "id" | "taskI
     completedAt?: string | number;
 };
 
+export type GenerationTaskLogResultInput = {
+    logId?: string;
+    slotId?: string;
+    clientRequestId?: string;
+    taskId: string;
+    userId: string;
+    username: string;
+    displayName: string;
+    kind: GenerationLogKind;
+    source: GenerationLogSource;
+    status: "success" | "failed";
+    title: string;
+    prompt: string;
+    model: string;
+    summary: string;
+    durationMs: number;
+    asset?: Partial<GenerationLogAsset> & { url?: string; targetSize?: string };
+    error?: string;
+    canRetry?: boolean;
+    taskKind?: "generation" | "edit";
+    taskProvider?: "openai" | "seedance" | "generation";
+    taskPollPath?: string;
+    serverTaskId?: string;
+    createdAt: string | number;
+};
+
 export type GenerationLogListOptions = {
     page?: number;
     pageSize?: number;

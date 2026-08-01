@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
     touchVideoTask: vi.fn(),
     transitionVideoTask: vi.fn(),
     updateVideoTask: vi.fn(),
+    writeVideoGenerationLog: vi.fn(),
     scheduleGenerationTask: vi.fn(),
     withGenerationConcurrencyLimit: vi.fn(async (_userId, _type, _staleMs, _limit, handler) => handler()),
 }));
@@ -41,6 +42,7 @@ vi.mock("@/lib/server/security", () => ({
 }));
 vi.mock("@/lib/server/generation-task-recovery-service", () => ({ runGenerationTaskRecoveryBatch: vi.fn() }));
 vi.mock("@/lib/server/generation-task-scheduler", () => ({ scheduleGenerationTask: mocks.scheduleGenerationTask }));
+vi.mock("@/lib/server/video-task-log", () => ({ writeVideoGenerationLog: mocks.writeVideoGenerationLog }));
 vi.mock("@/lib/server/video-task-store", () => ({
     createVideoTask: mocks.createVideoTask,
     claimVideoTaskPoll: mocks.claimVideoTaskPoll,
@@ -99,6 +101,7 @@ describe("video generation candidate failover", () => {
     });
 
     it("tries the next binding after explicit route failures", async () => {
+        const startedAt = Date.now();
         mocks.fetchInternalApi.mockImplementation(async (url: string) => (url.includes("/api/ai/system/one/") ? json({ error: "not found" }, 404) : json({ id: "upstream-two", status: "queued" })));
 
         const response = await POST(request());
@@ -108,6 +111,9 @@ describe("video generation candidate failover", () => {
         expect(payload.task).toMatchObject({ id: "local-task", model: "video", upstreamId: "upstream-two" });
         expect(mocks.fetchInternalApi.mock.calls.some(([url]) => String(url).includes("/api/ai/system/one/"))).toBe(true);
         expect(mocks.fetchInternalApi.mock.calls.some(([url]) => String(url).includes("/api/ai/system/two/"))).toBe(true);
+        const submittingSchedules = mocks.scheduleGenerationTask.mock.calls.filter(([, , patch]) => patch.executionPhase === "submitting");
+        expect(submittingSchedules).toHaveLength(2);
+        expect(submittingSchedules.every(([, , patch]) => patch.nextPollAt >= startedAt + 30 * 60_000)).toBe(true);
     });
 
     it("returns the original idempotent task before checking concurrency", async () => {
@@ -118,10 +124,12 @@ describe("video generation candidate failover", () => {
             upstream: { id: "existing-upstream" },
         });
 
-        const response = await POST(request({ model: "video" }, [], { clientRequestId: "same-request" }));
+        const response = await POST(request({ model: "video" }, [], { clientRequestId: "same-request", attemptNo: 2 }));
 
         expect(response.status).toBe(200);
         expect(await response.json()).toMatchObject({ task: { id: "existing-task", upstreamId: "existing-upstream" } });
+        expect(mocks.getStoredGenerationTaskByRequest).toHaveBeenCalledWith("video", "user", "same-request", 2);
+        expect(mocks.getAuthSettings).not.toHaveBeenCalled();
         expect(mocks.withGenerationConcurrencyLimit).not.toHaveBeenCalled();
         expect(mocks.fetchInternalApi).not.toHaveBeenCalled();
     });
@@ -568,7 +576,16 @@ describe("video generation candidate failover", () => {
 });
 
 function request(config: Record<string, unknown> = { model: "video" }, references: Array<{ type: string; url: string }> = [], context?: Record<string, unknown>) {
-    return new Request("http://localhost/api/video-generation-tasks", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ config, prompt: "A test video", references, context }) });
+    const clientRequestId = typeof context?.clientRequestId === "string" ? context.clientRequestId : "";
+    return new Request("http://localhost/api/video-generation-tasks", {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+            ...(clientRequestId ? { "x-vozeb-pro-client-request-id": clientRequestId } : {}),
+            ...(typeof context?.attemptNo === "number" ? { "x-vozeb-pro-attempt-no": String(context.attemptNo) } : {}),
+        },
+        body: JSON.stringify({ config, prompt: "A test video", references, context }),
+    });
 }
 
 function qingyanSettings() {

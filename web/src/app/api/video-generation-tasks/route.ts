@@ -24,6 +24,7 @@ import { VIDEO_PROVIDER_MEDIA_KEYS, parseVideoProviderJson, readVideoProviderHtt
 import { buildSeedanceSpecialRequest } from "@/lib/seedance-special";
 import { systemAiBillingHeaders } from "@/lib/server/system-ai-billing";
 import { maintenanceWorkerContextHeaders, requestRuntimeCredential } from "@/lib/server/maintenance-auth";
+import { writeVideoGenerationLog } from "@/lib/server/video-task-log";
 import { buildOpenAiVideoFormData } from "./video-task-openai";
 
 export const runtime = "nodejs";
@@ -35,6 +36,14 @@ type CreateVideoTaskBody = { config?: Record<string, unknown>; prompt?: string; 
 export async function POST(request: Request) {
     const user = await getCurrentUser(request);
     if (!user) return NextResponse.json({ error: "请先登录" }, { status: 401 });
+    const headerRequestId = clean(request.headers.get("x-vozeb-pro-client-request-id"));
+    const headerAttemptNo = positiveAttemptNo(request.headers.get("x-vozeb-pro-attempt-no"));
+    if (headerRequestId) {
+        const existing = await getStoredGenerationTaskByRequest<VideoTask>("video", user.id, headerRequestId, headerAttemptNo);
+        if (existing) return NextResponse.json({ task: publicTask(existing) });
+    }
+    const rate = await checkGenerationRateLimit(user.id, request, "video");
+    if (!rate.allowed) return NextResponse.json({ error: "视频生成请求过于频繁，请稍后重试" }, { status: 429, headers: rateLimitHeaders(rate) });
     let body: CreateVideoTaskBody;
     try {
         body = await readJsonBody(request);
@@ -42,12 +51,11 @@ export async function POST(request: Request) {
         if (isAuthInputError(error)) return NextResponse.json({ error: error.message }, { status: error.status });
         throw error;
     }
-    if (body.context?.clientRequestId) {
+    if (!headerRequestId && body.context?.clientRequestId) {
         const existing = await getStoredGenerationTaskByRequest<VideoTask>("video", user.id, body.context.clientRequestId, body.context.attemptNo);
         if (existing) return NextResponse.json({ task: publicTask(existing) });
     }
-    const rate = await checkGenerationRateLimit(user.id, request, "video");
-    if (!rate.allowed) return NextResponse.json({ error: "视频生成请求过于频繁，请稍后重试" }, { status: 429, headers: rateLimitHeaders(rate) });
+    if (headerRequestId) body.context = { ...(body.context || {}), clientRequestId: headerRequestId, ...(headerAttemptNo ? { attemptNo: headerAttemptNo } : {}) };
     const settings = await getAuthSettings();
     const response = await withGenerationConcurrencyLimit(user.id, "video", 30 * 60_000, settings.generationConcurrency.video, async () => {
         const requestedModel = typeof body.config?.model === "string" && body.config.model.trim() ? body.config.model : settings.defaultModels.videoModel;
@@ -111,6 +119,9 @@ export async function POST(request: Request) {
             if (!localTask) {
                 localTask = await createVideoTask({
                     userId: user.id,
+                    username: user.username,
+                    displayName: user.displayName,
+                    title: prompt.slice(0, 36) || "视频生成",
                     config: channel,
                     upstream: pendingUpstream,
                     requestedDurationSeconds: parameters.videoSeconds === -1 ? undefined : parameters.videoSeconds,
@@ -129,12 +140,13 @@ export async function POST(request: Request) {
                 });
                 localTask = { ...localTask, config: channel, upstream: pendingUpstream, requestedDurationSeconds: parameters.videoSeconds === -1 ? undefined : parameters.videoSeconds, attempts };
             }
+            const submissionStartedAt = Date.now();
             await scheduleGenerationTask("video", localTask.id, {
                 executionPhase: "submitting",
                 channelId: channel.channelId,
                 provider: channel.advancedConfig?.protocol || channel.apiFormat,
                 queryPath: channel.advancedConfig?.queryPath,
-                nextPollAt: Date.now(),
+                nextPollAt: submissionStartedAt + resolveModelRequestTimeoutMs(channel, "video"),
                 lastUpstreamStatus: "submitting",
             });
             try {
@@ -164,14 +176,13 @@ export async function POST(request: Request) {
                     await scheduleGenerationTask("video", localTask.id, { executionPhase: "needs_review", nextPollAt: undefined, lastUpstreamStatus: "submission_outcome_unknown" });
                     return NextResponse.json({ task: { ...publicTask({ ...localTask, attempts }), needsReview: true }, warning: `${message}；上游创建结果待确认，系统不会自动重复创建。` }, { status: 202 });
                 }
-                await transitionVideoTask(localTask, { status: "error", error: message, retryable: true });
-                await scheduleGenerationTask("video", localTask.id, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "create_failed" });
                 break;
             }
         }
         if (!lastError && capabilityError) return NextResponse.json({ error: capabilityError instanceof Error ? capabilityError.message : "当前渠道不支持参考素材" }, { status: 400 });
         if (localTask && lastError) {
             const message = toSafeGenerationErrorMessage(lastError, "视频任务创建失败");
+            await writeVideoGenerationLog({ ...localTask, attempts }, "failed", message, lastError instanceof SafeCandidateFailure);
             await transitionVideoTask(localTask, { status: "error", error: message, retryable: lastError instanceof SafeCandidateFailure });
             await scheduleGenerationTask("video", localTask.id, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "create_failed" });
         }
@@ -369,6 +380,10 @@ function videoUnits(raw: Record<string, unknown>, multipliers: Awaited<ReturnTyp
 }
 function clean(value: unknown) {
     return typeof value === "string" ? value.trim() : "";
+}
+function positiveAttemptNo(value: unknown) {
+    const parsed = Math.floor(Number(value));
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 function unique(values: string[]) {
     return Array.from(new Set(values.filter(Boolean)));

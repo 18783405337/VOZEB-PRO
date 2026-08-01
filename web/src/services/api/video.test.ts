@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ imageToDataUrl: vi.fn() }));
 
 vi.mock("@/services/api/points", () => ({ refreshUserPointsIfSystem: vi.fn(async () => undefined), syncUserPointsFromHeaders: vi.fn() }));
-vi.mock("@/services/api/video-task-tracking", () => ({ registerVideoTask: vi.fn(), syncVideoTask: vi.fn() }));
 vi.mock("@/services/file-storage", () => ({ getMediaBlob: vi.fn(), uploadMediaFile: vi.fn() }));
 vi.mock("@/services/image-storage", () => ({ imageToDataUrl: mocks.imageToDataUrl }));
 vi.mock("@/stores/use-config-store", () => ({
@@ -12,7 +11,7 @@ vi.mock("@/stores/use-config-store", () => ({
 
 import type { AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
-import { createServerVideoGenerationTask, pollVideoGenerationTask } from "./video";
+import { createServerVideoGenerationTask, createVideoGenerationTask, pollVideoGenerationTask } from "./video";
 
 const config = {
     model: "video-v1",
@@ -43,14 +42,28 @@ describe("video API service", () => {
             remoteUrl: "https://cdn.example.com/original-person.png",
         } as ReferenceImage;
 
-        await createServerVideoGenerationTask(config, "保持人物与场景不变，仅自然眨眼", [reference]);
+        await createServerVideoGenerationTask(config, "保持人物与场景不变，仅自然眨眼", [reference], [], [], { clientRequestId: "video-workbench:conversation:slot", attemptNo: 2 });
 
         const init = fetchMock.mock.calls[0][1] as RequestInit;
+        const headers = new Headers(init.headers);
         const body = JSON.parse(String(init.body)) as { references: Array<{ type: string; url: string }> };
         expect(fetchMock).toHaveBeenCalledTimes(1);
         expect(fetchMock.mock.calls[0][0]).toBe("/api/video-generation-tasks");
+        expect(headers.get("x-vozeb-pro-client-request-id")).toBe("video-workbench:conversation:slot");
+        expect(headers.get("x-vozeb-pro-attempt-no")).toBe("2");
         expect(body.references).toEqual([{ type: "image", url: "https://cdn.example.com/original-person.png" }]);
         expect(mocks.imageToDataUrl).not.toHaveBeenCalled();
+    });
+
+    it("routes the public creation helper through the server task endpoint", async () => {
+        const fetchMock = vi.fn().mockResolvedValue(json({ task: { id: "video-task-2", model: "video-v1" } }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        const task = await createVideoGenerationTask(config, "生成一段海边日落视频", [], [], [], { clientRequestId: "request-two" });
+
+        expect(task).toMatchObject({ id: "video-task-2", serverTaskId: "video-task-2", pollPath: "server" });
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(fetchMock.mock.calls[0][0]).toBe("/api/video-generation-tasks");
     });
 
     it("returns a terminal failure when the upstream submission needs manual review", async () => {

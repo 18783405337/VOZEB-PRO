@@ -15,7 +15,7 @@ import { requestCreditCost } from "@/constant/credits";
 import { mergeWorkbenchAgentPatch, useWorkbenchAgentRun, type WorkbenchAgentParameterPatch } from "@/hooks/use-workbench-agent-run";
 import { useWorkbenchAgentSessions } from "@/hooks/use-workbench-agent-sessions";
 import { useWorkbenchCreativeReview } from "@/hooks/use-workbench-creative-review";
-import { createFreshGenerationTaskContext } from "@/lib/generation-request-context";
+import { createFreshGenerationTaskContext, stableGenerationTaskRequestId } from "@/lib/generation-request-context";
 import { generationLogPublicPrompt } from "@/lib/generation-log-snapshot";
 import { closestImageAspectRatio, resolveImageRequestSize } from "@/lib/image-size";
 import { mediaDownloadFileName } from "@/lib/media-file";
@@ -23,8 +23,10 @@ import { originalImageDownloadUrl, originalImageExtension } from "@/lib/media-im
 import { preloadOnIdle } from "@/lib/preload-on-idle";
 import { resolveImageGenerationCount } from "@/lib/server/image-task-config";
 import { imageAssetData, referenceImageFromAsset } from "@/lib/workbench-asset-reference";
-import { deleteGenerationLogs as deleteServerGenerationLogs } from "@/services/api/generation-logs";
-import { createImageGenerationTask, waitForImageGenerationTask } from "@/services/api/image";
+import { deleteGenerationLogResults as deleteServerGenerationLogResults, deleteGenerationLogs as deleteServerGenerationLogs, renameGenerationLog as renameServerGenerationLog } from "@/services/api/generation-logs";
+import { ImageGenerationTaskTerminalError, createImageGenerationTask, isImageGenerationTaskDeferredError, waitForImageGenerationTask } from "@/services/api/image";
+import { isDefinitiveGenerationTaskRequestFailure } from "@/services/api/generation-task-request-error";
+import { isGenerationTaskNeedsReviewError } from "@/services/api/generation-task-state";
 import type { AgentSkillSummary } from "@/services/api/agent-skills";
 import { deleteStoredImages, uploadImage } from "@/services/image-storage";
 import { useAssetStore } from "@/stores/use-asset-store";
@@ -227,7 +229,7 @@ export function useImageWorkbenchController() {
         notice: message,
     });
 
-    function replaceLogs(nextLogs: GenerationLog[]) {
+    function replaceLogs(nextLogs: GenerationLog[], options?: { resumePending?: boolean }) {
         const visibleLogs = nextLogs.filter((log) => !deletedLogIdsRef.current.has(log.id));
         logsRef.current = visibleLogs;
         if (mountedRef.current) setLogs(visibleLogs);
@@ -236,17 +238,21 @@ export function useImageWorkbenchController() {
             const nextActiveLog = visibleLogs.find((log) => log.id === activeLogId);
             if (nextActiveLog && mountedRef.current) setPreviewLog(nextActiveLog);
         }
-        if (mountedRef.current) resumePendingLogs(visibleLogs);
+        if (mountedRef.current && options?.resumePending !== false) resumePendingLogs(visibleLogs);
     }
 
-    function upsertLog(log: GenerationLog) {
-        replaceLogs([log, ...logsRef.current.filter((item) => item.id !== log.id)].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)));
+    function upsertLog(log: GenerationLog, options?: { resumePending?: boolean }) {
+        replaceLogs(
+            [log, ...logsRef.current.filter((item) => item.id !== log.id)].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)),
+            options,
+        );
         if (activeLogIdRef.current === log.id && mountedRef.current) setPreviewLog(log);
     }
 
-    const saveLog = async (log: GenerationLog) => {
+    const saveLog = async (log: GenerationLog, options?: { resumePending?: boolean }) => {
         const ownedLog = withLogOwner(log, userIdRef.current);
-        upsertLog(ownedLog);
+        upsertLog(ownedLog, options);
+        if (ownedLog.status !== "生成中") return;
         const previousWrite = logWriteQueuesRef.current.get(log.id) || Promise.resolve();
         const nextWrite = previousWrite.catch(() => {}).then(() => saveStoredImageLog(ownedLog));
         logWriteQueuesRef.current.set(log.id, nextWrite);
@@ -298,16 +304,6 @@ export function useImageWorkbenchController() {
         return nextResults;
     }
 
-    function patchLogResultAt(logId: string, index: number, patch: Partial<GenerationResult>, snapshot: GenerationSnapshot, durationMs: number) {
-        const log = getLatestLog(logId);
-        if (!log) return [];
-        const currentResults = getLogResults(log);
-        const nextResults = updateResultAt(currentResults, index, patch);
-        setLogResults(logId, nextResults);
-        persistLogResults(logId, snapshot, nextResults, durationMs);
-        return nextResults;
-    }
-
     async function runQueuedImageTask<T>(logId: string, resultId: string, worker: () => Promise<T>) {
         return imageTaskQueue.run(logId, resultId, worker);
     }
@@ -316,20 +312,50 @@ export function useImageWorkbenchController() {
         nextLogs.forEach((log) => {
             (log.imageTasks || []).forEach((pendingTask) => {
                 const snapshot = snapshotFromLog(log, effectiveConfig, pendingTask.resultId);
-                if (taskControllersRef.current.has(log.id, pendingTask.resultId, pendingTask.taskId)) return;
-                const controller = taskControllersRef.current.create(log.id, pendingTask.resultId, pendingTask.taskId);
-                void runQueuedImageTask(log.id, pendingTask.resultId, () => completeGenerationTask(log.id, pendingTask.resultId, pendingTask.index, snapshot, pendingTask, controller))
+                const requestKey = pendingImageTaskKey(pendingTask);
+                if (!requestKey || taskControllersRef.current.has(log.id, pendingTask.resultId, requestKey)) return;
+                const controller = taskControllersRef.current.create(log.id, pendingTask.resultId, requestKey);
+                const worker = pendingTask.taskId
+                    ? () => completeGenerationTask(log.id, pendingTask.resultId, pendingTask.index, snapshot, { ...pendingTask, taskId: pendingTask.taskId! }, controller)
+                    : () => runGenerationSlot(log.id, pendingTask.resultId, pendingTask.index, snapshot, performance.now(), log.durationMs || 0, pendingTask, controller);
+                void runQueuedImageTask(log.id, pendingTask.resultId, worker)
                     .catch((error) => {
                         if (controller.signal.aborted) return;
+                        const terminal = error instanceof ImageGenerationTaskTerminalError || isGenerationTaskNeedsReviewError(error) || isDefinitiveGenerationTaskRequestFailure(error);
+                        if (!terminal || isImageGenerationTaskDeferredError(error)) {
+                            schedulePendingImageResume(log.id, pendingTask.resultId);
+                            return;
+                        }
                         const durationMs = Math.max(log.durationMs || 0, Date.now() - pendingTask.startedAt);
-                        patchLogResult(log.id, pendingTask.resultId, { status: "failed", error: error instanceof Error ? error.message : "生成失败", image: undefined, task: undefined }, snapshot, durationMs);
+                        patchLogResult(
+                            log.id,
+                            pendingTask.resultId,
+                            {
+                                status: "failed",
+                                error: error instanceof Error ? error.message : "生成失败",
+                                canRetry: error instanceof ImageGenerationTaskTerminalError && error.canRetry,
+                                image: undefined,
+                                task: undefined,
+                            },
+                            snapshot,
+                            durationMs,
+                        );
                     })
-                    .finally(() => taskControllersRef.current.remove(log.id, pendingTask.resultId, pendingTask.taskId));
+                    .finally(() => taskControllersRef.current.remove(log.id, pendingTask.resultId, requestKey));
             });
         });
     }
 
-    async function completeGenerationTask(logId: string, resultId: string, index: number, snapshot: GenerationSnapshot, pendingTask: PendingImageTask, controller?: AbortController) {
+    function schedulePendingImageResume(logId: string, resultId: string) {
+        globalThis.setTimeout(() => {
+            if (!mountedRef.current) return;
+            const latest = getLatestLog(logId);
+            if (latest?.status !== "生成中" || !latest.imageTasks?.some((task) => task.resultId === resultId)) return;
+            resumePendingLogs([latest]);
+        }, 15_000);
+    }
+
+    async function completeGenerationTask(logId: string, resultId: string, index: number, snapshot: GenerationSnapshot, pendingTask: PendingImageTask & { taskId: string }, controller?: AbortController) {
         const result = await waitForImageGenerationTask(snapshot.config, { id: pendingTask.taskId, kind: pendingTask.kind, model: pendingTask.model }, { signal: controller?.signal });
         const imageMeta = await normalizeGeneratedImage(result.dataUrl, result.remoteUrl, result.serverUrl, result);
         const durationMs = Date.now() - pendingTask.startedAt;
@@ -347,7 +373,7 @@ export function useImageWorkbenchController() {
             bytes: imageMeta.bytes,
             mimeType: imageMeta.mimeType,
         };
-        patchLogResult(logId, resultId, { status: "success", image: nextImage, error: undefined, task: undefined }, snapshot, durationMs);
+        patchLogResult(logId, resultId, { status: "success", image: nextImage, error: undefined, canRetry: undefined, task: undefined }, snapshot, durationMs);
         return nextImage;
     }
 
@@ -372,18 +398,25 @@ export function useImageWorkbenchController() {
         if (signal?.aborted) throw new DOMException("请求已取消", "AbortError");
 
         const baseResults: GenerationResult[] = [];
-        const batchStartedAt = performance.now();
         const baseDurationMs = 0;
         const startedResults = [
             ...baseResults,
-            ...Array.from({ length: snapshotCount }, (_, offset) => ({
-                id: nanoid(),
-                status: "pending" as const,
-                task: undefined,
-                error: undefined,
-                image: undefined,
-                slotIndex: baseResults.length + offset,
-            })),
+            ...Array.from({ length: snapshotCount }, (_, offset): GenerationResult => {
+                const id = nanoid();
+                const index = baseResults.length + offset;
+                return {
+                    id,
+                    status: "pending",
+                    task: {
+                        resultId: id,
+                        clientRequestId: stableGenerationTaskRequestId("image-workbench", [sharedConversationId, id]),
+                        kind: snapshot.references.length ? "edit" : "generation",
+                        model: snapshot.config.imageModel || snapshot.config.model,
+                        index,
+                        startedAt: Date.now(),
+                    },
+                };
+            }),
         ];
         const pendingLog = { ...buildLogFromResults(null, snapshot, startedResults, baseDurationMs, String(startedResults.length)), creativeConversationId: sharedConversationId };
         const logId = pendingLog.id;
@@ -394,7 +427,7 @@ export function useImageWorkbenchController() {
         activeLogIdRef.current = logId;
         setPreviewLog(pendingLog);
         setLogResults(logId, startedResults);
-        await saveLog(pendingLog);
+        await saveLog(pendingLog, { resumePending: false });
         if (signal?.aborted) {
             deletedLogIdsRef.current.add(logId);
             replaceLogs(logsRef.current.filter((log) => log.id !== logId));
@@ -406,15 +439,7 @@ export function useImageWorkbenchController() {
             throw new DOMException("请求已取消", "AbortError");
         }
 
-        startedResults.slice(baseResults.length).forEach((result, offset) => {
-            void runQueuedImageTask(logId, result.id, () => runGenerationSlot(logId, result.id, baseResults.length + offset, snapshot, batchStartedAt, baseDurationMs))
-                .then((image) => {
-                    if (image && mountedRef.current) message.success("图片已生成");
-                })
-                .catch((error) => {
-                    if (mountedRef.current && !deletedResultIdsRef.current.has(`${logId}:${result.id}`)) message.error(error instanceof Error ? error.message : "生成失败");
-                });
-        });
+        resumePendingLogs([pendingLog]);
         if (mountedRef.current) message.success("已加入当前用户生成队列");
         return logId;
     };
@@ -687,43 +712,46 @@ export function useImageWorkbenchController() {
         return { text, userText: (userPromptOverride ?? prompt).trim() || text, config: { ...requestConfig, model: requestModel, count: "1" }, references: [...references], count: resolveImageGenerationCount(requestConfig.count) };
     };
 
-    const runGenerationSlot = async (logId: string, resultId: string, index: number, snapshot: GenerationSnapshot, batchStartedAt: number, baseDurationMs: number, retryRequest = false) => {
-        const itemStartedAt = Date.now();
-        try {
-            const latestTitle = getLatestLog(logId)?.title || snapshot.text.slice(0, 36) || "生图工作台";
-            const conversationId = getLatestLog(logId)?.creativeConversationId;
-            const task = await createImageGenerationTask(snapshot.config, snapshot.text, snapshot.references, undefined, {
-                logSource: "image-workbench",
-                logTitle: latestTitle,
-                conversationId,
-                surface: "chat",
-                ...(retryRequest ? createFreshGenerationTaskContext("image-workbench-retry", [logId, resultId]) : { clientRequestId: `image-workbench:${logId}:${resultId}` }),
-            });
-            const pendingTask: PendingImageTask = { resultId, taskId: task.id, kind: task.kind, model: task.model, index, startedAt: itemStartedAt };
-            const controller = taskControllersRef.current.create(logId, resultId, task.id);
-            patchLogResult(logId, resultId, { status: "pending", task: pendingTask, error: undefined, image: undefined }, snapshot, baseDurationMs + performance.now() - batchStartedAt);
-            return await completeGenerationTask(logId, resultId, index, snapshot, pendingTask, controller).finally(() => taskControllersRef.current.remove(logId, resultId, task.id));
-        } catch (error) {
-            patchLogResult(logId, resultId, { status: "failed", error: error instanceof Error ? error.message : "生成失败", image: undefined, task: undefined }, snapshot, baseDurationMs + performance.now() - batchStartedAt);
-            throw error;
-        }
+    const runGenerationSlot = async (logId: string, resultId: string, index: number, snapshot: GenerationSnapshot, batchStartedAt: number, baseDurationMs: number, pendingRequest: PendingImageTask, controller?: AbortController) => {
+        const latestTitle = getLatestLog(logId)?.title || snapshot.text.slice(0, 36) || "生图工作台";
+        const conversationId = getLatestLog(logId)?.creativeConversationId;
+        const clientRequestId = pendingRequest.clientRequestId || stableGenerationTaskRequestId("image-workbench", [conversationId || logId, resultId]);
+        const task = await createImageGenerationTask(snapshot.config, snapshot.text, snapshot.references, undefined, {
+            signal: controller?.signal,
+            logSource: "image-workbench",
+            logTitle: latestTitle,
+            conversationId,
+            surface: "chat",
+            clientRequestId,
+            generationLogId: `image-workbench:${logId}`,
+            generationSlotId: resultId,
+        });
+        const pendingTask: PendingImageTask & { taskId: string } = { ...pendingRequest, clientRequestId, resultId, taskId: task.id, kind: task.kind, model: task.model, index };
+        patchLogResult(logId, resultId, { status: "pending", task: pendingTask, error: undefined, canRetry: undefined, image: undefined }, snapshot, baseDurationMs + performance.now() - batchStartedAt);
+        return completeGenerationTask(logId, resultId, index, snapshot, pendingTask, controller);
     };
 
-    const retryResult = (index: number) => {
+    const retryResult = async (index: number) => {
         const currentLog = previewLog ? getLatestLog(previewLog.id) || previewLog : null;
         if (!currentLog) return;
         const currentResult = getLogResults(currentLog)[index];
         if (!currentResult) return;
         const snapshot = snapshotFromLog(currentLog, effectiveConfig, currentResult.id);
-        const batchStartedAt = performance.now();
-        patchLogResultAt(currentLog.id, index, { status: "pending", error: undefined, image: undefined, task: undefined }, snapshot, currentLog.durationMs || 0);
-        void runQueuedImageTask(currentLog.id, currentResult.id, () => runGenerationSlot(currentLog.id, currentResult.id, index, snapshot, batchStartedAt, currentLog.durationMs || 0, true))
-            .then((image) => {
-                if (image) message.success("图片已重新生成");
-            })
-            .catch((error) => {
-                if (!deletedResultIdsRef.current.has(`${currentLog.id}:${currentResult.id}`)) message.error(error instanceof Error ? error.message : "生成失败");
-            });
+        const retryContext = createFreshGenerationTaskContext("image-workbench-retry", [currentLog.id, currentResult.id]);
+        const pendingTask: PendingImageTask = {
+            resultId: currentResult.id,
+            clientRequestId: retryContext.clientRequestId,
+            kind: snapshot.references.length ? "edit" : "generation",
+            model: snapshot.config.imageModel || snapshot.config.model,
+            index,
+            startedAt: Date.now(),
+        };
+        const nextResults = updateResultAt(getLogResults(currentLog), index, { status: "pending", error: undefined, canRetry: undefined, image: undefined, task: pendingTask });
+        const nextLog = buildLogFromResults(currentLog, snapshot, nextResults, currentLog.durationMs || 0, String(nextResults.length));
+        setLogResults(currentLog.id, nextResults);
+        await saveLog(nextLog, { resumePending: false });
+        resumePendingLogs([nextLog]);
+        message.success("已重新加入生成队列");
     };
 
     const currentResultIds = results.map((result) => result.id);
@@ -754,14 +782,16 @@ export function useImageWorkbenchController() {
         removedResults.forEach((result) => {
             deletedResultIdsRef.current.add(`${currentLog.id}:${result.id}`);
             if (!result.task) return;
-            taskControllersRef.current.abortAndRemove(currentLog.id, result.id, result.task.taskId);
+            const requestKey = pendingImageTaskKey(result.task);
+            if (requestKey) taskControllersRef.current.abortAndRemove(currentLog.id, result.id, requestKey);
         });
         const snapshot = snapshotFromLog(currentLog, effectiveConfig);
         const nextLog = buildLogFromResults(currentLog, snapshot, nextResults, currentLog.durationMs || 0, String(nextResults.length));
         setLogResults(currentLog.id, nextResults);
         setSelectedResultIds((value) => value.filter((id) => !selectedIds.has(id)));
         setMissingResultIds((value) => value.filter((id) => !selectedIds.has(id)));
-        const cleanupResults = await Promise.allSettled([deleteStoredImages(storageKeys), deleteServerImageTaskLogsForResults(currentLog, removedResults, nextResults)]);
+        const aggregateDelete = currentLog.id.startsWith("image-task-") ? Promise.resolve() : deleteServerGenerationLogResults(`image-workbench:${currentLog.id}`, ids);
+        const cleanupResults = await Promise.allSettled([deleteStoredImages(storageKeys), deleteServerImageTaskLogsForResults(currentLog, removedResults, nextResults), aggregateDelete]);
         await saveLog(nextLog);
         if (cleanupResults.some((result) => result.status === "rejected")) message.warning("结果已从当前记录移除，部分关联资源清理失败，请稍后重试");
         else message.success(successText || `已删除 ${removedResults.length} 个结果`);
@@ -779,7 +809,8 @@ export function useImageWorkbenchController() {
         const nextTitle = title.trim();
         if (!nextTitle || nextTitle === log.title) return;
         const latestLog = getLatestLog(log.id) || log;
-        await saveLog({ ...latestLog, title: nextTitle });
+        await renameServerGenerationLog(imageServerLogIds(log.id)[0], nextTitle);
+        upsertLog({ ...latestLog, title: nextTitle });
     };
 
     return {
@@ -880,7 +911,6 @@ export function useImageWorkbenchController() {
         setLogResults,
         persistLogResults,
         patchLogResult,
-        patchLogResultAt,
         runQueuedImageTask,
         resumePendingLogs,
         completeGenerationTask,
@@ -915,3 +945,7 @@ export function useImageWorkbenchController() {
 }
 
 export type ImagePageController = ReturnType<typeof useImageWorkbenchController>;
+
+function pendingImageTaskKey(task: PendingImageTask) {
+    return task.clientRequestId || task.taskId || "";
+}

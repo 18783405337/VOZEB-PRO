@@ -588,6 +588,7 @@ function normalizeSnapshotSlot(value: unknown): GenerationLogSlotSnapshot[] {
             parameters: normalizeSnapshotParameters(source.parameters),
             referenceIds: Array.isArray(source.referenceIds) ? Array.from(new Set(source.referenceIds.map((item) => normalizeOptionalText(item, undefined, 160)).filter((item): item is string => Boolean(item)))).slice(0, 32) : undefined,
             assetIndex: toOptionalNumber(source.assetIndex),
+            clientRequestId: normalizeOptionalText(source.clientRequestId, undefined, 200),
             taskId: normalizeOptionalText(source.taskId, undefined, 200),
             taskKind: source.taskKind === "edit" ? "edit" : source.taskKind === "generation" ? "generation" : undefined,
             taskProvider: source.taskProvider === "openai" || source.taskProvider === "seedance" || source.taskProvider === "generation" ? source.taskProvider : undefined,
@@ -597,6 +598,7 @@ function normalizeSnapshotSlot(value: unknown): GenerationLogSlotSnapshot[] {
             serverTaskId: normalizeOptionalText(source.serverTaskId, undefined, 200),
             startedAt: toOptionalNumber(source.startedAt),
             error: normalizeOptionalText(source.error, undefined, 1000),
+            canRetry: source.canRetry === true ? true : undefined,
         },
     ];
 }

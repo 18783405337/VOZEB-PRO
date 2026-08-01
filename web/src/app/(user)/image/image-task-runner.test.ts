@@ -4,7 +4,7 @@ import { ImageTaskControllers, ImageTaskQueue, imageTaskControllerKey } from "./
 
 describe("image task runner", () => {
     it("runs queued tasks when a slot is released", async () => {
-        let concurrencyLimit = 1;
+        const concurrencyLimit = 1;
         const activeCounts: number[] = [];
         const deleted = new Set<string>();
         const queue = new ImageTaskQueue({

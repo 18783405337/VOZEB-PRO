@@ -9,7 +9,6 @@ import { GENERATION_TASK_NEEDS_REVIEW_MESSAGE, GenerationTaskNeedsReviewError, t
 import { GenerationTaskRequestError } from "@/services/api/generation-task-request-error";
 import { imageToDataUrl } from "@/services/image-storage";
 import { refreshUserPointsIfSystem, syncUserPointsFromHeaders } from "@/services/api/points";
-import { registerVideoTask, syncVideoTask } from "@/services/api/video-task-tracking";
 import { boolConfig, buildSeedancePromptText, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceVideoReferenceError, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
 import { buildApiUrl, modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
@@ -130,8 +129,7 @@ export async function waitForVideoGenerationTask(config: AiConfig, task: VideoGe
 }
 
 export async function createVideoGenerationTask(config: AiConfig, prompt: string, references: ReferenceImage[] = [], videoReferences: ReferenceVideo[] = [], audioReferences: ReferenceAudio[] = [], options?: RequestOptions): Promise<VideoGenerationTask> {
-    const task = await createUpstreamVideoGenerationTask(config, prompt, references, videoReferences, audioReferences, options);
-    return registerVideoTask(resolveModelRequestConfig(config, task.model), task);
+    return createServerVideoGenerationTask(config, prompt, references, videoReferences, audioReferences, options);
 }
 
 export async function createServerVideoGenerationTask(
@@ -151,7 +149,11 @@ export async function createServerVideoGenerationTask(
     ]);
     const response = await fetch("/api/video-generation-tasks", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+            "Content-Type": "application/json",
+            ...(options?.clientRequestId ? { "X-VOZEB-PRO-Client-Request-Id": options.clientRequestId } : {}),
+            ...(options?.attemptNo ? { "X-VOZEB-PRO-Attempt-No": String(options.attemptNo) } : {}),
+        },
         body: JSON.stringify({
             config: {
                 model: selectedModel,
@@ -187,6 +189,8 @@ export function taskContext(options?: RequestOptions) {
         parentTaskId: options.parentTaskId,
         attemptNo: options.attemptNo,
         clientRequestId: options.clientRequestId,
+        generationLogId: options.generationLogId,
+        generationSlotId: options.generationSlotId,
     };
 }
 
@@ -237,9 +241,7 @@ export async function createUpstreamVideoGenerationTask(
 
 export async function pollVideoGenerationTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
     if (task.pollPath === "server") return pollServerVideoTask(task, options);
-    const state = await pollUpstreamVideoGenerationTask(config, task, options);
-    void syncVideoTask(task, state);
-    return state;
+    return pollUpstreamVideoGenerationTask(config, task, options);
 }
 
 export async function pollServerVideoTask(task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {

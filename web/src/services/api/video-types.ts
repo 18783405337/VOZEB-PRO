@@ -7,7 +7,6 @@ import { isQingyanProvider } from "@/lib/provider-compatibility";
 import { getMediaBlob, readStoredMediaFile, uploadGeneratedMediaFile, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
 import { refreshUserPointsIfSystem, syncUserPointsFromHeaders } from "@/services/api/points";
-import { registerVideoTask, syncVideoTask } from "@/services/api/video-task-tracking";
 import { boolConfig, buildSeedancePromptText, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceVideoReferenceError, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
 import { buildApiUrl, modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
@@ -35,6 +34,8 @@ export type RequestOptions = {
     parentTaskId?: string;
     attemptNo?: number;
     clientRequestId?: string;
+    generationLogId?: string;
+    generationSlotId?: string;
 };
 export type ResolvedVideoMediaUrl = { url: string; remoteUrl?: string };
 

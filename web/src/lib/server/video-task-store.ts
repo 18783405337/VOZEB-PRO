@@ -10,6 +10,9 @@ export type VideoTaskStatus = "running" | "success" | "error" | "cancelled";
 export type VideoTask = GenerationTaskContext & {
     id: string;
     userId: string;
+    username?: string;
+    displayName?: string;
+    title?: string;
     status: VideoTaskStatus;
     createdAt: number;
     updatedAt: number;
@@ -54,7 +57,7 @@ export function transitionVideoTask(task: VideoTask, patch: Partial<Pick<VideoTa
     return transitionStoredGenerationTask<VideoTask>("video", task.id, task.userId, ["running"], patch, GENERATION_TASK_RETENTION_MS);
 }
 
-export function updateVideoTask(id: string, patch: Partial<Pick<VideoTask, "config" | "upstream" | "requestedDurationSeconds" | "attempts">>) {
+export function updateVideoTask(id: string, patch: Partial<Pick<VideoTask, "config" | "upstream" | "requestedDurationSeconds" | "attempts" | "result">>) {
     return mutateStoredGenerationTask<VideoTask>("video", id, GENERATION_TASK_RETENTION_MS, (task) => ({ ...task, ...patch }));
 }
 

@@ -31,7 +31,7 @@ import {
     sourceLabel,
     stableAssetUrl,
 } from "./generation-log-repository";
-import type { GenerationAssetStats, GenerationLogInput, GenerationLogListOptions, GenerationLogSource, StoredGenerationLog } from "./generation-log-types";
+import type { GenerationAssetStats, GenerationLogInput, GenerationLogListOptions, StoredGenerationLog } from "./generation-log-types";
 
 export type { GenerationAssetStats, GenerationLogAsset, GenerationLogInput, GenerationLogSource, StoredGenerationLog } from "./generation-log-types";
 export { isGenerationSource } from "./generation-log-repository";
@@ -139,7 +139,6 @@ export async function recordGenerationLog(input: GenerationLogInput) {
             taskId: input.taskId || existing?.taskId,
             originalName: input.title || existing?.title,
         });
-        const createdAt = normalizeTime(input.createdAt, existing?.createdAt || now);
         const completedAt = input.status === "pending" ? undefined : normalizeTime(input.completedAt, now);
         const next = buildGenerationLog(input, id, existing, assets, now, completedAt);
 

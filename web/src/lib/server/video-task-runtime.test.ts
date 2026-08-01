@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
     register: vi.fn(),
     touch: vi.fn(),
     update: vi.fn(),
+    writeLog: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/store", () => ({ refundUserPoints: mocks.refund }));
@@ -18,6 +19,7 @@ vi.mock("@/lib/globalaiopc-catalog", () => ({ resolveGlobalAiOpcPreset: vi.fn(()
 vi.mock("@/lib/server/internal-origin", () => ({ fetchInternalApi: mocks.fetchInternalApi }));
 vi.mock("@/lib/server/creative-runtime-service", () => ({ registerGenerationTaskAssetsForUser: mocks.register }));
 vi.mock("@/lib/server/video-result-normalizer", () => ({ normalizeVideoResult: mocks.normalize }));
+vi.mock("@/lib/server/video-task-log", () => ({ writeVideoGenerationLog: mocks.writeLog }));
 vi.mock("@/lib/server/video-task-store", () => ({
     claimVideoTaskPoll: mocks.claim,
     completeReconciledVideoTask: mocks.complete,
@@ -37,6 +39,7 @@ describe("video task upstream reconciliation", () => {
         mocks.normalize.mockResolvedValue({ url: "/api/reference-assets/result.mp4", mimeType: "video/mp4", durationMs: 5_000 });
         mocks.register.mockResolvedValue(undefined);
         mocks.update.mockResolvedValue(undefined);
+        mocks.writeLog.mockResolvedValue({});
     });
 
     afterEach(() => {

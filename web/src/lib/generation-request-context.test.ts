@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createFreshGenerationTaskContext } from "./generation-request-context";
+import { createFreshGenerationTaskContext, stableGenerationTaskRequestId } from "./generation-request-context";
 
 describe("createFreshGenerationTaskContext", () => {
     it("creates a first attempt with a traceable request id", () => {
@@ -15,5 +15,9 @@ describe("createFreshGenerationTaskContext", () => {
         const second = createFreshGenerationTaskContext("canvas-video-retry", ["project", "node"]);
 
         expect(first.clientRequestId).not.toBe(second.clientRequestId);
+    });
+
+    it("keeps one stable request identity across page recovery", () => {
+        expect(stableGenerationTaskRequestId("video-workbench", ["conversation-one", "result-one"])).toBe("video-workbench:conversation-one:result-one");
     });
 });

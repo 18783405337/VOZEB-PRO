@@ -9,7 +9,9 @@ import { registerGenerationTaskAssetsForUser } from "@/lib/server/creative-runti
 import { normalizeVideoResult } from "@/lib/server/video-result-normalizer";
 import { VIDEO_PROVIDER_FAILED, VIDEO_PROVIDER_SUCCESS, parseVideoProviderJson, readVideoProviderHttpError, readVideoProviderStatus, readVideoProviderUrl, videoProviderMediaUrl } from "@/lib/server/video-provider-response";
 import { claimVideoTaskPoll, completeReconciledVideoTask, failReconciledVideoTask, getVideoTask, updateVideoTask, type VideoTask } from "@/lib/server/video-task-store";
+import { writeVideoGenerationLog } from "@/lib/server/video-task-log";
 import { maintenanceWorkerHeaders } from "@/lib/server/maintenance-auth";
+import { systemAiBillingHeaders } from "@/lib/server/system-ai-billing";
 
 export type VideoUpstreamStep = { state: "pending"; status: string } | { state: "result_ready"; status: string; resultUrl: string } | { state: "failed"; status: string; error: string };
 
@@ -55,20 +57,25 @@ async function completeVideoTask(task: VideoTask, resultUrl: string, origin: str
         pointsRecordId: task.upstream.pointsRecordId,
     });
     await updateVideoTask(task.id, { attempts });
-    const result = await normalizeVideoResult({
-        url: videoProviderMediaUrl(task.config.baseUrl, resultUrl),
-        origin,
-        cookie,
-        internalHeaders: workerUserId ? maintenanceWorkerHeaders(workerUserId) : undefined,
-        requestedDurationSeconds: task.requestedDurationSeconds,
-        mimeType: "video/mp4",
-        ownerUserId: task.userId,
-        source: task.source,
-        conversationId: task.conversationId,
-        runId: task.runId,
-        taskId: task.id,
-        projectId: task.projectId,
-    });
+    const result = task.result?.url
+        ? task.result
+        : await normalizeVideoResult({
+              url: videoProviderMediaUrl(task.config.baseUrl, resultUrl),
+              origin,
+              cookie,
+              internalHeaders: workerUserId ? maintenanceWorkerHeaders(workerUserId) : undefined,
+              requestedDurationSeconds: task.requestedDurationSeconds,
+              mimeType: "video/mp4",
+              ownerUserId: task.userId,
+              source: task.source,
+              conversationId: task.conversationId,
+              runId: task.runId,
+              taskId: task.id,
+              projectId: task.projectId,
+          });
+    if (!task.result?.url) await updateVideoTask(task.id, { result });
+    const staged = { ...task, result };
+    await writeVideoGenerationLog(staged, "success");
     const completed = await completeReconciledVideoTask(task.id, result);
     if (completed) await registerVideoAsset(completed);
     return completed || getVideoTask(task.id);
@@ -77,6 +84,7 @@ async function completeVideoTask(task: VideoTask, resultUrl: string, origin: str
 async function failVideoTask(task: VideoTask, error: string, retryable = true) {
     const attempts = finishGenerationAttempt(task.attempts || [], task.attempts?.at(-1)?.attemptNo || 1, { status: "failed", error });
     await updateVideoTask(task.id, { attempts });
+    await writeVideoGenerationLog({ ...task, attempts }, "failed", error, retryable);
     const failed = await failReconciledVideoTask(task.id, error, retryable);
     if (failed && task.status === "running") await refundVideoTask(failed);
     return failed || getVideoTask(task.id);
@@ -114,7 +122,7 @@ async function queryVideoUpstream(task: VideoTask, origin: string, cookie: strin
     let lastError = "";
     for (const path of paths) {
         const response = await fetchInternalApi(`${origin}${task.config.baseUrl.replace(/\/+$/, "")}${path.startsWith("/") ? path : `/${path}`}`, {
-            headers: workerUserId ? maintenanceWorkerHeaders(workerUserId) : { cookie },
+            headers: videoProxyHeaders(task, cookie, workerUserId),
             cache: "no-store",
             signal: AbortSignal.timeout(Math.min(resolveModelRequestTimeoutMs(task.config, "video"), 60_000)),
         });
@@ -144,7 +152,7 @@ async function readyVideoContentPath(task: VideoTask, origin: string, cookie: st
     const paths = [`/v1/videos/${id}/content`, `/videos/${id}/content`];
     for (const path of paths) {
         const url = `${origin}${task.config.baseUrl.replace(/\/+$/, "")}${path}`;
-        const headers = workerUserId ? maintenanceWorkerHeaders(workerUserId) : { cookie };
+        const headers = videoProxyHeaders(task, cookie, workerUserId);
         const head = await fetchInternalApi(url, { method: "HEAD", headers, cache: "no-store", signal: AbortSignal.timeout(60_000) }).catch(() => null);
         if (head && videoContentReady(head)) return path;
         if (head && ![405, 501].includes(head.status)) continue;
@@ -164,6 +172,13 @@ function videoContentReady(response: Response) {
     const contentType = response.headers.get("content-type")?.toLowerCase() || "";
     const disposition = response.headers.get("content-disposition")?.toLowerCase() || "";
     return contentType.startsWith("video/") || contentType === "application/octet-stream" || /filename[^;]*\.(?:mp4|webm|mov|m4v)\b/.test(disposition);
+}
+
+function videoProxyHeaders(task: VideoTask, cookie: string, workerUserId: string) {
+    return {
+        ...(workerUserId ? maintenanceWorkerHeaders(workerUserId) : cookie ? { cookie } : {}),
+        ...systemAiBillingHeaders(generationModelId(task.config), undefined, task.config.model),
+    };
 }
 
 function globalAiOpcPreset(task: VideoTask) {

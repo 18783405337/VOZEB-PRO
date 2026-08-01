@@ -32,6 +32,7 @@ export type GenerationLogSlotSnapshot = {
     parameters?: GenerationLogSnapshotParameters;
     referenceIds?: string[];
     assetIndex?: number;
+    clientRequestId?: string;
     taskId?: string;
     taskKind?: "generation" | "edit";
     taskProvider?: "openai" | "seedance" | "generation";
@@ -56,4 +57,29 @@ export function generationLogPublicPrompt(log: { prompt?: string; creativeConver
     const userPrompt = log.requestSnapshot?.userPrompt?.trim();
     if (userPrompt) return userPrompt;
     return log.creativeConversationId ? "" : String(log.prompt || "").trim();
+}
+
+export function generationLogDraftSnapshot(snapshot?: GenerationLogRequestSnapshot): GenerationLogRequestSnapshot | undefined {
+    if (!snapshot) return undefined;
+    return {
+        ...snapshot,
+        slots: snapshot.slots.flatMap((slot) =>
+            slot.status === "pending" && slot.clientRequestId
+                ? [
+                      {
+                          id: slot.id,
+                          index: slot.index,
+                          status: "pending" as const,
+                          prompt: slot.prompt,
+                          parameters: slot.parameters,
+                          referenceIds: slot.referenceIds,
+                          clientRequestId: slot.clientRequestId,
+                          taskKind: slot.taskKind,
+                          taskModel: slot.taskModel,
+                          startedAt: slot.startedAt,
+                      },
+                  ]
+                : [],
+        ),
+    };
 }
