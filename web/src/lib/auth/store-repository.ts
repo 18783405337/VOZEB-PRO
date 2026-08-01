@@ -433,6 +433,7 @@ export function mapPostgresSettings(settingsRow: Record<string, unknown> | undef
                 name: dbText(row.name),
                 baseUrl: dbText(row.base_url),
                 apiKey: dbText(row.api_key_ciphertext),
+                webhookSecret: dbText(row.webhook_secret_ciphertext),
                 apiFormat: row.api_format === "gemini" ? "gemini" : "openai",
                 models: dbJson(row.models, []),
                 enabled: dbBool(row.enabled, true),
@@ -641,12 +642,13 @@ export async function upsertPostgresSystemChannels(db: QueryExecutor, channels: 
     for (const [index, channel] of channels.entries()) {
         await db.query(
             `
-            INSERT INTO system_model_channels (id, name, base_url, api_key_ciphertext, api_format, models, enabled, advanced_config, health_results, sort_order)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            INSERT INTO system_model_channels (id, name, base_url, api_key_ciphertext, webhook_secret_ciphertext, api_format, models, enabled, advanced_config, health_results, sort_order)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             ON CONFLICT (id) DO UPDATE SET
                 name = EXCLUDED.name,
                 base_url = EXCLUDED.base_url,
                 api_key_ciphertext = EXCLUDED.api_key_ciphertext,
+                webhook_secret_ciphertext = EXCLUDED.webhook_secret_ciphertext,
                 api_format = EXCLUDED.api_format,
                 models = EXCLUDED.models,
                 enabled = EXCLUDED.enabled,
@@ -655,7 +657,7 @@ export async function upsertPostgresSystemChannels(db: QueryExecutor, channels: 
                 sort_order = EXCLUDED.sort_order,
                 updated_at = now()
             `,
-            [channel.id, channel.name, channel.baseUrl, channel.apiKey, channel.apiFormat, dbJsonParam(channel.models), channel.enabled, dbJsonParam(channel.advancedConfig), dbJsonParam(channel.healthResults || {}), index],
+            [channel.id, channel.name, channel.baseUrl, channel.apiKey, channel.webhookSecret || "", channel.apiFormat, dbJsonParam(channel.models), channel.enabled, dbJsonParam(channel.advancedConfig), dbJsonParam(channel.healthResults || {}), index],
         );
     }
 }

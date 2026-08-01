@@ -138,6 +138,7 @@ export function decryptAuthSettingsSecrets(settings: AuthSettings): AuthSettings
             ? settings.systemChannels.map((channel) => ({
                   ...channel,
                   apiKey: decryptSecretValue(channel.apiKey || ""),
+                  webhookSecret: decryptSecretValue(channel.webhookSecret || ""),
               }))
             : [],
     };
@@ -150,6 +151,7 @@ export function encryptAuthSettingsSecrets(settings: AuthSettings): AuthSettings
         systemChannels: settings.systemChannels.map((channel) => ({
             ...channel,
             apiKey: encryptSecretValue(channel.apiKey),
+            webhookSecret: encryptSecretValue(channel.webhookSecret || ""),
         })),
     };
 }
@@ -583,6 +585,7 @@ export function normalizeSystemChannel(channel: Partial<SystemModelChannel>): Sy
         name: repairKnownMojibakeText(channel.name?.trim() || "") || "通用接口",
         baseUrl: channel.baseUrl?.trim() || "",
         apiKey: normalizeSecretText(channel.apiKey, "", 4000),
+        webhookSecret: normalizeSecretText(channel.webhookSecret, "", 4000),
         apiFormat: channel.apiFormat === "gemini" ? "gemini" : "openai",
         models: Array.from(new Set((channel.models || []).map((model) => model.trim()).filter(Boolean))),
         enabled: channel.enabled !== false,

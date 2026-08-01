@@ -74,6 +74,7 @@ export type SystemModelChannel = {
     name: string;
     baseUrl: string;
     apiKey: string;
+    webhookSecret?: string;
     apiFormat: ApiCallFormat;
     models: string[];
     enabled: boolean;
@@ -81,6 +82,8 @@ export type SystemModelChannel = {
     healthResults?: Partial<Record<LogicalModelCapability, SystemChannelHealthSnapshot>>;
     hasApiKey?: boolean;
     clearApiKey?: boolean;
+    hasWebhookSecret?: boolean;
+    clearWebhookSecret?: boolean;
 };
 
 export type LogicalModelCapability = "text" | "image" | "video" | "audio";

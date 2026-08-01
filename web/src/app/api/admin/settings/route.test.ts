@@ -16,7 +16,7 @@ vi.mock("@/lib/server/audit-log-store", () => ({ auditActorFromRequest: vi.fn(()
 import { PATCH } from "./route";
 
 const savedSettings = {
-    systemChannels: [{ id: "one", name: "主渠道", baseUrl: "https://api.example.com/v1", apiKey: "saved-secret", apiFormat: "openai", models: ["vendor/writer"], enabled: true }],
+    systemChannels: [{ id: "one", name: "主渠道", baseUrl: "https://api.example.com/v1", apiKey: "saved-secret", webhookSecret: "0123456789abcdef0123456789abcdef", apiFormat: "openai", models: ["vendor/writer"], enabled: true }],
     logicalModels: [{ id: "writer", name: "Writer", capability: "text", enabled: true, bindings: [{ id: "binding", channelId: "one", upstreamModel: "vendor/writer", enabled: true, priority: 1 }] }],
     defaultModels: { textModel: "writer", imageModel: "", videoModel: "", audioModel: "" },
 };
@@ -31,7 +31,7 @@ describe("admin settings model routing", () => {
     it("saves a consistent channel, logical model, and default snapshot", async () => {
         const response = await PATCH(
             request({
-                systemChannels: [{ ...savedSettings.systemChannels[0], apiKey: "", hasApiKey: true }],
+                systemChannels: [{ ...savedSettings.systemChannels[0], apiKey: "", webhookSecret: "", hasApiKey: true, hasWebhookSecret: true }],
                 logicalModels: savedSettings.logicalModels,
                 defaultModels: savedSettings.defaultModels,
             }),
@@ -39,7 +39,7 @@ describe("admin settings model routing", () => {
         expect(response.status).toBe(200);
         expect(mocks.setAuthSettings).toHaveBeenCalledWith(
             expect.objectContaining({
-                systemChannels: [expect.objectContaining({ id: "one", apiKey: "saved-secret" })],
+                systemChannels: [expect.objectContaining({ id: "one", apiKey: "saved-secret", webhookSecret: savedSettings.systemChannels[0].webhookSecret })],
                 logicalModels: savedSettings.logicalModels,
                 defaultModels: savedSettings.defaultModels,
             }),
@@ -81,6 +81,14 @@ describe("admin settings model routing", () => {
 
         expect(response.status).toBe(200);
         expect(mocks.setAuthSettings).toHaveBeenCalledWith(expect.objectContaining({ defaultModels: expect.objectContaining({ textModel: "" }) }));
+    });
+
+    it("rejects a newly submitted short webhook secret instead of silently keeping the old value", async () => {
+        const response = await PATCH(request({ systemChannels: [{ ...savedSettings.systemChannels[0], apiKey: "", webhookSecret: "short", hasApiKey: true, hasWebhookSecret: true }] }));
+
+        expect(response.status).toBe(400);
+        expect(await response.json()).toEqual(expect.objectContaining({ error: expect.stringContaining("至少需要 32 个字符") }));
+        expect(mocks.setAuthSettings).not.toHaveBeenCalled();
     });
 });
 

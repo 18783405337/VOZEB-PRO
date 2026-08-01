@@ -98,6 +98,7 @@ CREATE TABLE IF NOT EXISTS system_model_channels (
     name text NOT NULL,
     base_url text NOT NULL DEFAULT '',
     api_key_ciphertext text NOT NULL DEFAULT '',
+    webhook_secret_ciphertext text NOT NULL DEFAULT '',
     api_format text NOT NULL DEFAULT 'openai',
     models jsonb NOT NULL DEFAULT '[]'::jsonb,
     enabled boolean NOT NULL DEFAULT true,
@@ -108,6 +109,7 @@ CREATE TABLE IF NOT EXISTS system_model_channels (
     updated_at timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT system_model_channels_api_format CHECK (api_format IN ('openai', 'gemini'))
 );
+ALTER TABLE system_model_channels ADD COLUMN IF NOT EXISTS webhook_secret_ciphertext text NOT NULL DEFAULT '';
 ALTER TABLE system_model_channels ADD COLUMN IF NOT EXISTS health_results jsonb NOT NULL DEFAULT '{}'::jsonb;
 
 CREATE SEQUENCE IF NOT EXISTS user_account_id_seq START WITH 1;
@@ -258,6 +260,7 @@ ALTER TABLE generation_tasks ADD CONSTRAINT generation_tasks_execution_phase CHE
 
 DROP INDEX IF EXISTS generation_tasks_user_client_request_idx;
 CREATE UNIQUE INDEX generation_tasks_user_client_request_idx ON generation_tasks (user_id, task_type, client_request_id, COALESCE(attempt_no, 0)) WHERE client_request_id IS NOT NULL AND client_request_id <> '';
+CREATE UNIQUE INDEX IF NOT EXISTS generation_tasks_channel_upstream_idx ON generation_tasks (channel_id, upstream_task_id) WHERE channel_id IS NOT NULL AND channel_id <> '' AND upstream_task_id IS NOT NULL AND upstream_task_id <> '';
 CREATE INDEX IF NOT EXISTS generation_tasks_conversation_idx ON generation_tasks (conversation_id, updated_at DESC) WHERE conversation_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS generation_tasks_run_idx ON generation_tasks (run_id, updated_at DESC) WHERE run_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS generation_tasks_user_project_idx ON generation_tasks (user_id, project_id, task_type, status) WHERE project_id IS NOT NULL;
@@ -277,11 +280,22 @@ CREATE TABLE IF NOT EXISTS generation_webhook_events (
     task_id text,
     task_type text,
     payload_hash text NOT NULL,
+    signature_timestamp timestamptz NOT NULL,
     status text NOT NULL DEFAULT 'received',
+    conflict_count integer NOT NULL DEFAULT 0,
+    last_conflict_payload_hash text,
+    last_conflict_at timestamptz,
     received_at timestamptz NOT NULL DEFAULT now(),
     processed_at timestamptz,
     PRIMARY KEY (channel_id, event_id)
 );
+
+ALTER TABLE generation_webhook_events ADD COLUMN IF NOT EXISTS signature_timestamp timestamptz;
+UPDATE generation_webhook_events SET signature_timestamp = COALESCE(signature_timestamp, received_at) WHERE signature_timestamp IS NULL;
+ALTER TABLE generation_webhook_events ALTER COLUMN signature_timestamp SET NOT NULL;
+ALTER TABLE generation_webhook_events ADD COLUMN IF NOT EXISTS conflict_count integer NOT NULL DEFAULT 0;
+ALTER TABLE generation_webhook_events ADD COLUMN IF NOT EXISTS last_conflict_payload_hash text;
+ALTER TABLE generation_webhook_events ADD COLUMN IF NOT EXISTS last_conflict_at timestamptz;
 
 CREATE INDEX IF NOT EXISTS generation_webhook_events_received_idx ON generation_webhook_events (received_at DESC);
 

@@ -42,6 +42,7 @@ export function AdminChannelOnboardingDrawer({ open, initialProtocol, settings, 
     const [setAsDefault, setSetAsDefault] = useState(true);
     const { upstreamModel: selectedUpstreamModel, logicalId: selectedLogicalId, newLogicalId, newLogicalName } = bindingDraft;
     const channel = settings.systemChannels.find((item) => item.id === draftId);
+    const webhookSecretInvalid = Boolean(channel?.webhookSecret?.trim() && channel.webhookSecret.trim().length < 32);
     const validations = draftId ? channelHealthEntries(draftId, healthResults, channel?.healthResults) : [];
     const verified = validations.some(({ result }) => result.ok);
     const bound = Boolean(channel && settings.logicalModels.some((model) => model.bindings.some((binding) => binding.channelId === channel.id)));
@@ -157,7 +158,7 @@ export function AdminChannelOnboardingDrawer({ open, initialProtocol, settings, 
         return <ReviewStep channel={channel} settings={settings} validations={validations} />;
     };
 
-    const nextDisabled = step === 1 ? !channel?.name.trim() || !channelConnectionReady(channel) : step === 2 ? !channel?.models.length : step === 4 ? !bound : false;
+    const nextDisabled = step === 1 ? !channel?.name.trim() || !channelConnectionReady(channel) || webhookSecretInvalid : step === 2 ? !channel?.models.length : step === 4 ? !bound : false;
 
     return (
         <Drawer
@@ -298,6 +299,7 @@ function ConnectionStep({ channel, onChange }: { channel: SystemModelChannel; on
     const custom = channel.advancedConfig?.protocol === "custom";
     const authMode = resolveChannelAuthMode(channel.advancedConfig);
     const requiresApiKey = channelRequiresApiKey(channel);
+    const webhookSecretInvalid = Boolean(channel.webhookSecret?.trim() && channel.webhookSecret.trim().length < 32);
     const updateAuth = (patch: Partial<NonNullable<SystemModelChannel["advancedConfig"]>>) => onChange({ advancedConfig: { ...channel.advancedConfig!, ...patch } });
     return (
         <div className="space-y-4">
@@ -332,6 +334,27 @@ function ConnectionStep({ channel, onChange }: { channel: SystemModelChannel; on
                 ) : (
                     <div className="sm:col-span-2 border-y border-stone-200 py-3 text-sm text-stone-600 dark:border-stone-800 dark:text-stone-300">当前协议无需 API Key，服务端不会发送鉴权请求头。</div>
                 )}
+                <div className="sm:col-span-2">
+                    <LabeledControl label="生成回调密钥（可选）">
+                        <div className="flex min-w-0 items-center gap-2">
+                            <Input.Password
+                                value={channel.webhookSecret || ""}
+                                status={webhookSecretInvalid ? "error" : undefined}
+                                autoComplete="off"
+                                placeholder={channel.hasWebhookSecret ? "已安全保存，留空不修改" : "至少 32 个字符；未配置时使用轮询"}
+                                onChange={(event) => onChange({ webhookSecret: event.target.value, clearWebhookSecret: false })}
+                            />
+                            {channel.hasWebhookSecret ? (
+                                <Button danger className="shrink-0" onClick={() => onChange({ webhookSecret: "", hasWebhookSecret: false, clearWebhookSecret: true })}>
+                                    清除
+                                </Button>
+                            ) : null}
+                        </div>
+                        <div className={`mt-1 text-xs ${webhookSecretInvalid ? "text-red-600 dark:text-red-400" : "text-stone-500 dark:text-stone-400"}`}>
+                            {webhookSecretInvalid ? "回调密钥至少需要 32 个字符" : `安全回调地址：/api/generation-webhooks/${channel.id}`}
+                        </div>
+                    </LabeledControl>
+                </div>
             </div>
             {custom ? <AdminChannelProtocolSetup channel={channel} protocolLocked onChange={onChange} /> : <ProtocolLockedSummary channel={channel} />}
         </div>

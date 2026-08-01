@@ -27,15 +27,22 @@ describe("PostgreSQL auth read paths", () => {
         });
     });
 
-    it("decrypts system channel API keys on the settings fast path", async () => {
+    it("decrypts system channel API keys and webhook secrets on the settings fast path", async () => {
         process.env.VOZEB_PRO_ENCRYPTION_KEY = "31".repeat(32);
         const encryptedApiKey = encryptSecretValue("provider-secret");
-        const { executor } = mockExecutor([[{ id: "default" }], [], [{ id: "channel-one", name: "主渠道", base_url: "https://api.example.com/v1", api_key_ciphertext: encryptedApiKey, api_format: "openai", models: [], enabled: true }]]);
+        const encryptedWebhookSecret = encryptSecretValue("0123456789abcdef0123456789abcdef");
+        const { executor } = mockExecutor([
+            [{ id: "default" }],
+            [],
+            [{ id: "channel-one", name: "主渠道", base_url: "https://api.example.com/v1", api_key_ciphertext: encryptedApiKey, webhook_secret_ciphertext: encryptedWebhookSecret, api_format: "openai", models: [], enabled: true }],
+        ]);
 
         const settings = await readPostgresAuthSettings(executor);
 
         expect(settings.systemChannels[0].apiKey).toBe("provider-secret");
         expect(settings.systemChannels[0].apiKey).not.toContain("vozeb-pro-secret:v1:");
+        expect(settings.systemChannels[0].webhookSecret).toBe("0123456789abcdef0123456789abcdef");
+        expect(settings.systemChannels[0].webhookSecret).not.toContain("vozeb-pro-secret:v1:");
     });
 
     it("round-trips channel health snapshots through PostgreSQL", async () => {
@@ -44,10 +51,13 @@ describe("PostgreSQL auth read paths", () => {
         expect(settings.systemChannels[0].healthResults).toEqual(healthResults);
 
         const { executor, query } = mockExecutor([[]]);
-        await upsertPostgresSystemChannels(executor, [{ id: "channel-one", name: "主渠道", baseUrl: "https://api.example.com/v1", apiKey: "encrypted", apiFormat: "openai", models: ["gpt-test"], enabled: true, healthResults }]);
+        await upsertPostgresSystemChannels(executor, [
+            { id: "channel-one", name: "主渠道", baseUrl: "https://api.example.com/v1", apiKey: "encrypted", webhookSecret: "encrypted-webhook", apiFormat: "openai", models: ["gpt-test"], enabled: true, healthResults },
+        ]);
         const [statement, values] = query.mock.calls[0];
         expect(statement).toContain("health_results");
-        expect(JSON.parse(String(values?.[8]))).toEqual(healthResults);
+        expect(values?.[4]).toBe("encrypted-webhook");
+        expect(JSON.parse(String(values?.[9]))).toEqual(healthResults);
         expect(POSTGRESQL_SCHEMA_SQL).toContain("health_results jsonb NOT NULL DEFAULT '{}'::jsonb");
     });
 

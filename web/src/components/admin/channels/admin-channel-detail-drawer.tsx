@@ -110,6 +110,7 @@ function ChannelOverview({
             <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2">
                 <OverviewValue label="Base URL" value={channel.baseUrl || "未配置"} />
                 <OverviewValue label="凭据" value={channelRequiresApiKey(channel) ? (channel.apiKey || channel.hasApiKey ? "已安全保存" : "未配置") : "无需凭据"} />
+                <OverviewValue label="生成回调" value={channel.webhookSecret || channel.hasWebhookSecret ? "已启用安全验签" : "未配置，使用任务轮询"} />
                 <OverviewValue label="协议" value={channelProtocolLabel(channel)} />
                 <OverviewValue label="上游模型" value={`${channel.models.length} 个`} />
                 <OverviewValue label="逻辑绑定" value={`${channelBindingCount(channel.id, settings)} 个`} />

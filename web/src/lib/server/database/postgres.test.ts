@@ -69,6 +69,10 @@ describe("PostgreSQL schema lifecycle", () => {
         expect(ddl).toContain("CREATE SEQUENCE IF NOT EXISTS vozeb_pro_user_account_id_seq");
         expect(ddl).toContain("account_id bigint NOT NULL DEFAULT nextval('vozeb_pro_user_account_id_seq')");
         expect(ddl).toContain("CREATE UNIQUE INDEX IF NOT EXISTS vozeb_pro_users_account_id_idx ON vozeb_pro_users (account_id)");
+        expect(ddl).toContain("webhook_secret_ciphertext text NOT NULL DEFAULT ''");
+        expect(ddl).toContain("CREATE UNIQUE INDEX IF NOT EXISTS vozeb_pro_generation_tasks_channel_upstream_idx ON vozeb_pro_generation_tasks (channel_id, upstream_task_id)");
+        expect(ddl).toContain("signature_timestamp timestamptz NOT NULL");
+        expect(ddl).toContain("conflict_count integer NOT NULL DEFAULT 0");
         expect(ddl).toContain("user_id text NOT NULL REFERENCES vozeb_pro_users(id) ON DELETE CASCADE");
         expect(ddl).toContain("CREATE TABLE IF NOT EXISTS vozeb_pro_account_deletion_requests");
         expect(ddl).toContain("'review_pending', 'reviewing', 'review_unavailable'");

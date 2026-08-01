@@ -140,6 +140,8 @@ export function SystemChannelEditor({
     };
     const displayedApiKey = channel.apiKey || revealedApiKey;
     const requiresApiKey = channelRequiresApiKey(channel);
+    const webhookSecret = channel.webhookSecret || "";
+    const webhookSecretInvalid = Boolean(webhookSecret.trim() && webhookSecret.trim().length < 32);
     return (
         <div className="rounded-lg border border-stone-200 bg-white p-3 shadow-sm shadow-stone-200/40 sm:p-4 dark:border-stone-800 dark:bg-stone-950 dark:shadow-black/20">
             <div className="flex items-start justify-between gap-2 sm:flex-col sm:gap-3 lg:flex-row lg:justify-between">
@@ -217,6 +219,35 @@ export function SystemChannelEditor({
                         <Input value="无需 API Key" disabled />
                     </LabeledControl>
                 )}
+                <div className="lg:col-span-3">
+                    <LabeledControl label="生成回调密钥（可选）">
+                        <div className="flex min-w-0 items-center gap-2">
+                            <Input.Password
+                                value={webhookSecret}
+                                status={webhookSecretInvalid ? "error" : undefined}
+                                autoComplete="off"
+                                placeholder={channel.hasWebhookSecret ? "已安全保存，留空不修改" : "至少 32 个字符；未配置时使用任务轮询"}
+                                onChange={(event) => onChange({ webhookSecret: event.target.value, clearWebhookSecret: false })}
+                            />
+                            {channel.hasWebhookSecret ? (
+                                <Popconfirm
+                                    title="清除已保存的生成回调密钥？"
+                                    description="清除后该渠道将只通过任务轮询获取结果。"
+                                    okText="清除"
+                                    cancelText="取消"
+                                    onConfirm={() => onChange({ webhookSecret: "", hasWebhookSecret: false, clearWebhookSecret: true })}
+                                >
+                                    <Button size="small" danger className="shrink-0">
+                                        清除
+                                    </Button>
+                                </Popconfirm>
+                            ) : null}
+                        </div>
+                        <div className={`mt-1 text-xs ${webhookSecretInvalid ? "text-red-600 dark:text-red-400" : "text-stone-500 dark:text-stone-400"}`}>
+                            {webhookSecretInvalid ? "回调密钥至少需要 32 个字符" : `安全回调地址：/api/generation-webhooks/${channel.id}`}
+                        </div>
+                    </LabeledControl>
+                </div>
             </div>
             <ChannelCapabilitySummary channel={channel} results={visibleHealthResults} />
             {visibleHealthResults.length ? (

@@ -147,10 +147,10 @@ Canvas 使用 `GET/POST/DELETE /api/canvas/projects` 与 `PATCH /api/canvas/proj
 
 - `POST /api/maintenance/generation-tasks/run`：使用 `Authorization: Bearer <VOZEB_PRO_MAINTENANCE_TOKEN>` 领取一个有界恢复批次；可通过 `x-vozeb-pro-worker-id` 同步心跳。
 - `POST /api/maintenance/generation-tasks/heartbeat`：使用相同 Bearer Token 和必填 `x-vozeb-pro-worker-id` 上报心跳。
-- `POST /api/generation-webhooks/{channelId}`：接收不超过 1MB 的 JSON；`x-vozeb-pro-signature` 或 `x-signature` 传递原始请求体的 HMAC-SHA256 十六进制签名，`x-vozeb-pro-event-id` 可提供稳定事件 ID。
+- `POST /api/generation-webhooks/{channelId}`：接收不超过 1MB 的 JSON；要求稳定的 `x-vozeb-pro-event-id`、5 分钟误差内的 `x-vozeb-pro-timestamp` 和 `x-vozeb-pro-signature`。签名使用当前渠道独立密钥，对 `JSON.stringify([channelId, timestamp, eventId]) + "\n" + rawBody` 生成 HMAC-SHA256 十六进制摘要。
 - `POST /api/admin/generation-operations/{type}/{id}/review`：管理员处理 `needs_review` 的 `text/image/video/audio` 任务，动作仅允许 `resume_upstream`、`provide_result` 或 `confirm_failed`。
 
-维护接口未配置令牌时返回 503，认证失败返回 401。生成回调未配置密钥返回 503，签名失败返回 401；它只匹配当前启用渠道下已有的图片、视频或音频任务，并使用 PostgreSQL 中的 `(channelId, eventId)` 保证幂等。回调已登记但尚未匹配任务时返回成功并保留对账状态，不会创建新任务或重复扣费。以上接口均返回 `{ code, data, msg }`，日志与响应不得包含维护令牌、Webhook 密钥、渠道 API Key 或完整鉴权头。
+维护接口未配置令牌时返回 503，认证失败返回 401。当前渠道未配置安全回调密钥时返回 409 并继续使用任务轮询；签名错误或时间戳过期返回 401。可信回调只按 `(channelId, upstreamTaskId)` 精确匹配一条已有图片、视频或音频任务，并使用 PostgreSQL 中的 `(channelId, eventId)` 保证幂等；相同事件 ID 对应不同载荷时记录冲突并返回 409。回调已登记但尚未匹配任务时返回成功并保留对账状态，不会创建新任务或重复扣费。以上接口均返回 `{ code, data, msg }`，日志与响应不得包含维护令牌、Webhook 密钥、渠道 API Key 或完整鉴权头。
 
 PostgreSQL Provider 在 Run、事件和助手消息的同一事务中写入 `pg_notify('vozeb_pro_run_events', runId)`；SSE 进程使用独立连接 `LISTEN` 后立即读取持久事件。通知只用于唤醒，跨实例恢复仍以事件表为准，并保留 2.5 秒轮询和 15 秒心跳作为断线或通知丢失兜底。文件 Provider 继续使用进程内通知。
 
