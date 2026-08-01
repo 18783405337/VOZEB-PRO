@@ -45,6 +45,34 @@ describe("admin backup policy", () => {
         });
     });
 
+    it("preserves users and channels that are absent from an account-config backup", () => {
+        const currentWithExtraData = {
+            ...current,
+            users: [...current.users, { id: "user-2", accountId: 2, username: "member", email: "member@example.com", passwordHash: "member-hash", pointsBalance: 20 }],
+            settings: {
+                ...current.settings,
+                systemChannels: [...current.settings.systemChannels, { id: "channel-2", name: "备用渠道", apiKey: "backup-secret" }],
+            },
+        };
+        const imported = sanitizeAuthBackup({
+            ...current,
+            users: [{ ...current.users[0], pointsBalance: 99 }],
+        });
+
+        expect(mergeAuthBackupSecrets(imported, currentWithExtraData)).toMatchObject({
+            users: [
+                { id: "user-1", passwordHash: "hash-current", pointsBalance: 99 },
+                { id: "user-2", passwordHash: "member-hash", pointsBalance: 20 },
+            ],
+            settings: {
+                systemChannels: [
+                    { id: "channel-1", apiKey: "api-secret" },
+                    { id: "channel-2", apiKey: "backup-secret" },
+                ],
+            },
+        });
+    });
+
     it("rejects users that do not exist on the target server", () => {
         const imported = { ...(sanitizeAuthBackup(current) as Record<string, unknown>), users: [{ id: "other", username: "other", role: "admin", status: "active" }] };
         expect(() => mergeAuthBackupSecrets(imported, current)).toThrow("当前服务器不存在");

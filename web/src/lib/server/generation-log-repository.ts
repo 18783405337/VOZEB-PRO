@@ -326,6 +326,16 @@ export async function writePostgresGenerationLogDbWithExecutor(db: GenerationLog
     await insertPostgresGenerationLogs(client, logs);
 }
 
+export async function upsertPostgresGenerationLogDbWithExecutor(db: GenerationLogDatabase, client: QueryExecutor) {
+    const normalized = normalizeDb(db);
+    const userResult = await client.query("SELECT id FROM users");
+    const userIds = new Set(userResult.rows.map((row) => dbText(row.id)));
+    await insertPostgresGenerationLogs(
+        client,
+        normalized.logs.filter((log) => userIds.has(log.userId)),
+    );
+}
+
 export async function insertPostgresGenerationLogs(db: QueryExecutor, logs: StoredGenerationLog[]) {
     for (const log of logs) {
         await db.query(
@@ -335,6 +345,28 @@ export async function insertPostgresGenerationLogs(db: QueryExecutor, logs: Stor
                 duration_ms, count, success_count, fail_count, request_snapshot, task_id, error, created_at, updated_at, completed_at
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb, $18, $19, $20, $21, $22)
+            ON CONFLICT (id) DO UPDATE SET
+                user_id = EXCLUDED.user_id,
+                conversation_id = EXCLUDED.conversation_id,
+                username = EXCLUDED.username,
+                display_name = EXCLUDED.display_name,
+                kind = EXCLUDED.kind,
+                source = EXCLUDED.source,
+                status = EXCLUDED.status,
+                title = EXCLUDED.title,
+                prompt = EXCLUDED.prompt,
+                model = EXCLUDED.model,
+                summary = EXCLUDED.summary,
+                duration_ms = EXCLUDED.duration_ms,
+                count = EXCLUDED.count,
+                success_count = EXCLUDED.success_count,
+                fail_count = EXCLUDED.fail_count,
+                request_snapshot = EXCLUDED.request_snapshot,
+                task_id = EXCLUDED.task_id,
+                error = EXCLUDED.error,
+                created_at = EXCLUDED.created_at,
+                updated_at = EXCLUDED.updated_at,
+                completed_at = EXCLUDED.completed_at
             `,
             [
                 log.id,
@@ -361,6 +393,7 @@ export async function insertPostgresGenerationLogs(db: QueryExecutor, logs: Stor
                 log.completedAt || null,
             ],
         );
+        await db.query("DELETE FROM generation_log_assets WHERE generation_log_id = $1", [log.id]);
         await insertPostgresGenerationLogAssets(db, log.id, log.assets);
     }
 }
