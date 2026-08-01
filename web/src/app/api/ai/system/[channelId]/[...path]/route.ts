@@ -3,7 +3,10 @@ import { NextResponse } from "next/server";
 import { consumeUserPoints, getAuthSettings, isQuotaExceededError, refundUserPoints, type ApiCallFormat, type GenerationPointMultipliers, type PointUsageKind } from "@/lib/auth/store";
 import { getCurrentUser } from "@/lib/auth/session";
 import { DEFAULT_CHANNEL_CONNECT_ERROR } from "@/lib/server/generation-errors";
-import { limitMediaResponseBody, mediaResponseExceedsLimit } from "@/lib/server/media-response-limit";
+import { UnsupportedMediaContentError } from "@/lib/server/media-content-validation";
+import { acquireMediaConcurrency, withMediaConcurrency } from "@/lib/server/media-concurrency";
+import { MediaProxyResponseError, fetchSafeUpstreamMedia } from "@/lib/server/media-proxy-service";
+import { MAX_MEDIA_PROXY_BYTES, MAX_MEDIA_PROXY_RANGE_BYTES, normalizeMediaProxyRange } from "@/lib/server/media-response-limit";
 import { configureServerProxyDispatcher } from "@/lib/server/proxy-dispatcher";
 import { checkMediaProxyRateLimit, isSafeOutboundUrl, rateLimitHeaders } from "@/lib/server/security";
 import { resolveLogicalBillingModel } from "@/lib/server/logical-model-router";
@@ -67,7 +70,7 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
     if (isMediaProxyPath(path)) {
         const rate = await checkMediaProxyRateLimit(userId, request);
         if (!rate.allowed) return NextResponse.json({ error: "媒体访问过于频繁，请稍后重试" }, { status: 429, headers: rateLimitHeaders(rate) });
-        return proxySystemMediaRequest(request, channel);
+        return proxySystemMediaRequest(request, channel, userId);
     }
 
     const contentType = request.headers.get("content-type");
@@ -197,39 +200,56 @@ function normalizePointsIdempotencyKey(value: string | null) {
 
 type SystemMediaChannel = { baseUrl: string; apiFormat: ApiCallFormat; apiKey: string; advancedConfig?: import("@/lib/auth/store").SystemChannelAdvancedConfig };
 
-async function proxySystemMediaRequest(request: Request, channel: SystemMediaChannel) {
+async function proxySystemMediaRequest(request: Request, channel: SystemMediaChannel, userId: string) {
     if (request.method !== "GET" && request.method !== "HEAD") return NextResponse.json({ error: "Media proxy only supports GET and HEAD" }, { status: 405 });
     const target = mediaTargetRequest(channel.baseUrl, channel.apiFormat, new URL(request.url).searchParams.get("url") || "", isGlobalAiOpcChannel(channel.advancedConfig));
     if (!target) return NextResponse.json({ error: "Invalid media url" }, { status: 400 });
     if (!(await isSafeOutboundUrl(target.url, { allowCredentials: false }))) return NextResponse.json({ error: "媒体地址不允许访问内网或保留地址" }, { status: 400 });
+    const range = normalizeMediaProxyRange(request.headers.get("range"));
+    if (range === "invalid") return NextResponse.json({ error: "Invalid media range" }, { status: 416 });
+    const permit = acquireMediaConcurrency("proxy", `user:${userId}`);
+    if (!permit) return NextResponse.json({ error: "媒体并发访问过多，请稍后重试" }, { status: 429, headers: { "Retry-After": "2" } });
 
     const headers = new Headers();
-    const range = request.headers.get("range");
-    if (range) headers.set("range", range);
     if (target.includeAuth) {
         Object.entries(protocolAuthHeaders(channel.apiKey, channel.advancedConfig, isGlobalAiOpcChannel(channel.advancedConfig) ? "openai" : channel.apiFormat)).forEach(([key, value]) => headers.set(key, value));
     }
 
+    const signal = AbortSignal.any([request.signal, AbortSignal.timeout(SYSTEM_MEDIA_TIMEOUT_MS)]);
     try {
-        const upstream = await fetchSystemMedia(target, request.method, headers, request.signal);
-
-        if (mediaResponseExceedsLimit(upstream.headers)) return NextResponse.json({ error: "Media is too large" }, { status: 413 });
-
-        return new Response(request.method === "HEAD" ? null : limitMediaResponseBody(upstream.body), {
-            status: upstream.status,
-            statusText: upstream.statusText,
-            headers: mediaResponseHeaders(upstream.headers),
+        const maxBytes = range ? MAX_MEDIA_PROXY_RANGE_BYTES : MAX_MEDIA_PROXY_BYTES;
+        const media = await fetchSafeUpstreamMedia({
+            method: request.method,
+            range,
+            maxBytes,
+            timeoutMs: SYSTEM_MEDIA_TIMEOUT_MS,
+            fetcher: (nextMethod, nextRange) => {
+                const requestHeaders = new Headers(headers);
+                if (nextRange) requestHeaders.set("range", nextRange);
+                return fetchSystemMedia(target, nextMethod, requestHeaders, signal);
+            },
         });
+        const response = new Response(media.body, {
+            status: media.response.status,
+            statusText: media.response.statusText,
+            headers: mediaResponseHeaders(media.response.headers, media.mimeType),
+        });
+        if (request.method === "HEAD") {
+            permit.release();
+            return response;
+        }
+        return withMediaConcurrency(response, permit);
     } catch (error) {
+        permit.release();
+        if (error instanceof UnsupportedMediaContentError || error instanceof MediaProxyResponseError) return NextResponse.json({ error: error.message }, { status: error.status });
         console.error("System media proxy request failed", error instanceof Error ? error.message : error);
         return NextResponse.json({ error: DEFAULT_CHANNEL_CONNECT_ERROR }, { status: 502 });
     }
 }
 
-async function fetchSystemMedia(target: { url: string; includeAuth: boolean }, method: "GET" | "HEAD", baseHeaders: Headers, requestSignal: AbortSignal) {
+async function fetchSystemMedia(target: { url: string; includeAuth: boolean }, method: "GET" | "HEAD", baseHeaders: Headers, signal: AbortSignal) {
     let currentUrl = target.url;
     let includeAuth = target.includeAuth;
-    const signal = AbortSignal.any([requestSignal, AbortSignal.timeout(SYSTEM_MEDIA_TIMEOUT_MS)]);
     for (let redirects = 0; redirects <= MAX_SYSTEM_MEDIA_REDIRECTS; redirects += 1) {
         if (!(await isSafeOutboundUrl(currentUrl, { allowCredentials: false }))) throw new Error("Unsafe media redirect");
         const headers = new Headers(baseHeaders);
@@ -280,13 +300,17 @@ function directoryBaseUrl(url: URL) {
     return next.toString();
 }
 
-function mediaResponseHeaders(headers: Headers) {
+function mediaResponseHeaders(headers: Headers, mimeType: string) {
     const nextHeaders = new Headers();
-    ["content-type", "content-length", "content-range", "accept-ranges", "etag", "last-modified", "cache-control"].forEach((key) => {
+    ["content-length", "content-range", "accept-ranges", "etag", "last-modified", "cache-control"].forEach((key) => {
         const value = headers.get(key);
         if (value) nextHeaders.set(key, value);
     });
+    nextHeaders.set("content-type", mimeType);
     nextHeaders.set("cache-control", "private, max-age=600");
+    nextHeaders.set("cross-origin-resource-policy", "same-site");
+    nextHeaders.set("x-content-type-options", "nosniff");
+    nextHeaders.set("x-robots-tag", "noindex, nofollow, noarchive");
     return nextHeaders;
 }
 

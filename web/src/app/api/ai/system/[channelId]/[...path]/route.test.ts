@@ -6,6 +6,9 @@ const mocks = vi.hoisted(() => ({
     getAuthSettings: vi.fn(),
     refundUserPoints: vi.fn(),
     safeUrl: vi.fn(),
+    acquire: vi.fn(),
+    wrap: vi.fn(),
+    release: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session", () => ({ getCurrentUser: vi.fn(async () => ({ id: "user-one" })) }));
@@ -16,6 +19,7 @@ vi.mock("@/lib/auth/store", () => ({
     refundUserPoints: mocks.refundUserPoints,
 }));
 vi.mock("@/lib/server/proxy-dispatcher", () => ({ configureServerProxyDispatcher: vi.fn() }));
+vi.mock("@/lib/server/media-concurrency", () => ({ acquireMediaConcurrency: mocks.acquire, withMediaConcurrency: mocks.wrap }));
 vi.mock("@/lib/server/security", () => ({
     checkMediaProxyRateLimit: mocks.checkMediaProxyRateLimit,
     isSafeOutboundUrl: mocks.safeUrl,
@@ -23,6 +27,7 @@ vi.mock("@/lib/server/security", () => ({
 }));
 
 import { GET, POST } from "./route";
+import { MEDIA_SNIFF_RANGE } from "@/lib/server/media-content-validation";
 
 const context = { params: Promise.resolve({ channelId: "channel-one", path: ["_media"] }) };
 
@@ -33,6 +38,9 @@ describe("system media proxy", () => {
         mocks.refundUserPoints.mockReset();
         mocks.checkMediaProxyRateLimit.mockResolvedValue({ allowed: true, remaining: 119, resetAt: Date.now() + 60_000 });
         mocks.safeUrl.mockResolvedValue(true);
+        mocks.release.mockReset();
+        mocks.acquire.mockReturnValue({ release: mocks.release });
+        mocks.wrap.mockImplementation((response: Response) => response);
         mocks.getAuthSettings.mockResolvedValue({
             systemChannels: [{ id: "channel-one", enabled: true, baseUrl: "https://api.example.com/v1", apiKey: "secret", apiFormat: "openai", models: [] }],
         });
@@ -58,12 +66,43 @@ describe("system media proxy", () => {
     });
 
     it("forces private caching for channel media", async () => {
-        vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("media", { headers: { "cache-control": "public, max-age=86400", "content-type": "image/png" } }));
+        vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(pngBytes(), { headers: { "cache-control": "public, max-age=86400", "content-type": "text/html" } }));
 
         const response = await GET(request(), context);
 
         expect(response.status).toBe(200);
         expect(response.headers.get("cache-control")).toBe("private, max-age=600");
+        expect(response.headers.get("content-type")).toBe("image/png");
+        expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+    });
+
+    it("accepts octet-stream media and rejects executable bodies", async () => {
+        const fetchMock = vi
+            .spyOn(globalThis, "fetch")
+            .mockResolvedValueOnce(new Response(pngBytes(), { headers: { "content-type": "application/octet-stream" } }))
+            .mockResolvedValueOnce(new Response(unsafeBody("<!doctype html><script>alert(1)</script>"), { headers: { "content-type": "image/png" } }));
+
+        const accepted = await GET(request(), context);
+        const rejected = await GET(request(), context);
+
+        expect(accepted.status).toBe(200);
+        expect(accepted.headers.get("content-type")).toBe("image/png");
+        expect(rejected.status).toBe(415);
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("probes the file signature before serving a non-zero range", async () => {
+        const fetchMock = vi
+            .spyOn(globalThis, "fetch")
+            .mockResolvedValueOnce(new Response(mp4Bytes(), { status: 206, headers: { "content-type": "application/octet-stream" } }))
+            .mockResolvedValueOnce(new Response(new Uint8Array([1, 2, 3]), { status: 206, headers: { "content-type": "text/html" } }));
+
+        const response = await GET(request("https://cdn.example.com/video.mp4", { range: "bytes=100-" }), context);
+
+        expect(response.status).toBe(206);
+        expect(new Headers(fetchMock.mock.calls[0][1]?.headers).get("range")).toBe(MEDIA_SNIFF_RANGE);
+        expect(new Headers(fetchMock.mock.calls[1][1]?.headers).get("range")).toBe(`bytes=100-${100 + 32 * 1024 * 1024 - 1}`);
+        expect(response.headers.get("content-type")).toBe("video/mp4");
     });
 
     it("checks every media redirect before fetching the next hop", async () => {
@@ -90,7 +129,7 @@ describe("system media proxy", () => {
                 },
             ],
         });
-        const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("media", { headers: { "content-type": "video/mp4" } }));
+        const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(mp4Bytes(), { headers: { "content-type": "application/octet-stream" } }));
 
         const response = await GET(request("/v1/result/task-one"), context);
 
@@ -405,8 +444,8 @@ describe("custom protocol model routing", () => {
     });
 });
 
-function request(url = "https://cdn.example.com/media.png") {
-    return new Request(`http://localhost/api/ai/system/channel-one/_media?url=${encodeURIComponent(url)}`);
+function request(url = "https://cdn.example.com/media.png", headers?: HeadersInit) {
+    return new Request(`http://localhost/api/ai/system/channel-one/_media?url=${encodeURIComponent(url)}`, { headers });
 }
 
 function textContext() {
@@ -415,4 +454,22 @@ function textContext() {
 
 function chatRequest(body: unknown) {
     return new Request("http://localhost/api/ai/system/channel-one/chat/completions", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+}
+function pngBytes() {
+    return new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 0x49, 0x48, 0x44, 0x52]);
+}
+
+function mp4Bytes() {
+    return new Uint8Array([0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d, 0, 0, 2, 0, 0x69, 0x73, 0x6f, 0x6d, 0x6d, 0x70, 0x34, 0x31]);
+}
+
+function unsafeBody(source: string) {
+    const bytes = new TextEncoder().encode(source);
+    return new ReadableStream<Uint8Array>({
+        start(controller) {
+            const repeated = new Uint8Array(8 * 1024);
+            for (let offset = 0; offset < repeated.length; offset += bytes.length) repeated.set(bytes.subarray(0, Math.min(bytes.length, repeated.length - offset)), offset);
+            controller.enqueue(repeated);
+        },
+    });
 }

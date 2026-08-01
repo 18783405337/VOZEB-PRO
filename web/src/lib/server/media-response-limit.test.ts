@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { MAX_MEDIA_PROXY_RANGE_BYTES, normalizeMediaProxyRange } from "./media-response-limit";
+import { limitMediaResponseBody, MAX_MEDIA_PROXY_RANGE_BYTES, normalizeMediaProxyRange } from "./media-response-limit";
+
+afterEach(() => vi.useRealTimers());
 
 describe("normalizeMediaProxyRange", () => {
     it("keeps normal single ranges and bounds open or oversized ranges", () => {
@@ -15,5 +17,33 @@ describe("normalizeMediaProxyRange", () => {
         expect(normalizeMediaProxyRange("bytes=-")).toBe("invalid");
         expect(normalizeMediaProxyRange("bytes=5-2")).toBe("invalid");
         expect(normalizeMediaProxyRange("bytes=999999999999999999999-")).toBe("invalid");
+    });
+});
+
+describe("limitMediaResponseBody", () => {
+    it("cancels a stream that grows beyond the byte limit", async () => {
+        const cancel = vi.fn();
+        const body = new ReadableStream<Uint8Array>({
+            start(controller) {
+                controller.enqueue(new Uint8Array([1, 2, 3]));
+            },
+            cancel,
+        });
+
+        await expect(new Response(limitMediaResponseBody(body, 2)).arrayBuffer()).rejects.toThrow("Media is too large");
+        expect(cancel).toHaveBeenCalledWith("Media is too large");
+    });
+
+    it("cancels a stalled response body when the download timeout expires", async () => {
+        vi.useFakeTimers();
+        const cancel = vi.fn();
+        const body = new ReadableStream<Uint8Array>({ cancel });
+        const read = limitMediaResponseBody(body, 1024, 100)?.getReader().read();
+        const rejected = expect(read).rejects.toThrow("Media download timed out");
+
+        await vi.advanceTimersByTimeAsync(100);
+
+        await rejected;
+        expect(cancel).toHaveBeenCalledWith("Media download timed out");
     });
 });
