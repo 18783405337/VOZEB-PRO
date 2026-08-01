@@ -87,7 +87,7 @@ describe("workbench agent model routing", () => {
 
         expect(response.status).toBe(200);
         expect(headers.get("x-vozeb-pro-logical-model")).toBe("planner");
-        expect(headers.get("x-vozeb-pro-points-idempotency-key")).toMatch(/^workbench-plan:[a-f0-9]{32}:chat-json$/);
+        expect(headers.get("x-vozeb-pro-points-idempotency-key")).toMatch(/^workbench-plan:[a-f0-9]{32}$/);
         expect(init.signal).toBeInstanceOf(AbortSignal);
     });
 
@@ -278,8 +278,8 @@ describe("workbench agent model routing", () => {
         }));
 
         expect(response.status).toBe(200);
-        expect(calls.find((call) => call.model === "vendor/planner")?.key).toMatch(/^workbench-plan:[a-f0-9]{32}:chat-json$/);
-        expect(calls.find((call) => call.model === "vendor/planner-backup")?.key).toMatch(/^workbench-plan:[a-f0-9]{32}:chat-json$/);
+        expect(calls.find((call) => call.model === "vendor/planner")?.key).toMatch(/^workbench-plan:[a-f0-9]{32}$/);
+        expect(calls.find((call) => call.model === "vendor/planner-backup")?.key).toMatch(/^workbench-plan:[a-f0-9]{32}$/);
         expect(calls.find((call) => call.model === "vendor/planner")?.key).not.toBe(calls.find((call) => call.model === "vendor/planner-backup")?.key);
     });
 

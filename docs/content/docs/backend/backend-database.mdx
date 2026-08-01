@@ -48,7 +48,7 @@ VOZEB PRO 的 PostgreSQL 真实表名统一使用项目名前缀 `vozeb_pro_`。
 - `vozeb_pro_rate_limits`：PostgreSQL 多实例共享的接口限流窗口，保存哈希后的业务键、原子请求计数和重置时间；数据库不可用时服务端临时退回进程内保护。
 - `vozeb_pro_email_codes`：注册、换绑邮箱、找回密码验证码及失败尝试次数。
 - `vozeb_pro_quota_usage`：套餐每日积分和次数占用。
-- `vozeb_pro_point_records`：积分流水。
+- `vozeb_pro_point_records`：积分流水；非空幂等键全局唯一，AI 消费同时保存服务端请求指纹，用于拒绝同一业务身份对应不同模型、渠道、调用类型或请求参数的重放。
 - `vozeb_pro_billing_products`：可售卖套餐商品，分别记录一次性永久积分、套餐有效期内每日赠送积分、价格、生效周期和上下架状态。
 - `vozeb_pro_promotion_campaigns` / `vozeb_pro_promotion_products`：限时促销活动及商品活动价；有效区间使用 `[starts_at, ends_at)`，活动价必须低于商品日常价，同一商品的启用活动不得时间重叠。
 - `vozeb_pro_coupon_templates` / `vozeb_pro_coupon_template_products`：固定金额或比例优惠券模板及适用商品，保存门槛、封顶、是否叠加活动、领取开关、发行总量、每用户限领、有效期和发行/核销计数。

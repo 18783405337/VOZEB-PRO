@@ -444,7 +444,7 @@ export class PointsRepository {
         const permanentBalanceAfter = record.permanentBalanceAfter ?? record.balanceAfter;
         const dailyBalanceAfter = record.dailyBalanceAfter ?? 0;
         const result = await this.db.query(
-            "INSERT INTO point_records (id, user_id, type, amount, balance_after, permanent_amount, daily_amount, permanent_balance_after, daily_balance_after, description, model, idempotency_key, source_record_id, source_date, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING *",
+            "INSERT INTO point_records (id, user_id, type, amount, balance_after, permanent_amount, daily_amount, permanent_balance_after, daily_balance_after, description, model, idempotency_key, request_fingerprint, source_record_id, source_date, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING *",
             [
                 record.id,
                 record.userId,
@@ -458,6 +458,7 @@ export class PointsRepository {
                 record.description,
                 record.model || null,
                 record.idempotencyKey || null,
+                record.requestFingerprint || null,
                 record.sourceRecordId || null,
                 record.sourceDate || null,
                 record.createdAt,

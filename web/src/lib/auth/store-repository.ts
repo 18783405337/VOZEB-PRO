@@ -503,6 +503,7 @@ export function mapPostgresPointRecord(row: Record<string, unknown>): StoredPoin
         description: dbText(row.description),
         model: dbOptionalText(row.model),
         idempotencyKey: dbOptionalText(row.idempotency_key),
+        requestFingerprint: dbOptionalText(row.request_fingerprint),
         sourceRecordId: dbOptionalText(row.source_record_id),
         sourceDate: row.source_date ? dbDate(row.source_date) : undefined,
         createdAt: dbIso(row.created_at),
@@ -763,8 +764,8 @@ export async function insertPostgresQuotaUsage(db: QueryExecutor, quotaUsage: St
 export async function insertPostgresPointRecords(db: QueryExecutor, records: StoredPointRecord[]) {
     for (const record of records) {
         await db.query(
-            `INSERT INTO point_records (id, user_id, type, amount, balance_after, permanent_amount, daily_amount, permanent_balance_after, daily_balance_after, description, model, idempotency_key, source_record_id, source_date, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            `INSERT INTO point_records (id, user_id, type, amount, balance_after, permanent_amount, daily_amount, permanent_balance_after, daily_balance_after, description, model, idempotency_key, request_fingerprint, source_record_id, source_date, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
              ON CONFLICT (id) DO UPDATE SET
                 user_id = EXCLUDED.user_id,
                 type = EXCLUDED.type,
@@ -777,6 +778,7 @@ export async function insertPostgresPointRecords(db: QueryExecutor, records: Sto
                 description = EXCLUDED.description,
                 model = EXCLUDED.model,
                 idempotency_key = EXCLUDED.idempotency_key,
+                request_fingerprint = EXCLUDED.request_fingerprint,
                 source_record_id = EXCLUDED.source_record_id,
                 source_date = EXCLUDED.source_date,
                 created_at = EXCLUDED.created_at`,
@@ -793,6 +795,7 @@ export async function insertPostgresPointRecords(db: QueryExecutor, records: Sto
                 record.description,
                 record.model || null,
                 record.idempotencyKey || null,
+                record.requestFingerprint || null,
                 record.sourceRecordId || null,
                 record.sourceDate || null,
                 record.createdAt,

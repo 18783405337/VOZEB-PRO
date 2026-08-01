@@ -143,6 +143,7 @@ export type PointRecord = {
     description: string;
     model?: string;
     idempotencyKey?: string;
+    requestFingerprint?: string;
     sourceRecordId?: string;
     sourceDate?: string;
     createdAt: string;

@@ -123,7 +123,7 @@ describe("text planning runtime protocol matrix", () => {
         expect(requestBody()).toMatchObject({ deployment: "model-one", conversation: expect.arrayContaining([{ role: "user", content: "test" }]) });
     });
 
-    it("每种协议使用独立且稳定的计费幂等键", async () => {
+    it("只为上游协议作用域追加后缀，不改写服务端计费身份", async () => {
         mockedFetch.mockResolvedValue(chatJsonResponse());
 
         await requestStructuredText({
@@ -132,7 +132,7 @@ describe("text planning runtime protocol matrix", () => {
         });
 
         const headers = new Headers(mockedFetch.mock.calls[0]?.[1]?.headers);
-        expect(headers.get("x-vozeb-pro-points-idempotency-key")).toBe("planning-one:chat-json");
+        expect(headers.get("x-vozeb-pro-points-idempotency-key")).toBe("planning-one");
         expect(headers.get("idempotency-key")).toBe("planning-one:chat-json");
     });
 

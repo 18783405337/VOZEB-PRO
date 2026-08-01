@@ -413,7 +413,9 @@ export type PublicPointRecord = {
     createdAt: string;
 };
 
-export type StoredPointRecord = PublicPointRecord;
+export type StoredPointRecord = PublicPointRecord & {
+    requestFingerprint?: string;
+};
 
 export type StoredDailyPlanPointWallet = {
     userId: string;

@@ -43,7 +43,7 @@ export async function reviewCreativeOutputs(input: { origin: string; cookie: str
 
     try {
         const idempotencyKey = input.billingId ? systemAiIdempotencyKey("creative-review", input.userId, input.billingId, resolved.channel.id) : undefined;
-        const headers = { "Content-Type": "application/json", cookie: input.cookie, ...systemAiBillingHeaders(model, idempotencyKey) };
+        const headers = { "Content-Type": "application/json", cookie: input.cookie, ...systemAiBillingHeaders(model, idempotencyKey, resolved.upstreamModel) };
         let call = await callResponses(input.origin, resolved.channel.id, resolved.upstreamModel, responsesInput, headers, input.userId, model);
         if (!call) call = await callChat(input.origin, resolved.channel.id, resolved.upstreamModel, chatMessages, headers, input.userId, model);
         if (!call) return unavailableCreativeReview("默认文本模型没有返回有效复盘结果，生成结果已保留。");

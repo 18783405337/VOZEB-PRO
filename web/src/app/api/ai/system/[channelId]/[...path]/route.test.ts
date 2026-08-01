@@ -15,6 +15,7 @@ vi.mock("@/lib/auth/session", () => ({ getCurrentUser: vi.fn(async () => ({ id: 
 vi.mock("@/lib/auth/store", () => ({
     consumeUserPoints: mocks.consumeUserPoints,
     getAuthSettings: mocks.getAuthSettings,
+    isAuthInputError: (error: unknown) => Boolean(error && typeof error === "object" && "status" in error),
     isQuotaExceededError: vi.fn(() => false),
     refundUserPoints: mocks.refundUserPoints,
 }));
@@ -26,8 +27,9 @@ vi.mock("@/lib/server/security", () => ({
     rateLimitHeaders: vi.fn(() => ({ "Retry-After": "60" })),
 }));
 
-import { GET, POST } from "./route";
+import { GET, POST, PUT } from "./route";
 import { MEDIA_SNIFF_RANGE } from "@/lib/server/media-content-validation";
+import { systemAiBillingHeaders, systemAiPointsIdempotencyKey } from "@/lib/server/system-ai-billing";
 
 const context = { params: Promise.resolve({ channelId: "channel-one", path: ["_media"] }) };
 
@@ -149,7 +151,7 @@ describe("GlobalAiOpc native text proxy", () => {
         mocks.safeUrl.mockResolvedValue(true);
         mocks.getAuthSettings.mockResolvedValue({
             generationPointMultipliers: {},
-            logicalModels: [],
+            logicalModels: [logicalModel("gemini-text", "text", "gemini-3.1-pro-preview")],
             systemChannels: [
                 {
                     id: "channel-one",
@@ -197,7 +199,7 @@ describe("GlobalAiOpc native text proxy", () => {
         const response = await POST(chatRequest({ model: "vendor-text", messages: [{ role: "user", content: "hello" }] }), textContext());
 
         expect(response.status).toBe(200);
-        expect(mocks.consumeUserPoints).toHaveBeenCalledWith("user-one", "writer", 1, "text", undefined);
+        expect(mocks.consumeUserPoints).toHaveBeenCalledWith("user-one", "writer", 1, "text", expect.stringMatching(/^system-ai:[a-f0-9]{64}$/), expect.stringMatching(/^[a-f0-9]{64}$/));
     });
 
     it("uses the validated preferred logical model and stable idempotency key when aliases are shared", async () => {
@@ -216,25 +218,83 @@ describe("GlobalAiOpc native text proxy", () => {
                 "content-type": "application/json",
                 "idempotency-key": "upstream-request-one",
                 "x-client-request-id": "client-request-one",
-                "x-vozeb-pro-logical-model": "writer-pro",
-                "x-vozeb-pro-points-idempotency-key": "text-task:one:attempt:1",
+                ...systemAiBillingHeaders("writer-pro", "text-task:one:attempt:1", "vendor-shared"),
             },
             body: JSON.stringify({ model: "vendor-shared", messages: [{ role: "user", content: "hello" }] }),
         });
 
         const response = await POST(request, textContext());
+        const expectedKey = systemAiPointsIdempotencyKey({
+            userId: "user-one",
+            businessRequestId: "text-task:one:attempt:1",
+            logicalModel: "writer-pro",
+            channelId: "channel-one",
+            upstreamModel: "vendor-shared",
+            callType: "text:create:/chat/completions",
+        });
 
         expect(response.status).toBe(200);
-        expect(mocks.consumeUserPoints).toHaveBeenCalledWith("user-one", "writer-pro", 1, "text", "system-ai:text-task:one:attempt:1:chat/completions");
+        expect(mocks.consumeUserPoints).toHaveBeenCalledWith("user-one", "writer-pro", 1, "text", expectedKey, expect.stringMatching(/^[a-f0-9]{64}$/));
         const upstreamHeaders = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
         expect(upstreamHeaders.get("idempotency-key")).toBe("upstream-request-one");
         expect(upstreamHeaders.get("x-client-request-id")).toBe("client-request-one");
     });
 
+    it("ignores an unsigned client billing key and creates a new local identity for each request", async () => {
+        mocks.getAuthSettings.mockResolvedValue({
+            generationPointMultipliers: {},
+            logicalModels: [logicalModel("writer", "text", "vendor-text")],
+            systemChannels: [{ id: "channel-one", enabled: true, baseUrl: "https://api.example.com/v1", apiKey: "secret", apiFormat: "openai", models: ["vendor-text"] }],
+        });
+        vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ choices: [{ message: { content: "OK" } }] }));
+        const createRequest = () =>
+            new Request("http://localhost/api/ai/system/channel-one/chat/completions", {
+                method: "POST",
+                headers: { "content-type": "application/json", "x-vozeb-pro-logical-model": "writer", "x-vozeb-pro-points-idempotency-key": "forged-client-key" },
+                body: JSON.stringify({ model: "vendor-text", messages: [{ role: "user", content: "hello" }] }),
+            });
+
+        await POST(createRequest(), textContext());
+        await POST(createRequest(), textContext());
+
+        expect(mocks.consumeUserPoints.mock.calls[0][4]).not.toBe(mocks.consumeUserPoints.mock.calls[1][4]);
+        expect(mocks.consumeUserPoints.mock.calls[0][5]).toBe(mocks.consumeUserPoints.mock.calls[1][5]);
+    });
+
+    it("returns 409 when one signed business request is replayed with a different payload", async () => {
+        mocks.getAuthSettings.mockResolvedValue({
+            generationPointMultipliers: {},
+            logicalModels: [logicalModel("writer", "text", "vendor-text")],
+            systemChannels: [{ id: "channel-one", enabled: true, baseUrl: "https://api.example.com/v1", apiKey: "secret", apiFormat: "openai", models: ["vendor-text"] }],
+        });
+        let firstIdentity: { key: string; fingerprint: string } | undefined;
+        mocks.consumeUserPoints.mockImplementation(async (_userId, _model, _amount, _usageKind, key: string, fingerprint: string) => {
+            if (!firstIdentity) firstIdentity = { key, fingerprint };
+            else if (firstIdentity.key === key && firstIdentity.fingerprint !== fingerprint) throw Object.assign(new Error("积分幂等键对应的消费参数不一致"), { status: 409 });
+            return undefined;
+        });
+        const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ choices: [{ message: { content: "OK" } }] }));
+        const billingHeaders = systemAiBillingHeaders("writer", "task-one", "vendor-text");
+        const createRequest = (content: string) =>
+            new Request("http://localhost/api/ai/system/channel-one/chat/completions", {
+                method: "POST",
+                headers: { "content-type": "application/json", ...billingHeaders },
+                body: JSON.stringify({ model: "vendor-text", messages: [{ role: "user", content }] }),
+            });
+
+        const first = await POST(createRequest("first"), textContext());
+        const second = await POST(createRequest("changed"), textContext());
+
+        expect(first.status).toBe(200);
+        expect(second.status).toBe(409);
+        expect(await second.json()).toEqual({ error: "积分幂等键对应的消费参数不一致" });
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
     it("routes GlobalAiOpc media models from one catalog channel to the matching service endpoint", async () => {
         mocks.getAuthSettings.mockResolvedValue({
             generationPointMultipliers: {},
-            logicalModels: [],
+            logicalModels: [logicalModel("videos-model", "video", "videos_stable")],
             systemChannels: [
                 {
                     id: "channel-one",
@@ -258,7 +318,7 @@ describe("GlobalAiOpc native text proxy", () => {
     it("keeps the GlobalAiOpc service prefix and v1 version when polling a video task", async () => {
         mocks.getAuthSettings.mockResolvedValue({
             generationPointMultipliers: {},
-            logicalModels: [],
+            logicalModels: [logicalModel("videos-model", "video", "videos_stable")],
             systemChannels: [
                 {
                     id: "channel-one",
@@ -273,7 +333,9 @@ describe("GlobalAiOpc native text proxy", () => {
         });
         const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ id: "video-one", status: "processing" }), { headers: { "content-type": "application/json" } }));
 
-        const response = await GET(new Request("http://localhost/api/ai/system/channel-one/result/video-one"), { params: Promise.resolve({ channelId: "channel-one", path: ["result", "video-one"] }) });
+        const response = await GET(new Request("http://localhost/api/ai/system/channel-one/result/video-one", { headers: systemModelHeaders("videos-model", "videos_stable") }), {
+            params: Promise.resolve({ channelId: "channel-one", path: ["result", "video-one"] }),
+        });
 
         expect(response.status).toBe(200);
         expect(fetchMock.mock.calls[0][0]).toBe("https://zcbservice.aizfw.cn/kyyReactApiServer/v1/result/video-one");
@@ -282,7 +344,7 @@ describe("GlobalAiOpc native text proxy", () => {
     it("maps internal Chat calls to Claude Messages and leaves Responses for Chat fallback", async () => {
         mocks.getAuthSettings.mockResolvedValue({
             generationPointMultipliers: {},
-            logicalModels: [],
+            logicalModels: [logicalModel("claude-text", "text", "claude-opus-4-6")],
             systemChannels: [
                 {
                     id: "channel-one",
@@ -320,7 +382,7 @@ describe("Agnes video polling proxy", () => {
         mocks.safeUrl.mockResolvedValue(true);
         mocks.getAuthSettings.mockResolvedValue({
             generationPointMultipliers: {},
-            logicalModels: [],
+            logicalModels: [logicalModel("agnes-video", "video", "agnes-video-v2.0")],
             systemChannels: [{ id: "channel-one", enabled: true, baseUrl: "https://apihub.agnes-ai.com/v1", apiKey: "secret", apiFormat: "openai", models: ["agnes-video-v2.0"] }],
         });
     });
@@ -328,7 +390,7 @@ describe("Agnes video polling proxy", () => {
     it("queries the documented root agnesapi endpoint instead of nesting it under v1", async () => {
         const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ id: "video-one", status: "processing" }));
 
-        const response = await GET(new Request("http://localhost/api/ai/system/channel-one/agnesapi?video_id=video-one"), {
+        const response = await GET(new Request("http://localhost/api/ai/system/channel-one/agnesapi?video_id=video-one", { headers: systemModelHeaders("agnes-video", "agnes-video-v2.0") }), {
             params: Promise.resolve({ channelId: "channel-one", path: ["agnesapi"] }),
         });
 
@@ -440,7 +502,55 @@ describe("custom protocol model routing", () => {
 
         expect(response.status).toBe(200);
         expect(fetchMock.mock.calls[0][0]).toBe("https://api.example.com/v1/jobs/image");
-        expect(mocks.consumeUserPoints).toHaveBeenCalledWith("user-one", "image-tool", 1, "image", undefined);
+        expect(mocks.consumeUserPoints).toHaveBeenCalledWith("user-one", "image-tool", 1, "image", expect.stringMatching(/^system-ai:[a-f0-9]{64}$/), expect.stringMatching(/^[a-f0-9]{64}$/));
+    });
+});
+
+describe("system proxy authorization", () => {
+    beforeEach(() => {
+        vi.restoreAllMocks();
+        mocks.consumeUserPoints.mockReset().mockResolvedValue(undefined);
+        mocks.refundUserPoints.mockReset();
+        mocks.safeUrl.mockResolvedValue(true);
+        mocks.getAuthSettings.mockResolvedValue({
+            generationPointMultipliers: {},
+            logicalModels: [logicalModel("writer", "text", "vendor-text")],
+            systemChannels: [{ id: "channel-one", enabled: true, baseUrl: "https://api.example.com/v1", apiKey: "shared-secret", apiFormat: "openai", models: ["vendor-text", "unbound-model"] }],
+        });
+    });
+
+    it("rejects unknown paths before forwarding or charging", async () => {
+        const fetchMock = vi.spyOn(globalThis, "fetch");
+        const response = await POST(chatRequest({ model: "vendor-text" }), { params: Promise.resolve({ channelId: "channel-one", path: ["account", "balance"] }) });
+
+        expect(response.status).toBe(404);
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(mocks.consumeUserPoints).not.toHaveBeenCalled();
+    });
+
+    it("rejects models that exist in the channel catalog but have no logical binding", async () => {
+        const fetchMock = vi.spyOn(globalThis, "fetch");
+        const response = await POST(chatRequest({ model: "unbound-model", messages: [] }), textContext());
+
+        expect(response.status).toBe(403);
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(mocks.consumeUserPoints).not.toHaveBeenCalled();
+    });
+
+    it("rejects unsupported HTTP methods without forwarding or charging", async () => {
+        const fetchMock = vi.spyOn(globalThis, "fetch");
+        const response = await PUT(
+            new Request("http://localhost/api/ai/system/channel-one/chat/completions", {
+                method: "PUT",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ model: "vendor-text" }),
+            }),
+            textContext(),
+        );
+
+        expect(response.status).toBe(405);
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(mocks.consumeUserPoints).not.toHaveBeenCalled();
     });
 });
 
@@ -455,6 +565,15 @@ function textContext() {
 function chatRequest(body: unknown) {
     return new Request("http://localhost/api/ai/system/channel-one/chat/completions", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 }
+
+function logicalModel(id: string, capability: "text" | "image" | "video" | "audio", upstreamModel: string) {
+    return { id, name: id, capability, enabled: true, bindings: [{ id: `${id}-binding`, channelId: "channel-one", upstreamModel, enabled: true, priority: 1 }] };
+}
+
+function systemModelHeaders(logicalModelId: string, upstreamModel: string) {
+    return { "x-vozeb-pro-logical-model": logicalModelId, "x-vozeb-pro-upstream-model": upstreamModel };
+}
+
 function pngBytes() {
     return new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 0x49, 0x48, 0x44, 0x52]);
 }

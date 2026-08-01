@@ -634,7 +634,9 @@ export async function deleteAnnouncement(id: string) {
 }
 
 export function toPublicPointRecord(record: StoredPointRecord): PublicPointRecord {
-    return { ...record, description: displayPointRecordDescription(record) };
+    const publicRecord = { ...record };
+    delete publicRecord.requestFingerprint;
+    return { ...publicRecord, description: displayPointRecordDescription(record) };
 }
 
 export function displayPointRecordDescription(record: StoredPointRecord) {
@@ -656,7 +658,7 @@ export function legacyPointUsageKindFromModel(model: string): PointUsageKind {
     return "api";
 }
 
-export async function consumeUserPoints(userId: string, model: string, amount = 1, usageKind: PointUsageKind = "api", idempotencyKey?: string) {
+export async function consumeUserPoints(userId: string, model: string, amount = 1, usageKind: PointUsageKind = "api", idempotencyKey?: string, requestFingerprint?: string) {
     const normalizedModel = model.trim();
     const db = isPostgresDatabaseEnabled() ? null : await readAuthDb();
     const user = db?.users.find((item) => item.id === userId);
@@ -674,6 +676,7 @@ export async function consumeUserPoints(userId: string, model: string, amount = 
         model: normalizedModel,
         description: buildPointRecordDescription(normalizedModel, usageKind, "consume"),
         idempotencyKey: operationKey,
+        requestFingerprint,
     });
     return {
         model: normalizedModel,

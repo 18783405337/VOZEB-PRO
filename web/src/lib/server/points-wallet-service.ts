@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import dayjs from "dayjs";
 import timezone from "dayjs/plugin/timezone";
@@ -7,7 +7,7 @@ import utc from "dayjs/plugin/utc";
 import { AuthInputError, QuotaExceededError } from "@/lib/auth/store-foundation";
 import { mutateAuthDb } from "@/lib/auth/store-repository";
 import { normalizePointAmount, resolveDefaultPlan, resolveUserPlan } from "@/lib/auth/store-normalizers";
-import type { AuthDatabase, PointUsageKind, PublicPointRecord, StoredDailyPlanPointWallet, StoredUser } from "@/lib/auth/store-types";
+import type { AuthDatabase, PointUsageKind, PublicPointRecord, StoredDailyPlanPointWallet, StoredPointRecord, StoredUser } from "@/lib/auth/store-types";
 import { createPostgresRepositories, ensurePostgresSchema, isPostgresDatabaseEnabled, withPostgresTransaction, type QueryExecutor } from "@/lib/server/database";
 import type { AppSettingsRecord, EntitlementPlanRecord, JsonValue, UserPlanAssignmentRecord, UserRecord } from "@/lib/server/database/repository-shared";
 
@@ -29,7 +29,7 @@ export type PointsWalletSnapshot = {
 
 export type PointsWalletMutationResult = {
     snapshot: PointsWalletSnapshot;
-    record: PublicPointRecord;
+    record: StoredPointRecord;
     applied: boolean;
 };
 
@@ -74,6 +74,7 @@ type ConsumePointsInput = WalletClockInput & {
     model: string;
     description: string;
     idempotencyKey: string;
+    requestFingerprint?: string;
 };
 
 type RefundPointsInput = WalletClockInput & {
@@ -184,9 +185,10 @@ export function adjustPermanentPointsInAuthDb(db: AuthDatabase, input: AdjustPer
 export async function consumePoints(input: ConsumePointsInput): Promise<PointsWalletMutationResult> {
     const amount = normalizePointAmount(input.amount, -1);
     const idempotencyKey = requiredIdempotencyKey(input.idempotencyKey);
+    const requestFingerprint = consumptionRequestFingerprint({ ...input, amount });
     if (amount < 0) throw new AuthInputError("本次积分消费不能小于零");
-    if (isPostgresDatabaseEnabled()) return consumePostgresPoints({ ...input, amount, idempotencyKey });
-    return mutateAuthDb((db) => consumeFilePoints(db, { ...input, amount, idempotencyKey }, walletClock(input)));
+    if (isPostgresDatabaseEnabled()) return consumePostgresPoints({ ...input, amount, idempotencyKey, requestFingerprint });
+    return mutateAuthDb((db) => consumeFilePoints(db, { ...input, amount, idempotencyKey, requestFingerprint }, walletClock(input)));
 }
 
 export async function refundPoints(input: RefundPointsInput): Promise<PointsWalletRefundResult> {
@@ -276,7 +278,7 @@ async function creditPostgresPoints(input: CreditPermanentPointsInput & { amount
     });
 }
 
-async function consumePostgresPoints(input: ConsumePointsInput & { amount: number; idempotencyKey: string }) {
+async function consumePostgresPoints(input: ConsumePointsInput & { amount: number; idempotencyKey: string; requestFingerprint: string }) {
     await ensurePostgresSchema();
     return withPostgresTransaction(async (client) => {
         const repos = createPostgresRepositories(client);
@@ -316,6 +318,7 @@ async function consumePostgresPoints(input: ConsumePointsInput & { amount: numbe
             description: input.description,
             model: input.model.trim(),
             idempotencyKey: input.idempotencyKey,
+            requestFingerprint: input.requestFingerprint,
             sourceDate: context.clock.date,
             createdAt: context.clock.now.toISOString(),
         });
@@ -485,7 +488,7 @@ function creditFilePoints(db: AuthDatabase, input: CreditPermanentPointsInput & 
     return { snapshot, record, applied: true };
 }
 
-function consumeFilePoints(db: AuthDatabase, input: ConsumePointsInput & { amount: number; idempotencyKey: string }, clock: WalletClock): PointsWalletMutationResult {
+function consumeFilePoints(db: AuthDatabase, input: ConsumePointsInput & { amount: number; idempotencyKey: string; requestFingerprint: string }, clock: WalletClock): PointsWalletMutationResult {
     const user = db.users.find((item) => item.id === input.userId);
     if (!user || user.status !== "active") throw new AuthInputError("用户不可用");
     const existing = db.pointRecords.find((record) => record.idempotencyKey === input.idempotencyKey);
@@ -506,7 +509,7 @@ function consumeFilePoints(db: AuthDatabase, input: ConsumePointsInput & { amoun
     user.updatedAt = clock.now.toISOString();
     updateFileQuota(db, clock.date, user.id, input.usageKind, input.units, split.cost, clock.now.toISOString());
     const snapshot = snapshotFileWallet(db, user.id, clock);
-    const record: PublicPointRecord = {
+    const record: StoredPointRecord = {
         id: randomUUID(),
         userId: user.id,
         type: "consume",
@@ -519,6 +522,7 @@ function consumeFilePoints(db: AuthDatabase, input: ConsumePointsInput & { amoun
         description: input.description,
         model: input.model.trim(),
         idempotencyKey: input.idempotencyKey,
+        requestFingerprint: input.requestFingerprint,
         sourceDate: clock.date,
         createdAt: clock.now.toISOString(),
     };
@@ -643,11 +647,22 @@ function assertMatchingRecord(record: PublicPointRecord, userId: string, expecte
     if (record.userId !== userId || (expectedType && record.type !== expectedType)) throw new PointsWalletConflictError("积分幂等键已被其他业务使用");
 }
 
-function assertMatchingConsumption(record: PublicPointRecord, input: ConsumePointsInput & { amount: number }) {
+function assertMatchingConsumption(record: StoredPointRecord, input: ConsumePointsInput & { amount: number; requestFingerprint: string }) {
     assertMatchingRecord(record, input.userId, "consume");
-    if (normalizePointAmount(-record.amount, 0) !== input.amount || (record.model || "").trim() !== input.model.trim()) {
+    if (normalizePointAmount(-record.amount, 0) !== input.amount || (record.model || "").trim() !== input.model.trim() || record.requestFingerprint !== input.requestFingerprint) {
         throw new PointsWalletConflictError("积分幂等键对应的消费参数不一致");
     }
+}
+
+function consumptionRequestFingerprint(input: ConsumePointsInput & { amount: number }) {
+    const supplied = input.requestFingerprint?.trim().toLowerCase();
+    if (supplied) {
+        if (!/^[a-f0-9]{64}$/.test(supplied)) throw new AuthInputError("积分消费请求指纹无效");
+        return supplied;
+    }
+    return createHash("sha256")
+        .update([input.userId, String(input.amount), String(normalizePointAmount(input.units, 0)), input.usageKind, input.model.trim()].join("\0"))
+        .digest("hex");
 }
 
 async function assertPostgresQuota(client: QueryExecutor, context: PostgresWalletContext, usageKind: PointUsageKind, units: number, cost: number) {

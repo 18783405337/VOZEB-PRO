@@ -823,6 +823,7 @@ export function normalizePointRecord(value: Partial<StoredPointRecord>): StoredP
         description: normalizeText(value.description, type === "consume" ? "积分消耗" : "积分增加", 120),
         model: typeof value.model === "string" ? value.model.slice(0, 160) : undefined,
         idempotencyKey: normalizeOptionalText(value.idempotencyKey, 200),
+        requestFingerprint: typeof value.requestFingerprint === "string" && /^[a-f0-9]{64}$/i.test(value.requestFingerprint.trim()) ? value.requestFingerprint.trim().toLowerCase() : undefined,
         sourceRecordId: normalizeOptionalText(value.sourceRecordId, 120),
         sourceDate: normalizeDate(value.sourceDate) || undefined,
         createdAt: value.createdAt || new Date().toISOString(),

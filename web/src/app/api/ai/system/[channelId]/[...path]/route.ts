@@ -1,6 +1,8 @@
+import { createHash, randomUUID } from "node:crypto";
+
 import { NextResponse } from "next/server";
 
-import { consumeUserPoints, getAuthSettings, isQuotaExceededError, refundUserPoints, type ApiCallFormat, type GenerationPointMultipliers, type PointUsageKind } from "@/lib/auth/store";
+import { consumeUserPoints, getAuthSettings, isAuthInputError, isQuotaExceededError, refundUserPoints, type ApiCallFormat, type GenerationPointMultipliers, type PointUsageKind } from "@/lib/auth/store";
 import { getCurrentUser } from "@/lib/auth/session";
 import { DEFAULT_CHANNEL_CONNECT_ERROR } from "@/lib/server/generation-errors";
 import { UnsupportedMediaContentError } from "@/lib/server/media-content-validation";
@@ -9,14 +11,14 @@ import { MediaProxyResponseError, fetchSafeUpstreamMedia } from "@/lib/server/me
 import { MAX_MEDIA_PROXY_BYTES, MAX_MEDIA_PROXY_RANGE_BYTES, normalizeMediaProxyRange } from "@/lib/server/media-response-limit";
 import { configureServerProxyDispatcher } from "@/lib/server/proxy-dispatcher";
 import { checkMediaProxyRateLimit, isSafeOutboundUrl, rateLimitHeaders } from "@/lib/server/security";
-import { resolveLogicalBillingModel } from "@/lib/server/logical-model-router";
 import { readRequestBodyBytes, RequestBodyTooLargeError } from "@/lib/server/request-body-limit";
 import { resolveGlobalAiOpcPathPreset, resolveGlobalAiOpcPreset } from "@/lib/globalaiopc-catalog";
 import { adaptGlobalAiOpcTextRequest, adaptGlobalAiOpcTextResponse, isGlobalAiOpcChannel } from "@/lib/server/globalaiopc-proxy";
-import { SYSTEM_AI_LOGICAL_MODEL_HEADER, SYSTEM_AI_POINTS_IDEMPOTENCY_HEADER, SYSTEM_AI_UPSTREAM_MODEL_HEADER } from "@/lib/server/system-ai-billing";
+import { readVerifiedSystemAiBusinessRequestId, SYSTEM_AI_LOGICAL_MODEL_HEADER, SYSTEM_AI_UPSTREAM_MODEL_HEADER, systemAiPointsIdempotencyKey, systemAiRequestFingerprint } from "@/lib/server/system-ai-billing";
 import { isAgnesApiBaseUrl } from "@/lib/agnes-model-catalog";
 import { channelConnectionReady, protocolAuthHeaders, resolveChannelModelConfig } from "@/lib/channel-protocol-registry";
 import { authorizedMaintenanceUserId } from "@/lib/server/maintenance-auth";
+import { authorizeSystemAiProxyRequest } from "@/lib/server/system-ai-proxy-policy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,7 +29,7 @@ type RouteContext = {
     params: Promise<{ channelId: string; path: string[] }>;
 };
 type PointsRequest = { model: string; amount: number; usageKind: PointUsageKind };
-type ProxyRequestBody = { body?: BodyInit; pointsPayload?: ArrayBuffer | Record<string, unknown> };
+type ProxyRequestBody = { body?: BodyInit; pointsPayload?: ArrayBuffer | Record<string, unknown>; bodyDigest: string };
 const MAX_PROXY_BODY_BYTES = 4 * 1024 * 1024;
 const MAX_PROXY_MULTIPART_BYTES = 25 * 1024 * 1024;
 const SYSTEM_MEDIA_TIMEOUT_MS = 30 * 1000;
@@ -84,23 +86,13 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
         if (error instanceof RequestBodyTooLargeError) return NextResponse.json({ error: error.message }, { status: error.status });
         throw error;
     }
-    const upstreamModel = requestModel(requestBody.pointsPayload) || request.headers.get(SYSTEM_AI_UPSTREAM_MODEL_HEADER)?.trim() || "";
+    const upstreamModel = readRequestModel(readRequestBody(contentType, requestBody.pointsPayload)) || request.headers.get(SYSTEM_AI_UPSTREAM_MODEL_HEADER)?.trim() || readPathModel(path);
     const modelConfig = upstreamModel ? resolveChannelModelConfig(channel.advancedConfig, upstreamModel) : undefined;
     const apiFormat = modelConfig?.apiFormat || channel.apiFormat;
     const globalChannel = isGlobalAiOpcChannel(channel.advancedConfig);
-    const headers = new Headers();
-    if (contentType && !isMultipart) headers.set("content-type", contentType);
-    if (accept) headers.set("accept", accept);
-    const idempotencyKey = request.headers.get("idempotency-key")?.trim().slice(0, 200);
-    const clientRequestId = request.headers.get("x-client-request-id")?.trim().slice(0, 200);
-    if (idempotencyKey) headers.set("idempotency-key", idempotencyKey);
-    if (clientRequestId) headers.set("x-client-request-id", clientRequestId);
-    Object.entries(protocolAuthHeaders(channel.apiKey, channel.advancedConfig, globalChannel ? "openai" : apiFormat)).forEach(([key, value]) => headers.set(key, value));
     const globalPreset = resolveGlobalAiOpcPreset(channel.advancedConfig, upstreamModel) || resolveGlobalAiOpcPathPreset(channel.advancedConfig, path);
     const globalAdaptation = adaptGlobalAiOpcTextRequest(channel.advancedConfig, path, requestBody.body);
     if (globalAdaptation === "responses-unsupported") return NextResponse.json({ error: "该 GlobalAiOpc 原生文本接口不支持 Responses，已切换 Chat 兼容回退。" }, { status: 404 });
-    const target = targetUrl(globalPreset?.baseUrl || channel.baseUrl, globalPreset?.apiFormat || apiFormat, globalAdaptation?.path || path, new URL(request.url).search, globalChannel, modelConfig?.protocol || channel.advancedConfig?.protocol);
-    if (!(await isSafeOutboundUrl(target, { allowCredentials: false }))) return NextResponse.json({ error: "接口地址不允许访问内网或保留地址" }, { status: 400 });
     const pointsRequest =
         classifyPointsRequest(request.method, apiFormat, path, contentType, requestBody.pointsPayload, settings.generationPointMultipliers) ||
         classifyConfiguredPointsRequest(
@@ -115,10 +107,52 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
             settings.generationPointMultipliers,
         );
     if (pointsRequest?.model && !channelHasModel(channel.models, pointsRequest.model)) return NextResponse.json({ error: "该模型未在后台渠道中启用" }, { status: 403 });
-    const billingModel =
-        pointsRequest && pointsRequest.usageKind !== "api" ? resolveLogicalBillingModel(settings.logicalModels, pointsRequest.usageKind, channel.id, pointsRequest.model, request.headers.get(SYSTEM_AI_LOGICAL_MODEL_HEADER) || "") : pointsRequest?.model;
-    const pointsIdempotencyBase = normalizePointsIdempotencyKey(request.headers.get(SYSTEM_AI_POINTS_IDEMPOTENCY_HEADER));
-    const pointsIdempotencyKey = pointsIdempotencyBase ? `system-ai:${pointsIdempotencyBase}:${path.join("/")}` : undefined;
+    const access = authorizeSystemAiProxyRequest({
+        method: request.method,
+        path: globalAdaptation?.path || path,
+        search: new URL(request.url).search,
+        channelId: channel.id,
+        upstreamModel,
+        preferredLogicalModelId: request.headers.get(SYSTEM_AI_LOGICAL_MODEL_HEADER) || "",
+        logicalModels: settings.logicalModels || [],
+        apiFormat: globalPreset?.apiFormat || apiFormat,
+        pointsUsageKind: pointsRequest?.usageKind,
+        paths: {
+            create: [globalPreset?.createPath, modelConfig?.createPath, modelConfig?.editPath, modelConfig?.imageToVideoPath, channel.advancedConfig?.createPath, channel.advancedConfig?.editPath, channel.advancedConfig?.imageToVideoPath],
+            query: [globalPreset?.queryPath, modelConfig?.queryPath, channel.advancedConfig?.queryPath],
+            cancel: [
+                { path: modelConfig?.cancelPath, method: modelConfig?.cancelMethod },
+                { path: channel.advancedConfig?.cancelPath, method: channel.advancedConfig?.cancelMethod },
+            ],
+        },
+    });
+    if (!access.allowed) return NextResponse.json({ error: access.error }, { status: access.status });
+
+    const target = targetUrl(globalPreset?.baseUrl || channel.baseUrl, globalPreset?.apiFormat || apiFormat, globalAdaptation?.path || path, new URL(request.url).search, globalChannel, modelConfig?.protocol || channel.advancedConfig?.protocol);
+    if (!(await isSafeOutboundUrl(target, { allowCredentials: false }))) return NextResponse.json({ error: "接口地址不允许访问内网或保留地址" }, { status: 400 });
+    const headers = new Headers();
+    if (contentType && !isMultipart) headers.set("content-type", contentType);
+    if (accept) headers.set("accept", accept);
+    const idempotencyKey = request.headers.get("idempotency-key")?.trim().slice(0, 200);
+    const clientRequestId = request.headers.get("x-client-request-id")?.trim().slice(0, 200);
+    if (idempotencyKey) headers.set("idempotency-key", idempotencyKey);
+    if (clientRequestId) headers.set("x-client-request-id", clientRequestId);
+    Object.entries(protocolAuthHeaders(channel.apiKey, channel.advancedConfig, globalChannel ? "openai" : apiFormat)).forEach(([key, value]) => headers.set(key, value));
+    const callType = `${access.capability}:${access.operation}:/${(globalAdaptation?.path || path).join("/")}`;
+    const businessRequestId = readVerifiedSystemAiBusinessRequestId(request.headers, access.logicalModelId, upstreamModel) || `direct:${randomUUID()}`;
+    const pointsIdempotencyKey = pointsRequest ? systemAiPointsIdempotencyKey({ userId, businessRequestId, logicalModel: access.logicalModelId, channelId: channel.id, upstreamModel, callType }) : undefined;
+    const requestFingerprint = pointsRequest
+        ? systemAiRequestFingerprint({
+              method: request.method,
+              callType,
+              logicalModel: access.logicalModelId,
+              channelId: channel.id,
+              upstreamModel,
+              usageKind: pointsRequest.usageKind,
+              amount: pointsRequest.amount,
+              bodyDigest: requestBody.bodyDigest,
+          })
+        : undefined;
     let pointsResult: Awaited<ReturnType<typeof consumeUserPoints>> | null = null;
     let refundedPointsRemaining: number | null = null;
     let pointsSettled = false;
@@ -130,9 +164,10 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
     };
     if (pointsRequest) {
         try {
-            pointsResult = await consumeUserPoints(userId, billingModel || pointsRequest.model, pointsRequest.amount, pointsRequest.usageKind, pointsIdempotencyKey);
+            pointsResult = await consumeUserPoints(userId, access.logicalModelId, pointsRequest.amount, pointsRequest.usageKind, pointsIdempotencyKey, requestFingerprint);
         } catch (error) {
             if (isQuotaExceededError(error)) return NextResponse.json({ error: error.message }, { status: error.status });
+            if (isAuthInputError(error)) return NextResponse.json({ error: error.message }, { status: error.status });
             throw error;
         }
     }
@@ -187,15 +222,6 @@ function channelHasModel(models: string[], requested: string) {
                 .replace(/^models\//, "")
                 .toLowerCase() === target,
     );
-}
-
-function requestModel(payload: ArrayBuffer | Record<string, unknown> | undefined) {
-    return payload && !(payload instanceof ArrayBuffer) ? readRequestModel(payload) : "";
-}
-
-function normalizePointsIdempotencyKey(value: string | null) {
-    const normalized = value?.trim().slice(0, 160) || "";
-    return /^[a-zA-Z0-9._:-]+$/.test(normalized) ? normalized : "";
 }
 
 type SystemMediaChannel = { baseUrl: string; apiFormat: ApiCallFormat; apiKey: string; advancedConfig?: import("@/lib/auth/store").SystemChannelAdvancedConfig };
@@ -315,15 +341,16 @@ function mediaResponseHeaders(headers: Headers, mimeType: string) {
 }
 
 async function readProxyRequestBody(request: Request, isMultipart: boolean): Promise<ProxyRequestBody> {
-    if (request.method === "GET" || request.method === "HEAD") return {};
+    if (request.method === "GET" || request.method === "HEAD") return { bodyDigest: emptyBodyDigest() };
     const bytes = await readRequestBodyBytes(request, isMultipart ? MAX_PROXY_MULTIPART_BYTES : MAX_PROXY_BODY_BYTES);
     if (!isMultipart) {
         const body = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-        return { body, pointsPayload: body };
+        return { body, pointsPayload: body, bodyDigest: digestBytes(bytes) };
     }
 
     const formData = await new Request(request.url, { method: request.method, headers: { "Content-Type": request.headers.get("content-type") || "" }, body: bytes }).formData();
-    return { body: await cloneFormData(formData), pointsPayload: formDataFields(formData) };
+    const cloned = await cloneFormData(formData);
+    return { body: cloned.body, pointsPayload: formDataFields(formData), bodyDigest: cloned.bodyDigest };
 }
 
 function formDataFields(formData: FormData): Record<string, string> {
@@ -337,14 +364,37 @@ function formDataFields(formData: FormData): Record<string, string> {
 
 async function cloneFormData(formData: FormData) {
     const next = new FormData();
+    const digest = createHash("sha256");
     for (const [key, value] of formData.entries()) {
         if (typeof value === "string") {
             next.append(key, value);
+            updateMultipartDigest(digest, ["field", key, value]);
             continue;
         }
-        next.append(key, new Blob([await value.arrayBuffer()], { type: value.type || "application/octet-stream" }), value.name || "file");
+        const bytes = new Uint8Array(await value.arrayBuffer());
+        const type = value.type || "application/octet-stream";
+        const name = value.name || "file";
+        next.append(key, new Blob([bytes], { type }), name);
+        updateMultipartDigest(digest, ["file", key, name, type, String(bytes.byteLength), digestBytes(bytes)]);
     }
-    return next;
+    return { body: next, bodyDigest: digest.digest("hex") };
+}
+
+function updateMultipartDigest(digest: ReturnType<typeof createHash>, parts: string[]) {
+    for (const part of parts)
+        digest
+            .update(String(Buffer.byteLength(part)))
+            .update(":")
+            .update(part)
+            .update("\0");
+}
+
+function digestBytes(bytes: Uint8Array) {
+    return createHash("sha256").update(bytes).digest("hex");
+}
+
+function emptyBodyDigest() {
+    return digestBytes(new Uint8Array());
 }
 
 function classifyPointsRequest(method: string, apiFormat: ApiCallFormat, path: string[], contentType: string | null, body?: ArrayBuffer | Record<string, unknown>, multipliers?: GenerationPointMultipliers): PointsRequest | null {

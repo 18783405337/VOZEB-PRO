@@ -100,6 +100,25 @@ describe("points wallet service", () => {
         ).rejects.toThrow("消费参数不一致");
     });
 
+    it("rejects one server billing identity when the upstream request fingerprint changes", async () => {
+        await seedWallet({ permanentPoints: 50, dailyPoints: 30 });
+        const input = {
+            userId: "user-one",
+            amount: 5,
+            units: 1,
+            usageKind: "text" as const,
+            model: "writer",
+            description: "文本模型调用扣除",
+            idempotencyKey: "system-ai:stable-business-request",
+            now: at("2026-07-22T08:00:00+08:00"),
+        };
+
+        await consumePoints({ ...input, requestFingerprint: "a".repeat(64) });
+        await expect(consumePoints({ ...input, requestFingerprint: "b".repeat(64) })).rejects.toThrow("消费参数不一致");
+
+        expect((await readAuthDb()).pointRecords[0]).toMatchObject({ idempotencyKey: input.idempotencyKey, requestFingerprint: "a".repeat(64) });
+    });
+
     it("restores both buckets for a same-day refund", async () => {
         await seedWallet({ permanentPoints: 50, dailyPoints: 10 });
         const debit = await consume("consume-refund", 30, "2026-07-22T08:00:00+08:00");

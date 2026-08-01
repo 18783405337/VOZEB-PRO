@@ -429,6 +429,7 @@ describe("split Postgres repositories", () => {
                     daily_balance_after: 20,
                     description: "生成图片",
                     idempotency_key: "image:task-one",
+                    request_fingerprint: "a".repeat(64),
                     source_date: "2026-01-01",
                     created_at: timestamp,
                 },
@@ -457,7 +458,7 @@ describe("split Postgres repositories", () => {
         const record = await repos.points.getRecordByIdempotencyKey("image:task-one");
         const refund = await repos.points.getRefundRecordBySourceRecordId("point-one");
 
-        expect(record).toMatchObject({ id: "point-one", permanentAmount: -10, dailyAmount: -10, idempotencyKey: "image:task-one" });
+        expect(record).toMatchObject({ id: "point-one", permanentAmount: -10, dailyAmount: -10, idempotencyKey: "image:task-one", requestFingerprint: "a".repeat(64) });
         expect(refund).toMatchObject({ id: "refund-one", sourceRecordId: "point-one" });
         expect(queryArgs(query, 0)[0]).toContain("FOR UPDATE");
         expect(queryArgs(query, 0)[1]).toEqual(["user-one"]);

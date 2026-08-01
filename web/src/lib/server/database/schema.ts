@@ -547,6 +547,7 @@ CREATE TABLE IF NOT EXISTS point_records (
     description text NOT NULL,
     model text,
     idempotency_key text,
+    request_fingerprint text,
     source_record_id text,
     source_date date,
     created_at timestamptz NOT NULL DEFAULT now(),
@@ -558,6 +559,7 @@ ALTER TABLE point_records ADD COLUMN IF NOT EXISTS daily_amount numeric(18, 2) N
 ALTER TABLE point_records ADD COLUMN IF NOT EXISTS permanent_balance_after numeric(18, 2) NOT NULL DEFAULT 0;
 ALTER TABLE point_records ADD COLUMN IF NOT EXISTS daily_balance_after numeric(18, 2) NOT NULL DEFAULT 0;
 ALTER TABLE point_records ADD COLUMN IF NOT EXISTS idempotency_key text;
+ALTER TABLE point_records ADD COLUMN IF NOT EXISTS request_fingerprint text;
 ALTER TABLE point_records ADD COLUMN IF NOT EXISTS source_record_id text;
 ALTER TABLE point_records ADD COLUMN IF NOT EXISTS source_date date;
 UPDATE point_records

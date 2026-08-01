@@ -117,6 +117,7 @@ export function mapPointRecord(row: Record<string, unknown>): PointRecord {
         description: stringValue(row.description),
         model: optionalString(row.model),
         idempotencyKey: optionalString(row.idempotency_key),
+        requestFingerprint: optionalString(row.request_fingerprint),
         sourceRecordId: optionalString(row.source_record_id),
         sourceDate: row.source_date === null || row.source_date === undefined ? undefined : dateValue(row.source_date),
         createdAt: isoValue(row.created_at),

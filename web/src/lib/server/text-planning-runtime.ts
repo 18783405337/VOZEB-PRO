@@ -4,7 +4,6 @@ import { fetchInternalApi } from "@/lib/server/internal-origin";
 import { resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy";
 import { buildProviderRequest, isProviderBusinessError, readProviderError, readProviderString } from "@/lib/server/provider-task-config";
 import { strictJsonObjectText } from "@/lib/server/structured-model-output";
-import { SYSTEM_AI_POINTS_IDEMPOTENCY_HEADER } from "@/lib/server/system-ai-billing";
 import { resolveTextProtocol } from "@/lib/server/text-protocol-resolver";
 
 export type TextPlanningProtocol = "responses" | "chat" | "gemini" | "custom";
@@ -154,7 +153,7 @@ async function requestTextProtocol(input: StructuredTextRequest, request: Protoc
 }
 
 function scopeProtocolIdempotency(headers: Headers, protocol: TextPlanningProtocol) {
-    for (const name of [SYSTEM_AI_POINTS_IDEMPOTENCY_HEADER, "idempotency-key", "x-client-request-id"]) {
+    for (const name of ["idempotency-key", "x-client-request-id"]) {
         const value = headers.get(name)?.trim();
         if (value) headers.set(name, `${value}:${protocol}-json`);
     }
