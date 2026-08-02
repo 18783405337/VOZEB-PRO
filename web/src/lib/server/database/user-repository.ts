@@ -2,10 +2,12 @@ import { formatAccountId } from "@/lib/account-id";
 import type { QueryExecutor } from "@/lib/server/database/postgres";
 import type {
     AuthenticatedUserRecord,
+    CdkCodeCreateRecord,
     CdkCodeRecord,
     CdkListInput,
     CdkListResult,
     CdkRedemptionRecord,
+    EmailCodeRecord,
     PageInput,
     PageResult,
     PointRecord,
@@ -18,7 +20,7 @@ import type {
     UserStatus,
     UserSummaryRecord,
 } from "./repository-shared";
-import { mapCdkCode, mapCdkRedemption, mapPointRecord, mapQuotaUsage, mapSession, mapUser } from "./repository-record-mappers";
+import { mapCdkCode, mapCdkRedemption, mapEmailCode, mapPointRecord, mapQuotaUsage, mapSession, mapUser } from "./repository-record-mappers";
 import { jsonValue, normalizePage, normalizePageSize, numberValue, optionalString, pageResult, stringValue } from "./repository-shared";
 
 function assignmentDailyPoints(metadata: unknown, fallback: number) {
@@ -34,6 +36,11 @@ function nonNegativeNumber(value: unknown) {
     const number = Number(value);
     return Number.isFinite(number) ? Math.max(0, number) : 0;
 }
+
+type UserUpdatePatch = Partial<Omit<UserRecord, "id" | "createdAt" | "updatedAt" | "email" | "avatarStorageKey">> & {
+    email?: string | null;
+    avatarStorageKey?: string | null;
+};
 
 export class UsersRepository {
     constructor(private readonly db: QueryExecutor) {}
@@ -241,8 +248,33 @@ export class UsersRepository {
         return result.rows[0] ? mapUser(result.rows[0]) : null;
     }
 
+    async count() {
+        const result = await this.db.query("SELECT count(*) AS total FROM users");
+        return numberValue(result.rows[0]?.total);
+    }
+
     async getByUsername(username: string) {
         const result = await this.db.query("SELECT * FROM users WHERE lower(username) = lower($1)", [username]);
+        return result.rows[0] ? mapUser(result.rows[0]) : null;
+    }
+
+    async getByEmail(email: string, forUpdate = false) {
+        const result = await this.db.query(`SELECT * FROM users WHERE lower(email) = lower($1)${forUpdate ? " FOR UPDATE" : ""}`, [email]);
+        return result.rows[0] ? mapUser(result.rows[0]) : null;
+    }
+
+    async findIdentityConflict(input: { username?: string; email?: string; excludingUserId?: string }) {
+        const result = await this.db.query(
+            `SELECT * FROM users
+             WHERE (
+                 ($1::text IS NOT NULL AND lower(username) = lower($1))
+                 OR ($2::text IS NOT NULL AND lower(coalesce(email, '')) = lower($2))
+             )
+               AND ($3::text IS NULL OR id <> $3)
+             ORDER BY created_at ASC
+             LIMIT 1`,
+            [input.username || null, input.email || null, input.excludingUserId || null],
+        );
         return result.rows[0] ? mapUser(result.rows[0]) : null;
     }
 
@@ -300,25 +332,40 @@ export class UsersRepository {
         return mapUser(result.rows[0]);
     }
 
-    async update(id: string, patch: Partial<Omit<UserRecord, "id" | "createdAt" | "updatedAt">>) {
+    async createWithNextAccountId(user: Omit<UserRecord, "accountId">) {
+        const result = await this.db.query(
+            `
+            INSERT INTO users (id, account_id, username, email, display_name, bio, avatar_storage_key, role, status, plan_id, points_balance, password_hash, last_login_at, created_at, updated_at)
+            VALUES ($1, nextval('user_account_id_seq'), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            RETURNING *
+            `,
+            [user.id, user.username, user.email || null, user.displayName, user.bio, user.avatarStorageKey || null, user.role, user.status, user.planId, user.pointsBalance, user.passwordHash, user.lastLoginAt || null, user.createdAt, user.updatedAt],
+        );
+        return mapUser(result.rows[0]);
+    }
+
+    async update(id: string, patch: UserUpdatePatch) {
+        const hasEmail = Object.prototype.hasOwnProperty.call(patch, "email");
+        const hasAvatarStorageKey = Object.prototype.hasOwnProperty.call(patch, "avatarStorageKey");
         const result = await this.db.query(
             `
             UPDATE users SET
                 username = COALESCE($2, username),
-                email = COALESCE($3, email),
-                display_name = COALESCE($4, display_name),
-                bio = COALESCE($5, bio),
-                avatar_storage_key = COALESCE($6, avatar_storage_key),
-                role = COALESCE($7, role),
-                status = COALESCE($8, status),
-                plan_id = COALESCE($9, plan_id),
-                points_balance = COALESCE($10, points_balance),
-                password_hash = COALESCE($11, password_hash),
-                last_login_at = COALESCE($12, last_login_at)
+                email = CASE WHEN $3::boolean THEN $4 ELSE email END,
+                display_name = COALESCE($5, display_name),
+                bio = COALESCE($6, bio),
+                avatar_storage_key = CASE WHEN $7::boolean THEN $8 ELSE avatar_storage_key END,
+                role = COALESCE($9, role),
+                status = COALESCE($10, status),
+                plan_id = COALESCE($11, plan_id),
+                points_balance = COALESCE($12, points_balance),
+                password_hash = COALESCE($13, password_hash),
+                last_login_at = COALESCE($14, last_login_at),
+                updated_at = now()
             WHERE id = $1
             RETURNING *
             `,
-            [id, patch.username, patch.email, patch.displayName, patch.bio, patch.avatarStorageKey, patch.role, patch.status, patch.planId, patch.pointsBalance, patch.passwordHash, patch.lastLoginAt],
+            [id, patch.username, hasEmail, patch.email ?? null, patch.displayName, patch.bio, hasAvatarStorageKey, patch.avatarStorageKey ?? null, patch.role, patch.status, patch.planId, patch.pointsBalance, patch.passwordHash, patch.lastLoginAt],
         );
         return result.rows[0] ? mapUser(result.rows[0]) : null;
     }
@@ -331,6 +378,11 @@ export class UsersRepository {
     async countActiveAdmins(excludingUserId?: string) {
         const result = await this.db.query("SELECT count(*) AS total FROM users WHERE role = 'admin' AND status = 'active' AND ($1::text IS NULL OR id <> $1)", [excludingUserId || null]);
         return Number(result.rows[0]?.total || 0);
+    }
+
+    async lockActiveAdminIds() {
+        const result = await this.db.query("SELECT id FROM users WHERE role = 'admin' AND status = 'active' ORDER BY id FOR UPDATE");
+        return result.rows.map((row) => String(row.id));
     }
 }
 
@@ -411,9 +463,63 @@ export class SessionsRepository {
         return result.rowCount || 0;
     }
 
+    async deleteById(id: string) {
+        const result = await this.db.query("DELETE FROM sessions WHERE id = $1", [id]);
+        return result.rowCount || 0;
+    }
+
+    async deleteByUserId(userId: string) {
+        const result = await this.db.query("DELETE FROM sessions WHERE user_id = $1", [userId]);
+        return result.rowCount || 0;
+    }
+
     async pruneExpired(now = new Date()) {
         const result = await this.db.query("DELETE FROM sessions WHERE expires_at <= $1", [now.toISOString()]);
         return result.rowCount || 0;
+    }
+}
+
+export class EmailCodesRepository {
+    constructor(private readonly db: QueryExecutor) {}
+
+    async findActive(input: { purpose: EmailCodeRecord["purpose"]; email: string; userId?: string; now: string }, forUpdate = false) {
+        const result = await this.db.query(
+            `SELECT * FROM email_codes
+             WHERE purpose = $1
+               AND lower(email) = lower($2)
+               AND user_id IS NOT DISTINCT FROM $3::text
+               AND consumed_at IS NULL
+               AND expires_at > $4
+             ORDER BY created_at DESC
+             LIMIT 1${forUpdate ? " FOR UPDATE" : ""}`,
+            [input.purpose, input.email, input.userId || null, input.now],
+        );
+        return result.rows[0] ? mapEmailCode(result.rows[0]) : null;
+    }
+
+    async create(code: EmailCodeRecord) {
+        const result = await this.db.query("INSERT INTO email_codes (id, purpose, email, user_id, code_hash, created_at, expires_at, consumed_at, attempts) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *", [
+            code.id,
+            code.purpose,
+            code.email,
+            code.userId || null,
+            code.codeHash,
+            code.createdAt,
+            code.expiresAt,
+            code.consumedAt || null,
+            code.attempts,
+        ]);
+        return mapEmailCode(result.rows[0]);
+    }
+
+    async deleteUnconsumed(input: { purpose: EmailCodeRecord["purpose"]; email: string; userId?: string }) {
+        const result = await this.db.query("DELETE FROM email_codes WHERE purpose = $1 AND lower(email) = lower($2) AND user_id IS NOT DISTINCT FROM $3::text AND consumed_at IS NULL", [input.purpose, input.email, input.userId || null]);
+        return result.rowCount || 0;
+    }
+
+    async updateAttempt(id: string, attempts: number, consumedAt?: string) {
+        const result = await this.db.query("UPDATE email_codes SET attempts = $2, consumed_at = $3 WHERE id = $1 RETURNING *", [id, attempts, consumedAt || null]);
+        return result.rows[0] ? mapEmailCode(result.rows[0]) : null;
     }
 }
 
@@ -614,35 +720,83 @@ export class CdkRepository {
         };
     }
 
-    async getByCodeHash(codeHash: string) {
-        const result = await this.db.query("SELECT * FROM cdk_codes WHERE code_hash = $1", [codeHash]);
+    async getById(id: string, forUpdate = false) {
+        const result = await this.db.query(`SELECT * FROM cdk_codes WHERE id = $1${forUpdate ? " FOR UPDATE" : ""}`, [id]);
         return result.rows[0] ? mapCdkCode(result.rows[0]) : null;
     }
 
-    async upsert(code: CdkCodeRecord) {
+    async getDetailsById(id: string, forUpdate = false) {
+        const result = await this.db.query(
+            `SELECT codes.*, COALESCE(redemption_data.redemptions, '[]'::json) AS redemptions
+             FROM cdk_codes AS codes
+             LEFT JOIN LATERAL (
+                 SELECT json_agg(
+                     json_build_object(
+                         'cdk_code_id', redemptions.cdk_code_id,
+                         'user_id', redemptions.user_id,
+                         'redeemed_at', redemptions.redeemed_at,
+                         'account_id', users.account_id,
+                         'username', users.username,
+                         'display_name', users.display_name
+                     ) ORDER BY redemptions.redeemed_at ASC
+                 ) AS redemptions
+                 FROM cdk_redemptions AS redemptions
+                 LEFT JOIN users ON users.id = redemptions.user_id
+                 WHERE redemptions.cdk_code_id = codes.id
+             ) AS redemption_data ON true
+             WHERE codes.id = $1${forUpdate ? " FOR UPDATE OF codes" : ""}`,
+            [id],
+        );
+        return result.rows[0] ? mapCdkListCode(result.rows[0]) : null;
+    }
+
+    async getByCodeHash(codeHash: string, forUpdate = false) {
+        const result = await this.db.query(`SELECT * FROM cdk_codes WHERE code_hash = $1${forUpdate ? " FOR UPDATE" : ""}`, [codeHash]);
+        return result.rows[0] ? mapCdkCode(result.rows[0]) : null;
+    }
+
+    async create(code: CdkCodeCreateRecord) {
         const result = await this.db.query(
             `
-            INSERT INTO cdk_codes (id, code_hash, code_preview, points, max_redemptions, redeemed_count, status, note, expires_at, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-            ON CONFLICT (id) DO UPDATE SET
-                code_hash = EXCLUDED.code_hash,
-                code_preview = EXCLUDED.code_preview,
-                points = EXCLUDED.points,
-                max_redemptions = EXCLUDED.max_redemptions,
-                redeemed_count = EXCLUDED.redeemed_count,
-                status = EXCLUDED.status,
-                note = EXCLUDED.note,
-                expires_at = EXCLUDED.expires_at
+            INSERT INTO cdk_codes (id, code_hash, code_ciphertext, code_preview, points, max_redemptions, redeemed_count, status, note, expires_at, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
             RETURNING *
             `,
-            [code.id, code.codeHash, code.codePreview, code.points, code.maxRedemptions, code.redeemedCount, code.status, code.note, code.expiresAt || null, code.createdAt, code.updatedAt],
+            [code.id, code.codeHash, code.codeCiphertext, code.codePreview, code.points, code.maxRedemptions, code.redeemedCount, code.status, code.note, code.expiresAt || null, code.createdAt, code.updatedAt],
         );
         return mapCdkCode(result.rows[0]);
+    }
+
+    async update(code: CdkCodeRecord) {
+        const result = await this.db.query(
+            `UPDATE cdk_codes SET
+                points = $2,
+                max_redemptions = $3,
+                status = $4,
+                note = $5,
+                expires_at = $6,
+                updated_at = $7
+             WHERE id = $1
+             RETURNING *`,
+            [code.id, code.points, code.maxRedemptions, code.status, code.note, code.expiresAt || null, code.updatedAt],
+        );
+        return result.rows[0] ? mapCdkCode(result.rows[0]) : null;
+    }
+
+    async delete(ids: string[]) {
+        if (!ids.length) return 0;
+        const result = await this.db.query("DELETE FROM cdk_codes WHERE id = ANY($1::text[])", [ids]);
+        return result.rowCount || 0;
     }
 
     async addRedemption(redemption: CdkRedemptionRecord) {
         const result = await this.db.query("INSERT INTO cdk_redemptions (cdk_code_id, user_id, redeemed_at) VALUES ($1, $2, $3) ON CONFLICT (cdk_code_id, user_id) DO NOTHING RETURNING *", [redemption.cdkCodeId, redemption.userId, redemption.redeemedAt]);
         return result.rows[0] ? mapCdkRedemption(result.rows[0]) : null;
+    }
+
+    async incrementRedemptionCount(id: string, updatedAt: string) {
+        const result = await this.db.query("UPDATE cdk_codes SET redeemed_count = redeemed_count + 1, updated_at = $2 WHERE id = $1 RETURNING *", [id, updatedAt]);
+        return result.rows[0] ? mapCdkCode(result.rows[0]) : null;
     }
 }
 

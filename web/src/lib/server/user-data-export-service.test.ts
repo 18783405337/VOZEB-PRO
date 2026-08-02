@@ -38,7 +38,7 @@ vi.mock("@/lib/server/library-asset-store", () => ({ listLibraryAssets: mocks.li
 vi.mock("@/lib/server/local-media-registry", () => ({ listLocalMediaRegistrationsForUser: mocks.listLocalMediaRegistrationsForUser }));
 vi.mock("@/lib/server/account-deletion-request-service", () => ({ getOwnAccountDeletionRequest: mocks.getOwnAccountDeletionRequest }));
 
-import { buildUserDataExport } from "./user-data-export-service";
+import { buildUserDataExport, createUserDataExportStream } from "./user-data-export-service";
 
 describe("buildUserDataExport", () => {
     beforeEach(() => {
@@ -141,8 +141,9 @@ describe("buildUserDataExport", () => {
             listPayments: vi.fn().mockResolvedValue({ items: [{ id: "payment-1", userId: "user-one", rawPayload: { secret: true }, providerTradeId: "trade" }], total: 1 }),
             listPlanAssignments: vi.fn().mockResolvedValue({ items: [{ id: "assignment-1", userId: "user-one", sourceId: "order-1", metadata: { internal: true } }], total: 1 }),
         };
+        const commercial = emptyCommercialRepositories();
         mocks.isPostgresDatabaseEnabled.mockReturnValue(true);
-        mocks.createPostgresRepositories.mockReturnValue({ billing });
+        mocks.createPostgresRepositories.mockReturnValue({ billing, ...commercial });
 
         const result = await buildUserDataExport("user-one");
 
@@ -152,6 +153,40 @@ describe("buildUserDataExport", () => {
         expect(result.billing.orders).toEqual([{ id: "order-1" }]);
         expect(result.billing.payments).toEqual([{ id: "payment-1" }]);
         expect(result.billing.planAssignments).toEqual([{ id: "assignment-1" }]);
+    });
+
+    it("includes coupons, referral relationships, works and notifications without internal risk fields", async () => {
+        const repositories = emptyCommercialRepositories();
+        repositories.coupons.listUserCoupons.mockResolvedValue({ items: [{ id: "coupon-one", userId: "user-one", status: "available" }], total: 1 });
+        repositories.referrals.listRelationships.mockResolvedValue({ items: [{ id: "relationship-one", inviterUserId: "user-one", paymentIdentityHash: "hidden", riskSignals: ["hidden"] }], total: 1 });
+        repositories.referrals.listRewards.mockResolvedValue({ items: [{ id: "reward-one", beneficiaryUserId: "user-one", pointsAmount: 20 }], total: 1 });
+        repositories.workPublications.listWorks.mockResolvedValue({ items: [{ id: "work-one" }], total: 1 });
+        repositories.workPublications.getWorkById.mockResolvedValue({ id: "work-one", ownerUserId: "user-one" });
+        repositories.workPublications.listVersionsByWork.mockResolvedValue([{ id: "version-one", workId: "work-one", moderationSignal: { secret: true } }]);
+        repositories.workPublications.listVersionAssets.mockResolvedValue([{ id: "asset-one", versionId: "version-one", metadata: { prompt: "internal" } }]);
+        repositories.workCommunity.listNotifications.mockResolvedValue({ items: [{ id: "notification-one", createdAt: "2026-08-01T00:00:00.000Z", summary: "收到点赞" }], hasMore: false });
+        mocks.isPostgresDatabaseEnabled.mockReturnValue(true);
+        mocks.createPostgresRepositories.mockReturnValue({ billing: emptyBillingRepository(), ...repositories });
+
+        const result = await buildUserDataExport("user-one");
+        const commercial = result.commercial as Record<string, Array<Record<string, unknown>>>;
+
+        expect(repositories.referrals.listRelationships).toHaveBeenCalledWith(expect.objectContaining({ participantUserId: "user-one" }));
+        expect(commercial.coupons[0]).toMatchObject({ id: "coupon-one" });
+        expect(commercial.referralRelationships[0]).not.toHaveProperty("paymentIdentityHash");
+        expect(commercial.referralRelationships[0]).not.toHaveProperty("riskSignals");
+        expect(JSON.stringify(commercial.works[0])).not.toContain("moderationSignal");
+        expect(commercial.notifications[0]).toMatchObject({ id: "notification-one" });
+    });
+
+    it("streams a valid JSON export without buffering every section into the route", async () => {
+        const stream = await createUserDataExportStream("user-one");
+        const payload = JSON.parse(await new Response(stream).text());
+
+        expect(payload).toMatchObject({ format: "vozeb-pro-personal-data", version: 1, account: { id: "user-one" } });
+        expect(payload).toHaveProperty("generationLogs");
+        expect(payload).toHaveProperty("commercial");
+        expect(payload.exclusions).toContain("密码、会话、验证码和 API 凭据");
     });
 
     it("collects every Drama summary page before reading owned project details", async () => {
@@ -168,3 +203,28 @@ describe("buildUserDataExport", () => {
         ]);
     });
 });
+
+function emptyBillingRepository() {
+    return {
+        listOrders: vi.fn().mockResolvedValue({ items: [], total: 0 }),
+        listPayments: vi.fn().mockResolvedValue({ items: [], total: 0 }),
+        listPlanAssignments: vi.fn().mockResolvedValue({ items: [], total: 0 }),
+    };
+}
+
+function emptyCommercialRepositories() {
+    return {
+        coupons: { listUserCoupons: vi.fn().mockResolvedValue({ items: [], total: 0 }) },
+        referrals: {
+            listRelationships: vi.fn().mockResolvedValue({ items: [], total: 0 }),
+            listRewards: vi.fn().mockResolvedValue({ items: [], total: 0 }),
+        },
+        workPublications: {
+            listWorks: vi.fn().mockResolvedValue({ items: [], total: 0 }),
+            getWorkById: vi.fn(),
+            listVersionsByWork: vi.fn().mockResolvedValue([]),
+            listVersionAssets: vi.fn().mockResolvedValue([]),
+        },
+        workCommunity: { listNotifications: vi.fn().mockResolvedValue({ items: [], hasMore: false }) },
+    };
+}

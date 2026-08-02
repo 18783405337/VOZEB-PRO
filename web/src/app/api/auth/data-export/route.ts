@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth/session";
 import { checkRateLimit, rateLimitHeaders } from "@/lib/server/security";
-import { buildUserDataExport } from "@/lib/server/user-data-export-service";
+import { createUserDataExportStream } from "@/lib/server/user-data-export-service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,8 +17,8 @@ export async function GET() {
     try {
         const exportedAt = new Date();
         const fileName = `vozeb-pro-personal-data-${exportedAt.toISOString().slice(0, 10)}.json`;
-        const data = await buildUserDataExport(currentUser.id);
-        return new NextResponse(JSON.stringify(data, null, 2), {
+        const stream = await createUserDataExportStream(currentUser.id);
+        return new NextResponse(stream, {
             headers: {
                 "Content-Type": "application/json; charset=utf-8",
                 "Content-Disposition": `attachment; filename="${fileName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`,

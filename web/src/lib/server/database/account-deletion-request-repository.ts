@@ -98,10 +98,11 @@ export async function withdrawPendingAccountDeletionRequest(userId: string, upda
     });
 }
 
-export async function reviewPendingAccountDeletionRequest(input: { id: string; status: "accepted" | "rejected"; reviewNote: string; reviewedByUserId: string; reviewedByUsername: string; updatedAt: string }) {
+export async function reviewPendingAccountDeletionRequest(input: { id: string; status: "accepted" | "rejected"; reviewNote: string; reviewedByUserId: string; reviewedByUsername: string; updatedAt: string }, executor?: QueryExecutor) {
     if (getDatabaseProvider() === "postgres") {
-        await ensurePostgresSchema();
-        const result = await postgresQuery(
+        if (!executor) await ensurePostgresSchema();
+        const query = executor ? executor.query.bind(executor) : postgresQuery;
+        const result = await query(
             `UPDATE account_deletion_requests
              SET status = $2, review_note = $3, reviewed_by_user_id = $4, reviewed_by_username = $5,
                  updated_at = $6, handled_at = $6
@@ -121,6 +122,32 @@ export async function reviewPendingAccountDeletionRequest(input: { id: string; s
         request.updatedAt = input.updatedAt;
         request.handledAt = input.updatedAt;
         return request;
+    });
+}
+
+export async function revertAcceptedAccountDeletionRequest(input: { id: string; reviewedByUserId: string; updatedAt: string }) {
+    if (getDatabaseProvider() === "postgres") {
+        await ensurePostgresSchema();
+        const result = await postgresQuery(
+            `UPDATE account_deletion_requests
+             SET status = 'pending', review_note = '', reviewed_by_user_id = NULL, reviewed_by_username = NULL,
+                 updated_at = $3, handled_at = NULL
+             WHERE id = $1 AND status = 'accepted' AND reviewed_by_user_id = $2
+             RETURNING id`,
+            [input.id, input.reviewedByUserId, input.updatedAt],
+        );
+        return Boolean(result.rows[0]);
+    }
+    return mutateFileDatabase((db) => {
+        const request = db.requests.find((item) => item.id === input.id && item.status === "accepted" && item.reviewedByUserId === input.reviewedByUserId);
+        if (!request) return false;
+        request.status = "pending";
+        request.reviewNote = "";
+        request.reviewedByUserId = undefined;
+        request.reviewedByUsername = undefined;
+        request.updatedAt = input.updatedAt;
+        request.handledAt = undefined;
+        return true;
     });
 }
 

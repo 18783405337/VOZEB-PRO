@@ -25,6 +25,11 @@ export class AnnouncementsRepository {
         return result.rows.map(mapAnnouncement);
     }
 
+    async getById(id: string, forUpdate = false) {
+        const result = await this.db.query(`SELECT * FROM announcements WHERE id = $1${forUpdate ? " FOR UPDATE" : ""}`, [id]);
+        return result.rows[0] ? mapAnnouncement(result.rows[0]) : null;
+    }
+
     async upsert(announcement: AnnouncementRecord) {
         const result = await this.db.query(
             `
@@ -54,6 +59,11 @@ export class AnnouncementsRepository {
             ],
         );
         return mapAnnouncement(result.rows[0]);
+    }
+
+    async delete(id: string) {
+        const result = await this.db.query("DELETE FROM announcements WHERE id = $1", [id]);
+        return result.rowCount || 0;
     }
 }
 

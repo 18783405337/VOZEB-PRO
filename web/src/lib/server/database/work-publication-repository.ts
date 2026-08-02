@@ -150,6 +150,11 @@ export class WorkPublicationRepository {
         return result.rows[0] ? mapPublishedWorkVersion(result.rows[0]) : null;
     }
 
+    async listVersionsByWork(workId: string) {
+        const result = await this.db.query("SELECT * FROM published_work_versions WHERE work_id = $1 ORDER BY version_number ASC, id ASC", [workId]);
+        return result.rows.map((row) => mapPublishedWorkVersion(row));
+    }
+
     async getLatestApprovedPublicVersion(workId: string, forUpdate = false) {
         const result = await this.db.query(
             `SELECT * FROM published_work_versions
