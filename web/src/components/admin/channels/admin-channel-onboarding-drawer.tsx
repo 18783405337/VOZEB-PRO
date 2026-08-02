@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { App, Alert, Button, Drawer, Empty, Input, Select, Space, Switch, Tag } from "antd";
-import { ArrowLeft, Check, CircleDollarSign, Link2, PlugZap, RefreshCw, Save, WandSparkles } from "lucide-react";
+import { App, Button, Drawer, Empty, Input, Select, Space, Switch, Tag } from "antd";
+import { ArrowLeft, Check, CircleDollarSign, Info, Link2, PlugZap, RefreshCw, Save, WandSparkles } from "lucide-react";
 
 import { AdminChannelProtocolSetup } from "@/components/admin/admin-channel-protocol-setup";
 import { LabeledControl } from "@/components/admin/admin-settings-controls";
@@ -34,7 +34,6 @@ export function AdminChannelOnboardingDrawer({ open, initialProtocol, settings, 
     const [draftId, setDraftId] = useState("");
     const [setAsDefault, setSetAsDefault] = useState(true);
     const channel = settings.systemChannels.find((item) => item.id === draftId);
-    const webhookSecretInvalid = Boolean(channel?.webhookSecret?.trim() && channel.webhookSecret.trim().length < 32);
     const modelsSynchronized = Boolean(
         channel?.models.length &&
         channel.models.every((upstreamModel) => settings.logicalModels.some((model) => model.bindings.some((binding) => binding.channelId === channel.id && normalizedUpstreamModel(binding.upstreamModel) === normalizedUpstreamModel(upstreamModel)))),
@@ -117,7 +116,7 @@ export function AdminChannelOnboardingDrawer({ open, initialProtocol, settings, 
         return <ReviewStep channel={channel} settings={settings} />;
     };
 
-    const nextDisabled = step === 1 ? !channel?.name.trim() || !channelConnectionReady(channel) || webhookSecretInvalid : step === 2 ? !channel?.models.length : step === 3 ? !modelsSynchronized : false;
+    const nextDisabled = step === 1 ? !channel?.name.trim() || !channelConnectionReady(channel) : step === 2 ? !channel?.models.length : step === 3 ? !modelsSynchronized : false;
 
     return (
         <Drawer
@@ -258,7 +257,6 @@ function ConnectionStep({ channel, onChange }: { channel: SystemModelChannel; on
     const custom = channel.advancedConfig?.protocol === "custom";
     const authMode = resolveChannelAuthMode(channel.advancedConfig);
     const requiresApiKey = channelRequiresApiKey(channel);
-    const webhookSecretInvalid = Boolean(channel.webhookSecret?.trim() && channel.webhookSecret.trim().length < 32);
     const updateAuth = (patch: Partial<NonNullable<SystemModelChannel["advancedConfig"]>>) => onChange({ advancedConfig: { ...channel.advancedConfig!, ...patch } });
     return (
         <div className="space-y-4">
@@ -293,27 +291,6 @@ function ConnectionStep({ channel, onChange }: { channel: SystemModelChannel; on
                 ) : (
                     <div className="sm:col-span-2 border-y border-stone-200 py-3 text-sm text-stone-600 dark:border-stone-800 dark:text-stone-300">当前协议无需 API Key，服务端不会发送鉴权请求头。</div>
                 )}
-                <div className="sm:col-span-2">
-                    <LabeledControl label="生成回调密钥（可选）">
-                        <div className="flex min-w-0 items-center gap-2">
-                            <Input.Password
-                                value={channel.webhookSecret || ""}
-                                status={webhookSecretInvalid ? "error" : undefined}
-                                autoComplete="off"
-                                placeholder={channel.hasWebhookSecret ? "已安全保存，留空不修改" : "至少 32 个字符；未配置时使用轮询"}
-                                onChange={(event) => onChange({ webhookSecret: event.target.value, clearWebhookSecret: false })}
-                            />
-                            {channel.hasWebhookSecret ? (
-                                <Button danger className="shrink-0" onClick={() => onChange({ webhookSecret: "", hasWebhookSecret: false, clearWebhookSecret: true })}>
-                                    清除
-                                </Button>
-                            ) : null}
-                        </div>
-                        <div className={`mt-1 text-xs ${webhookSecretInvalid ? "text-red-600 dark:text-red-400" : "text-stone-500 dark:text-stone-400"}`}>
-                            {webhookSecretInvalid ? "回调密钥至少需要 32 个字符" : `安全回调地址：/api/generation-webhooks/${channel.id}`}
-                        </div>
-                    </LabeledControl>
-                </div>
             </div>
             {custom ? <AdminChannelProtocolSetup channel={channel} protocolLocked onChange={onChange} /> : <ProtocolLockedSummary channel={channel} />}
         </div>
@@ -385,7 +362,7 @@ function BindingStep({
 }) {
     return (
         <div className="space-y-4">
-            <Alert type="info" showIcon message="逻辑模型由渠道目录自动维护" description="同名上游模型会跨渠道合并；没有同名项时会按该上游模型名建立独立逻辑模型，无需填写逻辑 ID 或展示名称。" />
+            <ChannelInfoNote title="逻辑模型由渠道目录自动维护" description="同名上游模型会跨渠道合并；没有同名项时会按该上游模型名建立独立逻辑模型，无需填写逻辑 ID 或展示名称。" />
             <div className="divide-y divide-stone-200 border-y border-stone-200 dark:divide-stone-800 dark:border-stone-800">
                 {channel.models.map((upstreamModel) => {
                     const logical = logicalModels.find((model) => model.bindings.some((binding) => normalizedUpstreamModel(binding.upstreamModel) === normalizedUpstreamModel(upstreamModel)));
@@ -442,7 +419,7 @@ function ReviewStep({ channel, settings }: { channel: SystemModelChannel; settin
                     ))}
                 </div>
             </div>
-            <Alert type="info" showIcon message="启用后请在用户工作台验证" description="文本、图片、视频和音频能力以对应工作台的真实业务请求为准。" />
+            <ChannelInfoNote title="启用后请在用户工作台验证" description="文本、图片、视频和音频能力以对应工作台的真实业务请求为准。" />
             <div className="flex items-start gap-2 text-xs leading-5 text-stone-500 dark:text-stone-400">
                 <CircleDollarSign className="mt-0.5 size-4 shrink-0" />
                 <span>用户积分仍按逻辑模型配置；上游模型名只用于真实请求。</span>
@@ -456,6 +433,18 @@ function ReviewValue({ label, value }: { label: string; value: string }) {
         <div className="min-w-0">
             <div className="text-xs text-stone-500 dark:text-stone-400">{label}</div>
             <div className="mt-1 break-all text-sm font-medium text-stone-950 dark:text-stone-100">{value || "未设置"}</div>
+        </div>
+    );
+}
+
+function ChannelInfoNote({ title, description }: { title: string; description: string }) {
+    return (
+        <div className="flex items-start gap-3 border border-emerald-200 bg-emerald-50/70 px-4 py-3 text-emerald-950 dark:border-emerald-800/70 dark:bg-emerald-950/25 dark:text-emerald-50">
+            <Info className="mt-0.5 size-4 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden />
+            <div className="min-w-0">
+                <div className="text-sm font-semibold leading-6">{title}</div>
+                <div className="mt-0.5 text-sm leading-6 text-stone-600 dark:text-stone-300">{description}</div>
+            </div>
         </div>
     );
 }

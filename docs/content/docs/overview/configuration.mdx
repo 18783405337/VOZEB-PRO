@@ -118,7 +118,7 @@ ALL_PROXY=http://proxy-host:7890
 页面分为“渠道管理、协议中心、逻辑模型”三个工作区。新渠道使用固定五步向导：
 
 1. 选择内置协议或自定义协议。Seedance 2.0（SD2）、火山方舟视频、Seedance 2.0 特价版和 Stable Diffusion（SD）是独立协议，不能混用。
-2. 填写渠道名称、Base URL 和协议需要的凭据。Stable Diffusion A1111/Forge 默认无需 API Key；自定义协议可选择无需鉴权、Bearer、X-API-Key 或自定义 Header。上游支持安全回调时，可为当前渠道单独保存至少 32 字符的生成回调密钥；未配置时继续使用任务轮询。
+2. 填写渠道名称、Base URL 和协议需要的凭据。Stable Diffusion A1111/Forge 默认无需 API Key；自定义协议可选择无需鉴权、Bearer、X-API-Key 或自定义 Header。
 3. 拉取并合并模型目录；上游没有目录接口时手工填写模型 ID，后续同步不会删除手工模型。
 4. 按上游模型名自动同步逻辑模型：跨渠道同名模型自动合并，不同名模型自动独立，并可为尚未配置的能力设置默认模型。
 5. 复核协议、模型和逻辑绑定；确认连接信息与绑定完整后启用渠道，也可以先保存为停用草稿。
@@ -138,9 +138,7 @@ npm run worker:generation
 
 Worker 与主应用必须使用同一个至少 32 字符的 `VOZEB_PRO_MAINTENANCE_TOKEN`。独立部署 Worker 时再设置 `VOZEB_PRO_WORKER_API_ORIGIN`；Worker 不应读取 App 的完整 `.env`，也不得获得 `VOZEB_PRO_INSTALL_TOKEN`、数据库、支付、模型或存储密钥。同一实例的 Worker ID 应保持稳定，便于就绪检查和故障诊断。`/api/health/ready` 会把缺少维护令牌、从未收到心跳或心跳过期报告为生成 Worker 未就绪。
 
-上游支持回调时，在“模型渠道 -> 渠道配置”中为每个渠道单独保存至少 32 字符的生成回调密钥，并让该渠道调用 `/api/generation-webhooks/{channelId}`。密钥只在服务端加密保存；没有安全签名能力的渠道继续使用任务轮询。
-
-通用 HMAC-SHA256 回调需要同时发送 `x-vozeb-pro-event-id`、`x-vozeb-pro-timestamp` 和 `x-vozeb-pro-signature`。签名内容为 `JSON.stringify([channelId, timestamp, eventId]) + "\n" + rawBody`，签名值使用当前渠道密钥生成十六进制摘要，可带 `sha256=` 前缀；时间戳支持 ISO 8601、10 位秒或 13 位毫秒，允许误差为 5 分钟。事件 ID 与上游任务 ID 必须稳定。回调只按当前渠道和上游任务 ID 精确推进一条已有图片、视频或音频任务，不能代替任务创建；同一事件 ID 的相同载荷视为幂等重放，不同载荷会记录冲突并返回 409。该事件幂等处理要求 PostgreSQL。
+图片、视频和音频结果统一由 Worker 查询并写入本地任务；渠道接入不要求配置额外回调密钥。
 
 ## 媒体存储
 
