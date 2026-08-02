@@ -162,7 +162,7 @@ export function PendingImageCard({ large }: { large?: boolean }) {
     return <WorkbenchGenerationPlaceholder kind="image" className={large ? "h-[156px] w-full max-w-[320px] sm:h-[240px]" : "h-[136px] w-full sm:h-[220px]"} />;
 }
 
-export function FailedImageCard({ error, large, selected, onSelectedChange, onRetry }: { error: string; large?: boolean; selected?: boolean; onSelectedChange?: (checked: boolean) => void; onRetry: () => void }) {
+export function FailedImageCard({ error, large, selected, onSelectedChange, retryable, onRetry }: { error: string; large?: boolean; selected?: boolean; onSelectedChange?: (checked: boolean) => void; retryable?: boolean; onRetry: () => void }) {
     return (
         <div className={cn("relative w-full overflow-hidden rounded-lg border border-red-200 bg-red-50 dark:border-red-950 dark:bg-red-950/20", large && "max-w-[320px]")}>
             <ResultSelectCheckbox selected={selected} onSelectedChange={onSelectedChange} />
@@ -172,11 +172,13 @@ export function FailedImageCard({ error, large, selected, onSelectedChange, onRe
                     {error}
                 </Typography.Paragraph>
             </div>
-            <div className="flex justify-end border-t border-red-200 p-2 sm:p-3 dark:border-red-950">
-                <Button size="small" danger onClick={onRetry}>
-                    重试
-                </Button>
-            </div>
+            {retryable ? (
+                <div className="flex justify-end border-t border-red-200 p-2 sm:p-3 dark:border-red-950">
+                    <Button size="small" danger onClick={onRetry}>
+                        重试
+                    </Button>
+                </div>
+            ) : null}
         </div>
     );
 }

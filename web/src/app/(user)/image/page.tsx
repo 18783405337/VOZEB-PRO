@@ -166,7 +166,6 @@ export default function ImagePage() {
         setLogResults,
         persistLogResults,
         patchLogResult,
-        patchLogResultAt,
         runQueuedImageTask,
         resumePendingLogs,
         completeGenerationTask,
@@ -436,6 +435,7 @@ export default function ImagePage() {
                                                 large={results.length === 1}
                                                 selected={selectedResultIds.includes(result.id)}
                                                 onSelectedChange={(checked) => toggleResultSelected(result.id, checked)}
+                                                retryable={result.canRetry === true}
                                                 onRetry={() => retryResult(index)}
                                             />
                                         ) : (
