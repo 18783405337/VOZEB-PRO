@@ -16,10 +16,14 @@ type ProxyPolicyInput = {
     logicalModels: LogicalModel[];
     apiFormat: "openai" | "gemini";
     pointsUsageKind?: PointUsageKind;
+    upstreamTaskIdHint?: string;
     paths?: ProxyPathSet;
 };
 
-export type SystemAiProxyAccess = { allowed: true; capability: LogicalModelCapability; logicalModelId: string; operation: "create" | "query" | "cancel" } | { allowed: false; status: 400 | 403 | 404 | 405; error: string };
+export type SystemAiProxyAccess =
+    | { allowed: true; capability: LogicalModelCapability; logicalModelId: string; operation: "create" }
+    | { allowed: true; capability: LogicalModelCapability; logicalModelId: string; operation: "query" | "cancel"; upstreamTaskId: string }
+    | { allowed: false; status: 400 | 403 | 404 | 405; error: string };
 
 const TASK_PARAMETER = "__VOZEB_TASK_PARAMETER__";
 
@@ -35,13 +39,22 @@ export function authorizeSystemAiProxyRequest(input: ProxyPolicyInput): SystemAi
 
     const candidates = requestPathCandidates(input.path, input.search);
     const cancelPaths = [...(input.paths?.cancel || []), ...defaultCancelPaths(logical.capability, input.paths?.create || [])].filter((item) => !item.method || item.method.toUpperCase() === method);
-    if ((method === "POST" || method === "DELETE") && cancelPaths.some((item) => pathMatchesAny(candidates, item.path, upstreamModel))) {
-        return allowed(logical, "cancel");
+    const cancelMatch =
+        method === "POST" || method === "DELETE"
+            ? firstPathMatch(
+                  candidates,
+                  cancelPaths.map((item) => item.path),
+                  upstreamModel,
+              )
+            : null;
+    if (cancelMatch) {
+        return allowedTaskOperation(logical, "cancel", taskIdForAccess(cancelMatch.taskId, input.upstreamTaskIdHint));
     }
 
     const queryPaths = [...(input.paths?.query || []), ...defaultQueryPaths(logical.capability, input.paths?.create || [])];
-    if ((method === "GET" || method === "HEAD") && queryPaths.some((path) => pathMatchesAny(candidates, path, upstreamModel))) {
-        return allowed(logical, "query");
+    const queryMatch = method === "GET" || method === "HEAD" ? firstPathMatch(candidates, queryPaths, upstreamModel) : null;
+    if (queryMatch) {
+        return allowedTaskOperation(logical, "query", taskIdForAccess(queryMatch.taskId, input.upstreamTaskIdHint));
     }
 
     const createPaths = [...(input.paths?.create || []), ...standardCreatePaths(logical.capability, input.apiFormat)];
@@ -110,15 +123,41 @@ function pathMatchesAny(candidates: string[], template: string | undefined, mode
     return candidates.some((candidate) => pattern.test(candidate));
 }
 
-function pathTemplatePattern(template: string, model: string) {
+function firstPathMatch(candidates: string[], templates: Array<string | undefined>, model: string) {
+    for (const template of templates) {
+        if (!template?.trim()) continue;
+        const pattern = pathTemplatePattern(template, model, true);
+        for (const candidate of candidates) {
+            const match = candidate.match(pattern);
+            if (match) return { taskId: decodeTaskId(match[1] || "") };
+        }
+    }
+    return null;
+}
+
+function pathTemplatePattern(template: string, model: string, captureTaskId = false) {
     const withModel = template
         .trim()
         .replace(/^https?:\/\/[^/]+/i, "")
         .replace(/\{\{\s*model\s*\}\}|\{model\}|:model\b/gi, model)
         .replace(/\{\{\s*(?:taskId|task_id|id)\s*\}\}|\{(?:taskId|task_id|id)\}|:(?:taskId|task_id|id)\b/gi, TASK_PARAMETER);
     const normalized = `${withModel.startsWith("/") ? "" : "/"}${withModel}`;
-    const escaped = normalized.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replaceAll(TASK_PARAMETER, "[^/?#&=]+");
+    const escaped = normalized.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replaceAll(TASK_PARAMETER, captureTaskId ? "([^/?#&=]+)" : "[^/?#&=]+");
     return new RegExp(`^${escaped}$`, "i");
+}
+
+function taskIdForAccess(pathTaskId: string, hintedTaskId: string | undefined) {
+    const hint = decodeTaskId(hintedTaskId || "");
+    if (pathTaskId && hint && pathTaskId !== hint) return "";
+    return pathTaskId || hint;
+}
+
+function decodeTaskId(value: string) {
+    try {
+        return decodeURIComponent(value).trim().slice(0, 500);
+    } catch {
+        return "";
+    }
 }
 
 function safePathSegments(path: string[]) {
@@ -141,7 +180,11 @@ function normalizeModel(value: string) {
 }
 
 function allowed(logical: LogicalModel, operation: "create" | "query" | "cancel"): SystemAiProxyAccess {
-    return { allowed: true, capability: logical.capability, logicalModelId: logical.id, operation };
+    return operation === "create" ? { allowed: true, capability: logical.capability, logicalModelId: logical.id, operation } : denied(400, "系统模型任务操作缺少上游任务 ID");
+}
+
+function allowedTaskOperation(logical: LogicalModel, operation: "query" | "cancel", upstreamTaskId: string): SystemAiProxyAccess {
+    return upstreamTaskId ? { allowed: true, capability: logical.capability, logicalModelId: logical.id, operation, upstreamTaskId } : denied(400, "系统模型任务操作缺少上游任务 ID");
 }
 
 function denied(status: 400 | 403 | 404 | 405, error: string): SystemAiProxyAccess {

@@ -21,8 +21,7 @@ describe("PostgreSQL rate limit", () => {
         const result = await checkRateLimit("login:user@example.com", { maxRequests: 2, windowMs: 60_000 });
 
         expect(result.allowed).toBe(false);
-        expect(mocks.postgresQuery).toHaveBeenCalledTimes(1);
-        const [statement, values] = mocks.postgresQuery.mock.calls[0];
+        const [statement, values] = mocks.postgresQuery.mock.calls.find(([query]) => String(query).includes("ON CONFLICT (key_hash) DO UPDATE")) || [];
         expect(statement).toContain("ON CONFLICT (key_hash) DO UPDATE");
         expect(values[0]).toMatch(/^[a-f0-9]{64}$/);
         expect(values).not.toContain("login:user@example.com");

@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const mocks = vi.hoisted(() => ({ isSafeOutboundUrl: vi.fn(async () => true) }));
 const savedChannel = { id: "saved", name: "已保存", baseUrl: "https://api.example.com/v1", apiKey: "test-secret-value", apiFormat: "openai", models: [], enabled: true };
 
 vi.mock("@/lib/auth/session", () => ({ getCurrentUser: vi.fn(async () => ({ id: "admin", role: "admin" })) }));
 vi.mock("@/lib/auth/store", () => ({ getAuthSettings: vi.fn(async () => ({ systemChannels: [savedChannel] })) }));
-vi.mock("@/lib/server/security", () => ({ isSafeOutboundUrl: vi.fn(async () => true) }));
+vi.mock("@/lib/server/security", () => ({ isSafeOutboundUrl: mocks.isSafeOutboundUrl }));
+vi.mock("@/lib/server/safe-outbound-fetch", () => ({ fetchSafeOutbound: (url: string | URL, init?: RequestInit) => fetch(url, init) }));
 vi.mock("@/lib/server/proxy-dispatcher", () => ({ configureServerProxyDispatcher: vi.fn() }));
 
 import { POST } from "./route";
@@ -12,6 +14,8 @@ import { POST } from "./route";
 describe("admin models route", () => {
     beforeEach(() => {
         vi.restoreAllMocks();
+        mocks.isSafeOutboundUrl.mockClear();
+        mocks.isSafeOutboundUrl.mockResolvedValue(true);
         savedChannel.apiKey = "test-secret-value";
         (globalThis as typeof globalThis & { __vozebProModelFetchCooldowns?: Map<string, number> }).__vozebProModelFetchCooldowns?.clear();
     });
@@ -94,6 +98,30 @@ describe("admin models route", () => {
             modelCapabilities: { "openai-text": "text", "sd2.0": "video" },
             modelConfigs: { "sd2.0": { capability: "video", createPath: "/videos", queryPath: "/videos/:task_id" } },
         });
+    });
+
+    it("accepts a same-origin /v1/models path after validating only the channel base URL", async () => {
+        const fetchMock = vi.fn(async () => Response.json({ data: [{ id: "same-origin-model" }] }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        const response = await POST(request({ channelId: "saved", modelCatalogPaths: ["/v1/models"] }));
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toMatchObject({ models: ["same-origin-model"] });
+        expect(mocks.isSafeOutboundUrl).toHaveBeenCalledTimes(1);
+        expect(mocks.isSafeOutboundUrl).toHaveBeenCalledWith("https://api.example.com/v1");
+        expect(fetchMock).toHaveBeenCalledWith("https://api.example.com/v1/models", expect.any(Object));
+    });
+
+    it("rejects a model catalog path on another origin", async () => {
+        const fetchMock = vi.fn();
+        vi.stubGlobal("fetch", fetchMock);
+
+        const response = await POST(request({ channelId: "saved", modelCatalogPaths: ["https://other.example.com/v1/models"] }));
+
+        expect(response.status).toBe(400);
+        expect(await response.json()).toEqual({ error: "模型目录路径必须与 Base URL 同源" });
+        expect(fetchMock).not.toHaveBeenCalled();
     });
 
     it("applies capability-level custom protocol operations to newly discovered models", async () => {

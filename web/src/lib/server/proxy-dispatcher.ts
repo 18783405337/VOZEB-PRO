@@ -5,10 +5,14 @@ let configuredProxy = "";
 let windowsProxyCache: string | null | undefined;
 
 export function configureServerProxyDispatcher() {
-    const proxy = resolveProxyUrl();
+    const proxy = resolveServerProxyUrl();
     if (!proxy || proxy === configuredProxy) return;
     setGlobalDispatcher(new ProxyAgent(proxy));
     configuredProxy = proxy;
+}
+
+export function resolveServerProxyUrl() {
+    return resolveProxyUrl();
 }
 
 function resolveProxyUrl() {

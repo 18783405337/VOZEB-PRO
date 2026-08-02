@@ -24,6 +24,7 @@ import {
 } from "@/lib/server/admin-model-catalog";
 import { isProviderBusinessError, readProviderError } from "@/lib/server/provider-task-config";
 import { configureServerProxyDispatcher } from "@/lib/server/proxy-dispatcher";
+import { fetchSafeOutbound } from "@/lib/server/safe-outbound-fetch";
 import { isSafeOutboundUrl } from "@/lib/server/security";
 import { channelProtocolDefinition, protocolAuthHeaders, protocolModelConfig, resolveChannelAuthMode } from "@/lib/channel-protocol-registry";
 import type { SystemChannelAdvancedConfig, SystemChannelProtocol } from "@/lib/auth/store";
@@ -131,8 +132,9 @@ export async function POST(request: Request) {
     }
     if (advancedConfig.protocol === "globalaiopc" || isGlobalAiOpcBaseUrl(baseUrl)) return NextResponse.json({ error: "未识别到 GlobalAiOpc 接口范围，请检查 Base URL 或重新选择接口范围" }, { status: 400 });
 
+    if (!(await isSafeOutboundUrl(baseUrl))) return NextResponse.json({ error: "Base URL 不允许访问内网或保留地址" }, { status: 400 });
     const modelCatalogUrls = buildModelCatalogUrls(baseUrl, apiFormat, body.modelCatalogPaths ?? savedChannel?.advancedConfig?.modelCatalogPaths ?? protocolDefinition.modelCatalogPaths);
-    if (!modelCatalogUrls.length || !(await Promise.all(modelCatalogUrls.map((url) => isSafeOutboundUrl(url)))).every(Boolean)) return NextResponse.json({ error: "模型目录地址不允许访问内网、保留地址或其他域名" }, { status: 400 });
+    if (!modelCatalogUrls.length) return NextResponse.json({ error: "模型目录路径必须与 Base URL 同源" }, { status: 400 });
 
     const cooldownKey = `${currentUser.id}:${baseUrl.toLowerCase()}`;
     const waitMs = (modelFetchCooldowns.get(cooldownKey) || 0) - Date.now();
@@ -149,8 +151,7 @@ export async function POST(request: Request) {
             let nextUrl = catalogUrl;
             for (let page = 0; nextUrl && page < MODEL_FETCH_MAX_PAGES && !visited.has(nextUrl); page += 1) {
                 visited.add(nextUrl);
-                if (!(await isSafeOutboundUrl(nextUrl))) throw new Error("模型分页地址不允许访问内网或保留地址");
-                const response = await fetch(nextUrl, {
+                const response = await fetchSafeOutbound(nextUrl, {
                     headers: protocolAuthHeaders(apiKey, advancedConfig, apiFormat),
                     cache: "no-store",
                     signal: AbortSignal.timeout(MODEL_FETCH_TIMEOUT_MS),

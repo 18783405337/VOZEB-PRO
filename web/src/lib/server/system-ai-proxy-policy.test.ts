@@ -52,9 +52,23 @@ describe("system AI proxy policy", () => {
             apiFormat: "openai" as const,
             paths: { create: ["/jobs/video"], query: ["/jobs/video/:task_id"], cancel: [{ path: "/jobs/video/:task_id/cancel", method: "POST" }] },
         };
-        expect(authorizeSystemAiProxyRequest({ ...base, method: "GET", path: ["jobs", "video", "task-one"], search: "" })).toMatchObject({ allowed: true, operation: "query" });
-        expect(authorizeSystemAiProxyRequest({ ...base, method: "POST", path: ["jobs", "video", "task-one", "cancel"], search: "" })).toMatchObject({ allowed: true, operation: "cancel" });
+        expect(authorizeSystemAiProxyRequest({ ...base, method: "GET", path: ["jobs", "video", "task-one"], search: "" })).toMatchObject({ allowed: true, operation: "query", upstreamTaskId: "task-one" });
+        expect(authorizeSystemAiProxyRequest({ ...base, method: "POST", path: ["jobs", "video", "task-one", "cancel"], search: "" })).toMatchObject({ allowed: true, operation: "cancel", upstreamTaskId: "task-one" });
         expect(authorizeSystemAiProxyRequest({ ...base, method: "GET", path: ["jobs", "other", "task-one"], search: "" })).toMatchObject({ allowed: false, status: 404 });
+    });
+
+    it("extracts task ids from query strings and rejects conflicting hints", () => {
+        const base = {
+            channelId: "main",
+            upstreamModel: "vendor-video",
+            preferredLogicalModelId: "video-pro",
+            logicalModels,
+            apiFormat: "openai" as const,
+            paths: { query: ["/result?id=:task_id"], cancel: [{ path: "/jobs/cancel", method: "POST" }] },
+        };
+        expect(authorizeSystemAiProxyRequest({ ...base, method: "GET", path: ["result"], search: "?id=task%20one" })).toMatchObject({ allowed: true, operation: "query", upstreamTaskId: "task one" });
+        expect(authorizeSystemAiProxyRequest({ ...base, method: "POST", path: ["jobs", "cancel"], search: "", upstreamTaskIdHint: "task-two" })).toMatchObject({ allowed: true, operation: "cancel", upstreamTaskId: "task-two" });
+        expect(authorizeSystemAiProxyRequest({ ...base, method: "GET", path: ["result"], search: "?id=task-one", upstreamTaskIdHint: "task-two" })).toMatchObject({ allowed: false, status: 400 });
     });
 
     it("rejects unsupported methods and mismatched logical capabilities", () => {

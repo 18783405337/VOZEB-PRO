@@ -2,6 +2,7 @@ import sharp from "sharp";
 
 import { normalizeImagePreviewWidth } from "@/lib/media-image-variant";
 import { getOrCreateCachedImageVariant } from "@/lib/server/media-image-variant-cache";
+import { fetchSafeOutbound } from "@/lib/server/safe-outbound-fetch";
 
 const REPOSITORY = "tigerowo/awesome-gpt-image-2-prompts";
 const COMMIT = "60e9c65baecfd6d6d51ac4e4d87f146af834bb64";
@@ -19,9 +20,10 @@ export async function createPublicPromptImage(pathValue: string | null, widthVal
     if (!imagePath) return null;
     const width = normalizeImagePreviewWidth(widthValue, 640);
     return getOrCreateCachedImageVariant(`prompt:${COMMIT}:${imagePath}:${width}`, async () => {
-        const response = await fetch(`https://raw.githubusercontent.com/${REPOSITORY}/${COMMIT}/${imagePath}`, {
+        const response = await fetchSafeOutbound(`https://raw.githubusercontent.com/${REPOSITORY}/${COMMIT}/${imagePath}`, {
             headers: { Accept: "image/avif,image/webp,image/png,image/jpeg", "User-Agent": "VOZEB-PRO prompt image proxy" },
             cache: "force-cache",
+            signal: AbortSignal.timeout(15_000),
         });
         if (!response.ok || !response.body || !response.headers.get("content-type")?.toLowerCase().startsWith("image/")) throw new Error(`上游提示词图片不可用：HTTP ${response.status}`);
         const declaredBytes = Number(response.headers.get("content-length") || 0);

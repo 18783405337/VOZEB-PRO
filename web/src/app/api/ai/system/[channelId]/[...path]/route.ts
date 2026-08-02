@@ -11,6 +11,7 @@ import { MediaProxyResponseError, fetchSafeUpstreamMedia } from "@/lib/server/me
 import { MAX_MEDIA_PROXY_BYTES, MAX_MEDIA_PROXY_RANGE_BYTES, normalizeMediaProxyRange } from "@/lib/server/media-response-limit";
 import { configureServerProxyDispatcher } from "@/lib/server/proxy-dispatcher";
 import { checkMediaProxyRateLimit, isSafeOutboundUrl, rateLimitHeaders } from "@/lib/server/security";
+import { fetchSafeOutbound } from "@/lib/server/safe-outbound-fetch";
 import { readRequestBodyBytes, RequestBodyTooLargeError } from "@/lib/server/request-body-limit";
 import { resolveGlobalAiOpcPathPreset, resolveGlobalAiOpcPreset } from "@/lib/globalaiopc-catalog";
 import { adaptGlobalAiOpcTextRequest, adaptGlobalAiOpcTextResponse, isGlobalAiOpcChannel } from "@/lib/server/globalaiopc-proxy";
@@ -18,6 +19,8 @@ import { readVerifiedSystemAiBusinessRequestId, SYSTEM_AI_LOGICAL_MODEL_HEADER, 
 import { isAgnesApiBaseUrl } from "@/lib/agnes-model-catalog";
 import { channelConnectionReady, protocolAuthHeaders, resolveChannelModelConfig } from "@/lib/channel-protocol-registry";
 import { authorizedMaintenanceUserId } from "@/lib/server/maintenance-auth";
+import { authorizeGenerationMediaProxyRequest } from "@/lib/server/generation-media-access";
+import { userOwnsGenerationUpstreamTask } from "@/lib/server/generation-task-authorization";
 import { authorizeSystemAiProxyRequest } from "@/lib/server/system-ai-proxy-policy";
 
 export const runtime = "nodejs";
@@ -117,6 +120,7 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
         logicalModels: settings.logicalModels || [],
         apiFormat: globalPreset?.apiFormat || apiFormat,
         pointsUsageKind: pointsRequest?.usageKind,
+        upstreamTaskIdHint: readRequestTaskId(readRequestBody(contentType, requestBody.pointsPayload)),
         paths: {
             create: [globalPreset?.createPath, modelConfig?.createPath, modelConfig?.editPath, modelConfig?.imageToVideoPath, channel.advancedConfig?.createPath, channel.advancedConfig?.editPath, channel.advancedConfig?.imageToVideoPath],
             query: [globalPreset?.queryPath, modelConfig?.queryPath, channel.advancedConfig?.queryPath],
@@ -127,6 +131,10 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
         },
     });
     if (!access.allowed) return NextResponse.json({ error: access.error }, { status: access.status });
+    if (access.operation !== "create") {
+        const owned = await userOwnsGenerationUpstreamTask({ userId, capability: access.capability, channelId: channel.id, upstreamModel, upstreamTaskId: access.upstreamTaskId });
+        if (!owned) return NextResponse.json({ error: "任务不存在或无权访问" }, { status: 404 });
+    }
 
     const target = targetUrl(globalPreset?.baseUrl || channel.baseUrl, globalPreset?.apiFormat || apiFormat, globalAdaptation?.path || path, new URL(request.url).search, globalChannel, modelConfig?.protocol || channel.advancedConfig?.protocol);
     if (!(await isSafeOutboundUrl(target, { allowCredentials: false }))) return NextResponse.json({ error: "接口地址不允许访问内网或保留地址" }, { status: 400 });
@@ -175,7 +183,7 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
 
     let upstream: Response;
     try {
-        upstream = await fetch(target, {
+        upstream = await fetchSafeOutbound(target, {
             method: request.method,
             headers,
             body: globalAdaptation?.body || requestBody.body,
@@ -224,11 +232,13 @@ function channelHasModel(models: string[], requested: string) {
     );
 }
 
-type SystemMediaChannel = { baseUrl: string; apiFormat: ApiCallFormat; apiKey: string; advancedConfig?: import("@/lib/auth/store").SystemChannelAdvancedConfig };
+type SystemMediaChannel = { id: string; baseUrl: string; apiFormat: ApiCallFormat; apiKey: string; advancedConfig?: import("@/lib/auth/store").SystemChannelAdvancedConfig };
 
 async function proxySystemMediaRequest(request: Request, channel: SystemMediaChannel, userId: string) {
     if (request.method !== "GET" && request.method !== "HEAD") return NextResponse.json({ error: "Media proxy only supports GET and HEAD" }, { status: 405 });
-    const target = mediaTargetRequest(channel.baseUrl, channel.apiFormat, new URL(request.url).searchParams.get("url") || "", isGlobalAiOpcChannel(channel.advancedConfig));
+    const rawUrl = new URL(request.url).searchParams.get("url") || "";
+    if (!(await authorizeGenerationMediaProxyRequest(request, { userId, channelId: channel.id, url: rawUrl }))) return NextResponse.json({ error: "媒体路径未获任务授权" }, { status: 403 });
+    const target = mediaTargetRequest(channel.baseUrl, channel.apiFormat, rawUrl, isGlobalAiOpcChannel(channel.advancedConfig));
     if (!target) return NextResponse.json({ error: "Invalid media url" }, { status: 400 });
     if (!(await isSafeOutboundUrl(target.url, { allowCredentials: false }))) return NextResponse.json({ error: "媒体地址不允许访问内网或保留地址" }, { status: 400 });
     const range = normalizeMediaProxyRange(request.headers.get("range"));
@@ -278,9 +288,10 @@ async function fetchSystemMedia(target: { url: string; includeAuth: boolean }, m
     let includeAuth = target.includeAuth;
     for (let redirects = 0; redirects <= MAX_SYSTEM_MEDIA_REDIRECTS; redirects += 1) {
         if (!(await isSafeOutboundUrl(currentUrl, { allowCredentials: false }))) throw new Error("Unsafe media redirect");
-        const headers = new Headers(baseHeaders);
-        if (!includeAuth) headers.delete("authorization");
-        const upstream = await fetch(currentUrl, { method, headers, cache: "no-store", redirect: "manual", signal });
+        const headers = includeAuth ? new Headers(baseHeaders) : new Headers();
+        const range = baseHeaders.get("range");
+        if (range) headers.set("range", range);
+        const upstream = await fetchSafeOutbound(currentUrl, { method, headers, cache: "no-store", redirect: "manual", signal });
         if (!isRedirectStatus(upstream.status)) return upstream;
         const location = upstream.headers.get("location");
         await upstream.body?.cancel().catch(() => undefined);
@@ -466,6 +477,13 @@ function readRequestModel(payload: Record<string, unknown>) {
     return overrideSettings && typeof overrideSettings === "object" && !Array.isArray(overrideSettings) && typeof (overrideSettings as Record<string, unknown>).sd_model_checkpoint === "string"
         ? String((overrideSettings as Record<string, unknown>).sd_model_checkpoint).trim()
         : "";
+}
+
+function readRequestTaskId(payload: Record<string, unknown>) {
+    for (const key of ["task_id", "taskId", "id", "job_id", "jobId", "video_id", "videoId", "request_id", "requestId"]) {
+        if (typeof payload[key] === "string" && payload[key].trim()) return payload[key].trim().slice(0, 500);
+    }
+    return "";
 }
 
 function readPathModel(path: string[]) {

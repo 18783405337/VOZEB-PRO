@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
     acquire: vi.fn(),
     wrap: vi.fn(),
     release: vi.fn(),
+    mediaAccess: vi.fn(),
+    taskAccess: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session", () => ({ getCurrentUser: vi.fn(async () => ({ id: "user-one" })) }));
@@ -21,6 +23,9 @@ vi.mock("@/lib/auth/store", () => ({
 }));
 vi.mock("@/lib/server/proxy-dispatcher", () => ({ configureServerProxyDispatcher: vi.fn() }));
 vi.mock("@/lib/server/media-concurrency", () => ({ acquireMediaConcurrency: mocks.acquire, withMediaConcurrency: mocks.wrap }));
+vi.mock("@/lib/server/safe-outbound-fetch", () => ({ fetchSafeOutbound: (url: string | URL, init?: RequestInit) => fetch(url, init) }));
+vi.mock("@/lib/server/generation-media-access", () => ({ authorizeGenerationMediaProxyRequest: mocks.mediaAccess }));
+vi.mock("@/lib/server/generation-task-authorization", () => ({ userOwnsGenerationUpstreamTask: mocks.taskAccess }));
 vi.mock("@/lib/server/security", () => ({
     checkMediaProxyRateLimit: mocks.checkMediaProxyRateLimit,
     isSafeOutboundUrl: mocks.safeUrl,
@@ -43,6 +48,8 @@ describe("system media proxy", () => {
         mocks.release.mockReset();
         mocks.acquire.mockReturnValue({ release: mocks.release });
         mocks.wrap.mockImplementation((response: Response) => response);
+        mocks.mediaAccess.mockReset().mockResolvedValue(true);
+        mocks.taskAccess.mockReset().mockResolvedValue(true);
         mocks.getAuthSettings.mockResolvedValue({
             systemChannels: [{ id: "channel-one", enabled: true, baseUrl: "https://api.example.com/v1", apiKey: "secret", apiFormat: "openai", models: [] }],
         });
@@ -56,6 +63,14 @@ describe("system media proxy", () => {
 
         expect(response.status).toBe(429);
         expect(response.headers.get("retry-after")).toBe("60");
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("rejects media urls that were not authorized by a server-owned generation task", async () => {
+        mocks.mediaAccess.mockResolvedValue(false);
+        const fetchMock = vi.spyOn(globalThis, "fetch");
+        const response = await GET(request(), context);
+        expect(response.status).toBe(403);
         expect(fetchMock).not.toHaveBeenCalled();
     });
 
@@ -149,6 +164,7 @@ describe("GlobalAiOpc native text proxy", () => {
         mocks.consumeUserPoints.mockReset().mockResolvedValue(undefined);
         mocks.refundUserPoints.mockReset();
         mocks.safeUrl.mockResolvedValue(true);
+        mocks.taskAccess.mockReset().mockResolvedValue(true);
         mocks.getAuthSettings.mockResolvedValue({
             generationPointMultipliers: {},
             logicalModels: [logicalModel("gemini-text", "text", "gemini-3.1-pro-preview")],
@@ -380,6 +396,7 @@ describe("Agnes video polling proxy", () => {
         mocks.consumeUserPoints.mockReset().mockResolvedValue(undefined);
         mocks.refundUserPoints.mockReset();
         mocks.safeUrl.mockResolvedValue(true);
+        mocks.taskAccess.mockReset().mockResolvedValue(true);
         mocks.getAuthSettings.mockResolvedValue({
             generationPointMultipliers: {},
             logicalModels: [logicalModel("agnes-video", "video", "agnes-video-v2.0")],
@@ -396,6 +413,17 @@ describe("Agnes video polling proxy", () => {
 
         expect(response.status).toBe(200);
         expect(fetchMock.mock.calls[0][0]).toBe("https://apihub.agnes-ai.com/agnesapi?video_id=video-one");
+        expect(mocks.taskAccess).toHaveBeenCalledWith({ userId: "user-one", capability: "video", channelId: "channel-one", upstreamModel: "agnes-video-v2.0", upstreamTaskId: "video-one" });
+    });
+
+    it("does not forward another user's upstream task", async () => {
+        mocks.taskAccess.mockResolvedValue(false);
+        const fetchMock = vi.spyOn(globalThis, "fetch");
+        const response = await GET(new Request("http://localhost/api/ai/system/channel-one/agnesapi?video_id=other", { headers: systemModelHeaders("agnes-video", "agnes-video-v2.0") }), {
+            params: Promise.resolve({ channelId: "channel-one", path: ["agnesapi"] }),
+        });
+        expect(response.status).toBe(404);
+        expect(fetchMock).not.toHaveBeenCalled();
     });
 });
 

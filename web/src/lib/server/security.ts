@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
-import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 
 import { ensurePostgresSchema, getDatabaseProvider, postgresQuery } from "@/lib/server/database";
 
-type RateLimitConfig = {
+export { isPublicIpAddress, isSafeOutboundUrl, resolveSafeOutboundTarget } from "@/lib/server/outbound-url-security";
+
+export type RateLimitConfig = {
     maxRequests: number;
     windowMs: number;
 };
@@ -16,6 +17,8 @@ export type RateLimitResult = {
 };
 
 export type GenerationRateLimitType = "text" | "image" | "video" | "audio" | "agent" | "render";
+export type AuthRateLimitDimension = "ip" | "account" | "device";
+export type AuthRateLimitResult = RateLimitResult & { dimension?: AuthRateLimitDimension };
 
 const generationRateLimits: Record<GenerationRateLimitType, RateLimitConfig> = {
     agent: { maxRequests: 10, windowMs: 60 * 1000 },
@@ -32,16 +35,15 @@ const signedMediaRateLimit: RateLimitConfig = { maxRequests: 60, windowMs: 60 * 
 const publicMediaResourceRateLimit: RateLimitConfig = { maxRequests: 2400, windowMs: 60 * 1000 };
 const publicMediaIpRateLimit: RateLimitConfig = { maxRequests: 240, windowMs: 60 * 1000 };
 
-const blockedHostnames = ["metadata.google.internal", "metadata.goog", "metadata.azure.com", "instance-data"];
-
 const globalSecurityStore = globalThis as typeof globalThis & {
     __vozebProRateLimits?: Map<string, { count: number; resetAt: number }>;
+    __vozebProRateLimitCleanupAt?: number;
 };
 
 const rateLimits = (globalSecurityStore.__vozebProRateLimits ??= new Map<string, { count: number; resetAt: number }>());
 
 export function getClientIp(request: Request) {
-    const trustedProxyHops = readTrustedProxyHops();
+    const trustedProxyHops = getTrustedProxyHops();
     if (trustedProxyHops <= 0) return "unknown";
 
     const forwarded = request.headers
@@ -49,8 +51,32 @@ export function getClientIp(request: Request) {
         ?.split(",")
         .map((value) => value.trim())
         .filter(Boolean);
-    const forwardedIp = forwarded?.[Math.max(0, forwarded.length - trustedProxyHops)];
-    return forwardedIp || request.headers.get("x-real-ip")?.trim() || request.headers.get("cf-connecting-ip")?.trim() || "unknown";
+    if (forwarded?.length) {
+        if (forwarded.length < trustedProxyHops) return "unknown";
+        return normalizeForwardedIp(forwarded[forwarded.length - trustedProxyHops]) || "unknown";
+    }
+    if (trustedProxyHops !== 1) return "unknown";
+    return normalizeForwardedIp(request.headers.get("x-real-ip")) || normalizeForwardedIp(request.headers.get("cf-connecting-ip")) || "unknown";
+}
+
+export async function checkAuthRateLimit(scope: string, request: Request, account: unknown, config: RateLimitConfig): Promise<AuthRateLimitResult> {
+    const identities: Array<[AuthRateLimitDimension, string]> = [];
+    const ip = getClientIp(request);
+    if (ip !== "unknown") identities.push(["ip", ip]);
+    const device = authDeviceFingerprint(request);
+    const deviceIdentity = device || "anonymous";
+    identities.push(["device", deviceIdentity]);
+    const normalizedAccount = normalizeAuthIdentity(account);
+    const accountSource = ip !== "unknown" ? `ip:${ip}` : `device:${deviceIdentity}`;
+    if (normalizedAccount) identities.push(["account", `${normalizedAccount}:${accountSource}`]);
+
+    let combined: AuthRateLimitResult = { allowed: true, remaining: config.maxRequests, resetAt: Date.now() + config.windowMs };
+    for (const [dimension, identity] of identities) {
+        const result = await checkRateLimit(`auth:${normalizeAuthScope(scope)}:${dimension}:${identity}`, config);
+        if (!result.allowed) return { ...result, dimension };
+        if (result.remaining < combined.remaining) combined = { ...result, dimension };
+    }
+    return combined;
 }
 
 export async function checkRateLimit(key: string, config: RateLimitConfig): Promise<RateLimitResult> {
@@ -114,6 +140,7 @@ export function rateLimitHeaders(result: RateLimitResult) {
 async function checkPostgresRateLimit(key: string, config: RateLimitConfig) {
     await ensurePostgresSchema();
     const now = Date.now();
+    await cleanupExpiredPostgresRateLimits(now);
     const resetAt = now + config.windowMs;
     const result = await postgresQuery<{ request_count: number | string; reset_at: Date | string }>(
         `INSERT INTO rate_limits (key_hash, request_count, reset_at, updated_at)
@@ -128,6 +155,23 @@ async function checkPostgresRateLimit(key: string, config: RateLimitConfig) {
     const count = Number(result.rows[0]?.request_count) || 1;
     const databaseResetAt = new Date(result.rows[0]?.reset_at || resetAt).getTime();
     return { allowed: count <= config.maxRequests, remaining: Math.max(0, config.maxRequests - count), resetAt: Number.isFinite(databaseResetAt) ? databaseResetAt : resetAt };
+}
+
+async function cleanupExpiredPostgresRateLimits(now: number) {
+    const lastCleanupAt = globalSecurityStore.__vozebProRateLimitCleanupAt || 0;
+    if (now - lastCleanupAt < 5 * 60_000) return;
+    globalSecurityStore.__vozebProRateLimitCleanupAt = now;
+    await postgresQuery(
+        `DELETE FROM rate_limits
+         WHERE ctid IN (
+             SELECT ctid
+             FROM rate_limits
+             WHERE reset_at < $1
+             ORDER BY reset_at ASC
+             LIMIT 500
+         )`,
+        [new Date(now - 60 * 60_000)],
+    );
 }
 
 function checkMemoryRateLimit(key: string, config: RateLimitConfig) {
@@ -148,76 +192,6 @@ function checkMemoryRateLimit(key: string, config: RateLimitConfig) {
     return { allowed: true, remaining: config.maxRequests - current.count, resetAt: current.resetAt };
 }
 
-export async function isSafeOutboundUrl(value: string, options?: { allowCredentials?: boolean }) {
-    try {
-        const url = new URL(value);
-        if (url.protocol !== "http:" && url.protocol !== "https:") return false;
-        if (!options?.allowCredentials && (url.username || url.password)) return false;
-        if (privateUpstreamHostAllowed(url.hostname)) return true;
-        return isSafeOutboundHost(url.hostname);
-    } catch {
-        return false;
-    }
-}
-
-function privateUpstreamHostAllowed(hostname: string) {
-    if (process.env.VOZEB_PRO_ALLOW_PRIVATE_UPSTREAMS !== "1") return false;
-    const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
-    return (process.env.VOZEB_PRO_PRIVATE_UPSTREAM_HOSTS || "")
-        .split(",")
-        .map((value) =>
-            value
-                .trim()
-                .replace(/^\[|\]$/g, "")
-                .toLowerCase(),
-        )
-        .filter(Boolean)
-        .includes(host);
-}
-
-async function isSafeOutboundHost(hostname: string) {
-    const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
-    if (!host || host === "localhost" || host.endsWith(".localhost")) return false;
-    if (blockedHostnames.some((blocked) => host === blocked || host.endsWith(`.${blocked}`) || host.includes(blocked))) return false;
-
-    const directIpVersion = isIP(host);
-    if (directIpVersion) return isPublicIpAddress(host);
-
-    try {
-        const addresses = await lookup(host, { all: true, verbatim: true });
-        return addresses.length > 0 && addresses.every((address) => isPublicIpAddress(address.address));
-    } catch {
-        return false;
-    }
-}
-
-export function isPublicIpAddress(address: string) {
-    const version = isIP(address);
-    if (version === 4) {
-        const parts = address.split(".").map((part) => Number(part));
-        if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
-        const [a, b] = parts;
-        if (a === 0 || a === 10 || a === 127 || a >= 224) return false;
-        if (a === 100 && b >= 64 && b <= 127) return false;
-        if (a === 169 && b === 254) return false;
-        if (a === 172 && b >= 16 && b <= 31) return false;
-        if (a === 192 && (b === 0 || b === 168)) return false;
-        if (a === 198 && (b === 18 || b === 19)) return false;
-        return true;
-    }
-
-    if (version === 6) {
-        const normalized = address.toLowerCase();
-        if (normalized === "::" || normalized === "::1") return false;
-        if (normalized.startsWith("fc") || normalized.startsWith("fd") || /^fe[89ab]/.test(normalized)) return false;
-        if (normalized.startsWith("ff") || normalized.startsWith("2001:db8:")) return false;
-        if (normalized.startsWith("::ffff:")) return isPublicIpAddress(normalized.slice("::ffff:".length));
-        return true;
-    }
-
-    return false;
-}
-
 function cleanupRateLimits(now: number) {
     if (rateLimits.size < 5000) return;
     for (const [key, value] of rateLimits.entries()) {
@@ -225,7 +199,31 @@ function cleanupRateLimits(now: number) {
     }
 }
 
-function readTrustedProxyHops() {
+function normalizeForwardedIp(value: string | null | undefined) {
+    const candidate = value?.trim().replace(/^"|"$/g, "") || "";
+    return isIP(candidate) ? candidate.toLowerCase() : "";
+}
+
+function normalizeAuthIdentity(value: unknown) {
+    return typeof value === "string" ? value.normalize("NFKC").trim().toLowerCase().slice(0, 160) : "";
+}
+
+function normalizeAuthScope(value: string) {
+    return (
+        value
+            .trim()
+            .toLowerCase()
+            .replace(/[^a-z0-9:_-]+/g, "-")
+            .slice(0, 64) || "auth"
+    );
+}
+
+function authDeviceFingerprint(request: Request) {
+    const fingerprint = ["user-agent", "accept-language", "sec-ch-ua", "sec-ch-ua-platform", "sec-ch-ua-mobile"].map((name) => request.headers.get(name)?.trim() || "").join("\n");
+    return fingerprint.replace(/\n/g, "") ? createHash("sha256").update(fingerprint).digest("hex") : "";
+}
+
+export function getTrustedProxyHops() {
     const value = Number(process.env.VOZEB_PRO_TRUSTED_PROXY_HOPS || 0);
     return Number.isInteger(value) && value > 0 ? Math.min(value, 10) : 0;
 }
