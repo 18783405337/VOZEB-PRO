@@ -10,7 +10,7 @@ import { resolveServerDataPath } from "@/lib/server/data-dir";
 import { countLocalMediaReferences } from "@/lib/server/local-media-references";
 import { runImageVariantTaskOnce } from "@/lib/server/media-image-variant-cache";
 import { mediaContentDisposition, requestedImageVariant } from "@/lib/server/local-media-response";
-import { deleteLocalMediaRegistrations, listLocalMediaRegistrations, listMediaRegistrationsByExternalObjectKeys, registerLocalMediaAsset, type LocalMediaRegistration } from "@/lib/server/local-media-registry";
+import { deleteLocalMediaRegistrations, listLocalMediaMigrationRegistrations, listMediaRegistrationsByExternalObjectKeys, registerLocalMediaAsset, type LocalMediaRegistration } from "@/lib/server/local-media-registry";
 import { deleteObjects, getObjectBytes, listObjects, objectExists, putObjectBytes, putObjectFile, signObjectRead, testObjectStorageConnection } from "@/lib/server/object-storage-client";
 import { assertObjectStorageConfigured, getObjectStorageRuntimeConfig, type ObjectStorageRuntimeConfig } from "@/lib/server/object-storage-config";
 
@@ -194,18 +194,31 @@ export async function migrateLocalMediaToObjectStorage(limit = 20): Promise<Obje
     const config = await getObjectStorageRuntimeConfig();
     if (!config.enabled) throw new Error("请先启用外部存储");
     assertObjectStorageConfigured(config);
-    const registrations = (await listLocalMediaRegistrations()).filter((item) => item.storageProvider !== "object");
-    const candidates = (
-        await Promise.all(
-            registrations.map(async (registration) => {
+    const batchSize = Math.max(1, Math.min(50, Math.floor(limit) || 20));
+    const batch: Array<{ registration: LocalMediaRegistration; filePath: string; bytes: number }> = [];
+    let offset = 0;
+    let total = 0;
+    let skipped = 0;
+    while (batch.length < batchSize && offset < 500) {
+        const pageLimit = Math.min(100, 500 - offset);
+        const page = await listLocalMediaMigrationRegistrations({ limit: pageLimit, offset });
+        total = page.total;
+        if (!page.items.length) break;
+        const inspected = await Promise.all(
+            page.items.map(async (registration) => {
                 const filePath = localMediaPath(registration);
                 const info = filePath ? await stat(filePath).catch(() => null) : null;
                 return info?.isFile() ? { registration, filePath, bytes: info.size } : null;
             }),
-        )
-    ).filter((item): item is NonNullable<typeof item> => Boolean(item));
-    const batch = candidates.slice(0, Math.max(1, Math.min(50, Math.floor(limit) || 20)));
-    const result: ObjectStorageMigrationResult = { migrated: 0, skipped: registrations.length - candidates.length, failed: 0, remaining: Math.max(0, candidates.length - batch.length), errors: [] };
+        );
+        for (const candidate of inspected) {
+            if (!candidate) skipped += 1;
+            else if (batch.length < batchSize) batch.push(candidate);
+        }
+        offset += page.items.length;
+        if (page.items.length < pageLimit) break;
+    }
+    const result: ObjectStorageMigrationResult = { migrated: 0, skipped, failed: 0, remaining: total, errors: [] };
 
     for (const item of batch) {
         try {
@@ -224,7 +237,7 @@ export async function migrateLocalMediaToObjectStorage(limit = 20): Promise<Obje
             result.errors.push({ storageKey: item.registration.storageKey, message: error instanceof Error ? error.message : "迁移失败" });
         }
     }
-    result.remaining += result.failed;
+    result.remaining = Math.max(0, total - result.migrated);
     return result;
 }
 

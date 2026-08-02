@@ -1,7 +1,7 @@
 import { nanoid } from "nanoid";
 
 import type { CanvasProject, CreateCanvasProjectInput } from "@/lib/canvas-project-contract";
-import { createCanvasProject, CanvasProjectStoreError, deleteCanvasProjects, getCanvasProject, listCanvasProjects, listCanvasProjectSummaries, updateCanvasProject } from "@/lib/server/canvas-project-store";
+import { createCanvasProject, CanvasProjectStoreError, deleteCanvasProjects, getCanvasProject, listCanvasProjectSummaries, updateCanvasProject } from "@/lib/server/canvas-project-store";
 import { collectLocalMediaStorageKeys } from "@/lib/server/local-media-references";
 import { deleteUserLocalMediaAssets } from "@/lib/server/local-media-storage";
 import { createCreativeConversation, updateCreativeConversation } from "@/lib/server/creative-runtime-store";
@@ -31,11 +31,11 @@ export async function createCanvasProjectForUser(userId: string, value: unknown)
     const input = object(value) as CreateCanvasProjectInput;
     const source = object(input.project);
     const sourceHandoffId = text(input.sourceHandoffId || source.sourceHandoffId, 160);
+    const id = sourceHandoffId ? `canvas-${sourceHandoffId}` : `canvas-${nanoid()}`;
     if (sourceHandoffId) {
-        const existing = (await listCanvasProjects(userId)).find((project) => project.sourceHandoffId === sourceHandoffId);
+        const existing = await getCanvasProject(id, userId);
         if (existing) return existing;
     }
-    const id = sourceHandoffId ? `canvas-${sourceHandoffId}` : `canvas-${nanoid()}`;
     const title = text(input.title || source.title, 120) || "未命名画布";
     const now = new Date().toISOString();
     const conversation = await createCreativeConversation(userId, { surface: "canvas", projectId: id, title });

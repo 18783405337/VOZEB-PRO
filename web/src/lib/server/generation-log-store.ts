@@ -197,13 +197,13 @@ export async function deleteGenerationLogsByUserId(userId: string) {
 }
 
 export async function getGenerationAssetStats(): Promise<GenerationAssetStats> {
-    const db = await readGenerationLogDb();
+    const db = isPostgresDatabaseEnabled() ? null : await readGenerationLogDb();
     const files = await listLocalAssetFiles();
     const fileKeys = files.map((file) => relative(resolve(GENERATION_MEDIA_ROOT), file.path).replace(/\\/g, "/"));
     const references = await countLocalMediaReferences(fileKeys);
     const referencedFiles = files.filter((_, index) => (references.get(fileKeys[index]) || 0) > 0);
     const unreferencedFiles = files.filter((_, index) => (references.get(fileKeys[index]) || 0) === 0);
-    const logReferences = collectGenerationLogAssetKeys(db);
+    const logReferences = db ? collectGenerationLogAssetKeys(db) : new Set<string>();
 
     return {
         totalFiles: files.length,
@@ -240,6 +240,7 @@ export async function canAccessGenerationAsset(userId: string, role: UserRole, u
         const registration = await getLocalMediaRegistration(storageKey);
         if (registration) return registration.ownerUserId === userId;
     }
+    if (isPostgresDatabaseEnabled()) return false;
     const db = await readGenerationLogDb();
     return db.logs.some((log) => log.userId === userId && log.assets.some((asset) => localAssetUrls(asset).includes(url)));
 }

@@ -15,7 +15,7 @@ vi.mock("@/lib/server/database", () => ({
 }));
 vi.mock("@/lib/server/data-adapter", () => ({ readJsonDataFile: mocks.readJsonDataFile, writeJsonDataFile: mocks.writeJsonDataFile }));
 
-import { getLocalMediaRegistrationSummary, listLocalMediaRegistrationPage, listLocalMediaRegistrationsForUser } from "./local-media-registry";
+import { getLocalMediaRegistrationSummary, listExpiredLocalMediaRegistrations, listFileLocalMediaRegistrations, listLocalMediaMigrationRegistrations, listLocalMediaRegistrationPage, listLocalMediaRegistrationsForUser } from "./local-media-registry";
 
 describe("listLocalMediaRegistrationsForUser", () => {
     beforeEach(() => vi.clearAllMocks());
@@ -71,5 +71,35 @@ describe("listLocalMediaRegistrationsForUser", () => {
         expect(mocks.postgresQuery).toHaveBeenCalledTimes(1);
         expect(String(mocks.postgresQuery.mock.calls[0][0])).toContain("FROM local_media_assets");
         expect(String(mocks.postgresQuery.mock.calls[0][0])).not.toContain("ORDER BY");
+    });
+
+    it("loads expired media with a bounded PostgreSQL maintenance query", async () => {
+        mocks.getDatabaseProvider.mockReturnValue("postgres");
+        mocks.postgresQuery.mockResolvedValue({ rows: [] });
+
+        await listExpiredLocalMediaRegistrations(80);
+
+        expect(mocks.postgresQuery).toHaveBeenCalledWith(expect.stringContaining("storage_class = 'temporary'"), [80]);
+        expect(String(mocks.postgresQuery.mock.calls[0][0])).toContain("expires_at <= now()");
+        expect(String(mocks.postgresQuery.mock.calls[0][0])).toContain("LIMIT $1");
+    });
+
+    it("loads local migration candidates by page and counts only local registrations", async () => {
+        mocks.getDatabaseProvider.mockReturnValue("postgres");
+        mocks.postgresQuery.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [{ total: "240" }] });
+
+        const result = await listLocalMediaMigrationRegistrations({ limit: 40, offset: 80 });
+
+        expect(result).toEqual({ items: [], total: 240 });
+        expect(mocks.postgresQuery).toHaveBeenCalledWith(expect.stringContaining("storage_provider = 'local'"), [40, 80]);
+        expect(String(mocks.postgresQuery.mock.calls[0][0])).toContain("LIMIT $1 OFFSET $2");
+        expect(String(mocks.postgresQuery.mock.calls[1][0])).toContain("count(*) AS total");
+    });
+
+    it("prevents the file-provider full reader from querying PostgreSQL", async () => {
+        mocks.getDatabaseProvider.mockReturnValue("postgres");
+
+        await expect(listFileLocalMediaRegistrations()).rejects.toThrow("PostgreSQL media reads must use a scoped repository query");
+        expect(mocks.postgresQuery).not.toHaveBeenCalled();
     });
 });

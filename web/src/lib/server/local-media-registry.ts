@@ -115,13 +115,43 @@ export async function getLocalMediaRegistrations(storageKeys: string[]) {
     return (await readRegistry()).assets.filter((item) => keySet.has(item.storageKey)).map(normalizeRegistration);
 }
 
-export async function listLocalMediaRegistrations() {
+export async function listFileLocalMediaRegistrations() {
+    if (getDatabaseProvider() === "postgres") throw new Error("PostgreSQL media reads must use a scoped repository query");
+    return (await readRegistry()).assets.toSorted((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+export async function listExpiredLocalMediaRegistrations(limit = 100) {
+    const pageSize = boundedBatchSize(limit, 500, 100);
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
-        const result = await postgresQuery("SELECT * FROM local_media_assets ORDER BY created_at DESC");
+        const result = await postgresQuery(
+            `SELECT * FROM local_media_assets
+             WHERE storage_class = 'temporary' AND expires_at IS NOT NULL AND expires_at <= now()
+             ORDER BY expires_at ASC, storage_key ASC
+             LIMIT $1`,
+            [pageSize],
+        );
         return result.rows.map(mapRegistration);
     }
-    return (await readRegistry()).assets.toSorted((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return (await readRegistry()).assets
+        .filter((asset) => asset.storageClass === "temporary" && asset.expiresAt && Date.parse(asset.expiresAt) <= Date.now())
+        .toSorted((left, right) => String(left.expiresAt).localeCompare(String(right.expiresAt)) || left.storageKey.localeCompare(right.storageKey))
+        .slice(0, pageSize);
+}
+
+export async function listLocalMediaMigrationRegistrations(input: { limit?: number; offset?: number } = {}) {
+    const limit = boundedBatchSize(input.limit, 100, 20);
+    const offset = Math.max(0, Math.floor(Number(input.offset) || 0));
+    if (getDatabaseProvider() === "postgres") {
+        await ensurePostgresSchema();
+        const [itemsResult, totalResult] = await Promise.all([
+            postgresQuery("SELECT * FROM local_media_assets WHERE storage_provider = 'local' ORDER BY created_at ASC, storage_key ASC LIMIT $1 OFFSET $2", [limit, offset]),
+            postgresQuery<{ total: string | number }>("SELECT count(*) AS total FROM local_media_assets WHERE storage_provider = 'local'"),
+        ]);
+        return { items: itemsResult.rows.map(mapRegistration), total: Number(totalResult.rows[0]?.total || 0) };
+    }
+    const items = (await readRegistry()).assets.filter((item) => item.storageProvider !== "object").toSorted((left, right) => left.createdAt.localeCompare(right.createdAt) || left.storageKey.localeCompare(right.storageKey));
+    return { items: items.slice(offset, offset + limit), total: items.length };
 }
 
 export async function listLocalMediaRegistrationsForUser(userId: string) {
@@ -356,6 +386,10 @@ function sourceGroup(source: string) {
 
 function sumRegistrationBytes(items: LocalMediaRegistration[]) {
     return items.reduce((sum, item) => sum + item.bytes, 0);
+}
+
+function boundedBatchSize(value: unknown, max: number, fallback: number) {
+    return Math.max(1, Math.min(max, Math.floor(Number(value) || fallback)));
 }
 
 function readRegistry() {

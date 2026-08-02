@@ -16,7 +16,7 @@ vi.mock("@/lib/server/data-adapter", () => ({
     }),
 }));
 
-import { consumeUserPoints, createFirstAdmin, createUser, listPublicUsers, refundUserPoints, setAuthSettings, updateUserByAdmin } from "./store";
+import { consumeUserPoints, createFirstAdmin, createUser, listPublicUsersPage, refundUserPoints, setAuthSettings, updateUserByAdmin } from "./store";
 
 const INSTALL_TOKEN = "install-token-".padEnd(48, "x");
 
@@ -46,7 +46,7 @@ describe("normalizePointAmount allows negative values", () => {
 
         await updateUserByAdmin(admin.id, user.id, { pointsBalance: -50 });
 
-        const users = await listPublicUsers();
+        const users = (await listPublicUsersPage({ pageSize: 100 })).users;
         expect(users.find((u) => u.id === user.id)?.pointsBalance).toBe(0);
         expect(users.find((u) => u.id === user.id)?.permanentPointsBalance).toBe(-50);
     });
@@ -64,7 +64,7 @@ describe("normalizePointAmount allows negative values", () => {
 
         await updateUserByAdmin(admin.id, user.id, { pointsBalance: 0 });
 
-        const users = await listPublicUsers();
+        const users = (await listPublicUsersPage({ pageSize: 100 })).users;
         expect(users.find((u) => u.id === user.id)?.pointsBalance).toBe(0);
     });
 
@@ -76,7 +76,7 @@ describe("normalizePointAmount allows negative values", () => {
         const consumption = await consumeUserPoints(user.id, "test-model", 50, "api", "zero-balance:consume");
         await refundUserPoints(user.id, "test-model", 50, "api", 50, "zero-balance:refund", consumption.recordId);
 
-        const users = await listPublicUsers();
+        const users = (await listPublicUsersPage({ pageSize: 100 })).users;
         expect(users.find((u) => u.id === user.id)?.pointsBalance).toBe(50);
     });
 

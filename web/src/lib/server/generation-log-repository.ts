@@ -4,7 +4,7 @@ import { dirname, resolve, sep } from "node:path";
 
 import { ensureMediaFileExtension, mediaFileExtension } from "@/lib/media-file";
 import type { GenerationLogReferenceSnapshot, GenerationLogRequestSnapshot, GenerationLogSlotSnapshot, GenerationLogSnapshotParameters } from "@/lib/generation-log-snapshot";
-import { ensurePostgresSchema, isPostgresDatabaseEnabled, postgresQuery, withPostgresTransaction, type QueryExecutor } from "@/lib/server/database";
+import { isPostgresDatabaseEnabled, type QueryExecutor } from "@/lib/server/database";
 import { readJsonDataFile, writeJsonDataFile } from "@/lib/server/data-adapter";
 import { normalizeGeneratedImageBytes } from "@/lib/server/generated-image-normalizer";
 import { createDatedMediaPath, GENERATION_MEDIA_ROOT } from "@/lib/server/local-media-storage";
@@ -260,7 +260,7 @@ export async function walkAssetDir(dir: string, files: Array<{ path: string; byt
 }
 
 export async function readGenerationLogDb(): Promise<GenerationLogDatabase> {
-    if (isPostgresDatabaseEnabled()) return readPostgresGenerationLogDb();
+    if (isPostgresDatabaseEnabled()) throw new Error("PostgreSQL generation log reads must use scoped repositories");
     return normalizeDb(await readJsonDataFile<Partial<GenerationLogDatabase>>(LOG_DATA_FILE, emptyDb()));
 }
 
@@ -279,16 +279,13 @@ export async function mutateGenerationLogDb<T>(mutator: (db: GenerationLogDataba
 }
 
 export async function writeGenerationLogDb(db: GenerationLogDatabase) {
-    if (isPostgresDatabaseEnabled()) {
-        await writePostgresGenerationLogDb(db);
-        return;
-    }
+    if (isPostgresDatabaseEnabled()) throw new Error("Full PostgreSQL generation log writes are reserved for explicit backup restore");
     await writeJsonDataFile(LOG_DATA_FILE, normalizeDb(db));
 }
 
-export async function readPostgresGenerationLogDb(executor?: QueryExecutor): Promise<GenerationLogDatabase> {
-    if (!executor) await ensurePostgresSchema();
-    const query: QueryExecutor["query"] = executor ? executor.query.bind(executor) : postgresQuery;
+/** Full generation snapshot for the explicit administrator backup transaction only. */
+export async function readPostgresGenerationLogDb(executor: QueryExecutor): Promise<GenerationLogDatabase> {
+    const query: QueryExecutor["query"] = executor.query.bind(executor);
     const [logResult, assetResult] = await Promise.all([query("SELECT * FROM generation_logs ORDER BY created_at DESC LIMIT $1", [MAX_LOGS]), query("SELECT * FROM generation_log_assets ORDER BY generation_log_id ASC, sort_order ASC")]);
     const assetsByLogId = new Map<string, GenerationLogAsset[]>();
     for (const row of assetResult.rows) {
@@ -301,11 +298,6 @@ export async function readPostgresGenerationLogDb(executor?: QueryExecutor): Pro
         version: 1,
         logs: logResult.rows.map((row) => mapPostgresGenerationLog(row, assetsByLogId.get(dbText(row.id)) || [])),
     });
-}
-
-export async function writePostgresGenerationLogDb(db: GenerationLogDatabase) {
-    await ensurePostgresSchema();
-    await withPostgresTransaction(async (client) => writePostgresGenerationLogDbWithExecutor(db, client));
 }
 
 export async function writePostgresGenerationLogDbWithExecutor(db: GenerationLogDatabase, client: QueryExecutor) {

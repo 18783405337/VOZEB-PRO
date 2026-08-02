@@ -71,7 +71,7 @@ import {
     AUTH_DATA_FILE,
     USERNAME_PATTERN,
 } from "./store-foundation";
-import { readAuthDb, mutateAuthDb, readPostgresAnnouncementsPage, readPostgresCdkListData, readPostgresPublicUserData } from "./store-repository";
+import { readAuthDb, mutateAuthDb, readPostgresAnnouncementsPage, readPostgresCdkListData } from "./store-repository";
 
 import {
     normalizeDb,
@@ -157,15 +157,6 @@ export function sessionMaxAgeSeconds() {
 }
 
 export { getAuthSettings, setAuthSettings } from "./store-settings-actions";
-
-export async function listPublicUsers() {
-    if (isPostgresDatabaseEnabled()) {
-        const data = await readPostgresPublicUserData(walletClock().date);
-        return data.users.map((user) => toPublicUser(user, data)).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
-    }
-    const db = await readAuthDb();
-    return db.users.map((user) => toPublicUser(user, db)).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
-}
 
 export type PublicUserListResult = {
     users: PublicUser[];

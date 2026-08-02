@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { QueryExecutor } from "@/lib/server/database";
 import { POSTGRESQL_SCHEMA_SQL } from "@/lib/server/database/schema";
 import { encryptSecretValue } from "@/lib/server/secret-crypto";
-import { mapPostgresSettings, mutateAuthDb, readPostgresAnnouncementsPage, readPostgresAuthSettings, readPostgresCdkListData, readPostgresPublicUserData, upsertPostgresSystemChannels } from "./store-repository";
+import { mapPostgresSettings, mutateAuthDb, readAuthDb, readPostgresAnnouncementsPage, readPostgresAuthSettings, readPostgresCdkListData, upsertPostgresSystemChannels } from "./store-repository";
 
 const originalEncryptionKey = process.env.VOZEB_PRO_ENCRYPTION_KEY;
 const originalDatabaseProvider = process.env.VOZEB_PRO_DATABASE_PROVIDER;
@@ -25,6 +25,12 @@ describe("PostgreSQL auth read paths", () => {
         process.env.VOZEB_PRO_DATABASE_PROVIDER = "postgres";
 
         await expect(mutateAuthDb(() => undefined)).rejects.toThrow("PostgreSQL auth mutations must use entity repositories");
+    });
+
+    it("rejects full-database auth reads outside the backup transaction", async () => {
+        process.env.VOZEB_PRO_DATABASE_PROVIDER = "postgres";
+
+        await expect(readAuthDb()).rejects.toThrow("PostgreSQL auth reads must use entity repositories");
     });
 
     it("normalizes newly added generation defaults for existing database rows", () => {
@@ -77,29 +83,6 @@ describe("PostgreSQL auth read paths", () => {
         expect(values?.[4]).toBe("encrypted-webhook");
         expect(values?.[9]).toBe(0);
         expect(POSTGRESQL_SCHEMA_SQL).not.toContain("health_results");
-    });
-
-    it("loads public users with only plans, users and today's wallets", async () => {
-        const timestamp = "2026-01-01T00:00:00.000Z";
-        const { executor, query } = mockExecutor([
-            [{ id: "default", default_plan_id: "free", free_daily_points_enabled: true, free_daily_points: 3 }],
-            [{ id: "free", name: "免费版", enabled: true, daily_points: 0, limits: {}, features: [] }],
-            [{ id: "user-one", account_id: 1, username: "user-one", display_name: "用户一", role: "user", status: "active", plan_id: "free", points_balance: 10, password_hash: "hash", created_at: timestamp, updated_at: timestamp }],
-            [{ user_id: "user-one", date: "2026-01-01", plan_id: "free", granted_points: 3, remaining_points: 2, created_at: timestamp, updated_at: timestamp }],
-        ]);
-
-        const data = await readPostgresPublicUserData("2026-01-01", executor);
-
-        expect(data.users).toHaveLength(1);
-        expect(data.users[0]?.accountId).toBe("0001");
-        expect(data.dailyPlanPointWallets[0]).toMatchObject({ userId: "user-one", remainingPoints: 2 });
-        expect(query).toHaveBeenCalledTimes(4);
-        expect(query.mock.calls.map(([statement]) => String(statement))).toEqual([
-            expect.stringContaining("FROM app_settings"),
-            expect.stringContaining("FROM entitlement_plans"),
-            expect.stringContaining("FROM users"),
-            expect.stringContaining("FROM daily_plan_point_wallets WHERE date = $1"),
-        ]);
     });
 
     it("loads CDK codes without point records, sessions or unrelated users", async () => {

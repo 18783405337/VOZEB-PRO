@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import type { PublicUser, UserRole } from "@/lib/auth/store";
-import { ensurePostgresSchema, isPostgresDatabaseEnabled, postgresQuery, withPostgresTransaction, type QueryExecutor } from "@/lib/server/database";
+import { ensurePostgresSchema, isPostgresDatabaseEnabled, postgresQuery, type QueryExecutor } from "@/lib/server/database";
 import { readJsonDataFile, writeJsonDataFile } from "@/lib/server/data-adapter";
 import { getClientIp } from "@/lib/server/security";
 
@@ -147,7 +147,7 @@ export async function listAuditLogs(options: AuditLogListOptions = {}) {
 }
 
 async function readAuditLogDb(): Promise<AuditLogDatabase> {
-    if (isPostgresDatabaseEnabled()) return readPostgresAuditLogDb();
+    if (isPostgresDatabaseEnabled()) throw new Error("PostgreSQL audit log reads must use the paginated repository query");
     return normalizeDb(await readJsonDataFile<Partial<AuditLogDatabase>>(AUDIT_LOG_DATA_FILE, emptyDb()));
 }
 
@@ -166,17 +166,8 @@ async function mutateAuditLogDb<T>(mutator: (db: AuditLogDatabase) => T | Promis
 }
 
 async function writeAuditLogDb(db: AuditLogDatabase) {
-    if (isPostgresDatabaseEnabled()) {
-        await writePostgresAuditLogDb(db);
-        return;
-    }
+    if (isPostgresDatabaseEnabled()) throw new Error("PostgreSQL audit log writes must use entity inserts");
     await writeJsonDataFile(AUDIT_LOG_DATA_FILE, normalizeDb(db));
-}
-
-async function readPostgresAuditLogDb(): Promise<AuditLogDatabase> {
-    await ensurePostgresSchema();
-    const result = await postgresQuery("SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT $1", [MAX_AUDIT_LOGS]);
-    return normalizeDb({ version: 1, logs: result.rows.map(mapPostgresAuditLog) });
 }
 
 async function listPostgresAuditLogs(options: AuditLogListOptions = {}) {
@@ -207,17 +198,6 @@ async function listPostgresAuditLogs(options: AuditLogListOptions = {}) {
         [keyword, `%${keyword}%`, action, status, actorId, targetType, start ? new Date(start).toISOString() : null, end ? new Date(end).toISOString() : null, pageSize, (page - 1) * pageSize],
     );
     return { items: result.rows.map(mapPostgresAuditLog), total: Number(result.rows[0]?.total_count || 0), page, pageSize };
-}
-
-async function writePostgresAuditLogDb(db: AuditLogDatabase) {
-    const normalized = normalizeDb(db);
-    await ensurePostgresSchema();
-    await withPostgresTransaction(async (client) => {
-        await client.query("DELETE FROM audit_logs");
-        for (const log of normalized.logs) {
-            await insertPostgresAuditLog(log, client);
-        }
-    });
 }
 
 async function insertPostgresAuditLog(log: StoredAuditLog, db: QueryExecutor = { query: postgresQuery }) {

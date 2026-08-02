@@ -8,7 +8,6 @@ const mocks = vi.hoisted(() => ({
     createCanvasProject: vi.fn(),
     deleteCanvasProjects: vi.fn(),
     getCanvasProject: vi.fn(),
-    listCanvasProjects: vi.fn(),
     listCanvasProjectSummaries: vi.fn(),
     updateCanvasProject: vi.fn(),
     deleteUserLocalMediaAssets: vi.fn(),
@@ -20,7 +19,6 @@ vi.mock("@/lib/server/canvas-project-store", () => ({
     createCanvasProject: mocks.createCanvasProject,
     deleteCanvasProjects: mocks.deleteCanvasProjects,
     getCanvasProject: mocks.getCanvasProject,
-    listCanvasProjects: mocks.listCanvasProjects,
     listCanvasProjectSummaries: mocks.listCanvasProjectSummaries,
     updateCanvasProject: mocks.updateCanvasProject,
 }));
@@ -33,7 +31,7 @@ describe("canvas project service lifecycle", () => {
         vi.clearAllMocks();
         mocks.createCreativeConversation.mockResolvedValue({ id: "conversation-new" });
         mocks.updateCreativeConversation.mockResolvedValue({ id: "conversation-new", status: "archived" });
-        mocks.listCanvasProjects.mockResolvedValue([]);
+        mocks.getCanvasProject.mockResolvedValue(null);
     });
 
     it("archives the new conversation when project creation fails", async () => {
@@ -43,6 +41,17 @@ describe("canvas project service lifecycle", () => {
         await expect(createCanvasProjectForUser("user-one", { title: "画布" })).rejects.toBe(error);
 
         expect(mocks.updateCreativeConversation).toHaveBeenCalledWith("conversation-new", "user-one", { status: "archived" });
+    });
+
+    it("reuses a source handoff project through its stable primary key", async () => {
+        const existing = { ...project(), id: "canvas-handoff-one", sourceHandoffId: "handoff-one" };
+        mocks.getCanvasProject.mockResolvedValue(existing);
+
+        await expect(createCanvasProjectForUser("user-one", { sourceHandoffId: "handoff-one" })).resolves.toEqual(existing);
+
+        expect(mocks.getCanvasProject).toHaveBeenCalledWith("canvas-handoff-one", "user-one");
+        expect(mocks.createCreativeConversation).not.toHaveBeenCalled();
+        expect(mocks.createCanvasProject).not.toHaveBeenCalled();
     });
 
     it("archives linked conversations after deleting projects", async () => {

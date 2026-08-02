@@ -16,7 +16,7 @@ const mocks = vi.hoisted(() => ({
     listObjects: vi.fn(),
     testConnection: vi.fn(),
     register: vi.fn(),
-    listRegistrations: vi.fn(),
+    listMigrationRegistrations: vi.fn(),
     listByObjectKeys: vi.fn(),
     deleteRegistrations: vi.fn(),
     references: vi.fn(),
@@ -39,7 +39,7 @@ vi.mock("@/lib/server/object-storage-client", () => ({
 }));
 vi.mock("@/lib/server/local-media-registry", () => ({
     registerLocalMediaAsset: mocks.register,
-    listLocalMediaRegistrations: mocks.listRegistrations,
+    listLocalMediaMigrationRegistrations: mocks.listMigrationRegistrations,
     listMediaRegistrationsByExternalObjectKeys: mocks.listByObjectKeys,
     deleteLocalMediaRegistrations: mocks.deleteRegistrations,
 }));
@@ -77,7 +77,7 @@ describe("object storage media service", () => {
         await rm(state.dataRoot, { recursive: true, force: true });
         mocks.config.mockResolvedValue(config);
         mocks.register.mockImplementation(async (value) => value);
-        mocks.listRegistrations.mockResolvedValue([]);
+        mocks.listMigrationRegistrations.mockResolvedValue({ items: [], total: 0 });
         mocks.listByObjectKeys.mockResolvedValue([]);
         mocks.references.mockResolvedValue(new Map());
         mocks.listObjects.mockResolvedValue({ items: [], nextCursor: undefined });
@@ -186,7 +186,7 @@ describe("object storage media service", () => {
         const filePath = resolve(state.dataRoot, "reference-assets", registration.storageKey);
         await mkdir(dirname(filePath), { recursive: true });
         await writeFile(filePath, "data");
-        mocks.listRegistrations.mockResolvedValue([registration]);
+        mocks.listMigrationRegistrations.mockResolvedValue({ items: [registration], total: 1 });
 
         const result = await migrateLocalMediaToObjectStorage(20);
 
@@ -200,7 +200,7 @@ describe("object storage media service", () => {
         const filePath = resolve(state.dataRoot, "reference-assets", registration.storageKey);
         await mkdir(dirname(filePath), { recursive: true });
         await writeFile(filePath, "data");
-        mocks.listRegistrations.mockResolvedValue([registration]);
+        mocks.listMigrationRegistrations.mockResolvedValue({ items: [registration], total: 1 });
         mocks.register.mockRejectedValueOnce(new Error("registry failed"));
 
         const result = await migrateLocalMediaToObjectStorage(20);
@@ -208,5 +208,22 @@ describe("object storage media service", () => {
         expect(result).toMatchObject({ migrated: 0, failed: 1, remaining: 1 });
         await expect(access(filePath)).resolves.toBeUndefined();
         expect(mocks.deleteObjects).toHaveBeenCalled();
+    });
+
+    it("continues through bounded database pages when early registrations have no local file", async () => {
+        const missing = Array.from({ length: 100 }, (_, index) => ({ ...registration, storageKey: `permanent/missing-${index}.png` }));
+        const filePath = resolve(state.dataRoot, "reference-assets", registration.storageKey);
+        await mkdir(dirname(filePath), { recursive: true });
+        await writeFile(filePath, "data");
+        mocks.listMigrationRegistrations
+            .mockReset()
+            .mockResolvedValueOnce({ items: missing, total: 101 })
+            .mockResolvedValueOnce({ items: [registration], total: 101 });
+
+        const result = await migrateLocalMediaToObjectStorage(1);
+
+        expect(mocks.listMigrationRegistrations).toHaveBeenNthCalledWith(1, { limit: 100, offset: 0 });
+        expect(mocks.listMigrationRegistrations).toHaveBeenNthCalledWith(2, { limit: 100, offset: 100 });
+        expect(result).toMatchObject({ migrated: 1, skipped: 100, remaining: 100 });
     });
 });

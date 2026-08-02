@@ -7,7 +7,16 @@ import { classifyManagedMediaType, isManagedMediaType, isMediaSourceGroup, media
 import { resolveServerDataPath } from "@/lib/server/data-dir";
 import { getDatabaseProvider } from "@/lib/server/database";
 import { countLocalMediaReferences } from "@/lib/server/local-media-references";
-import { deleteLocalMediaRegistrations, getLocalMediaRegistration, getLocalMediaRegistrationSummary, listLocalMediaRegistrationPage, listLocalMediaRegistrations, type LocalMediaRegistration } from "@/lib/server/local-media-registry";
+import {
+    deleteLocalMediaRegistrations,
+    getLocalMediaRegistration,
+    getLocalMediaRegistrations,
+    getLocalMediaRegistrationSummary,
+    listExpiredLocalMediaRegistrations,
+    listFileLocalMediaRegistrations,
+    listLocalMediaRegistrationPage,
+    type LocalMediaRegistration,
+} from "@/lib/server/local-media-registry";
 import { deleteExternalMediaObject } from "@/lib/server/object-storage-service";
 
 export const GENERATION_MEDIA_ROOT = resolveServerDataPath("generation-assets");
@@ -32,7 +41,7 @@ export async function listLocalMediaAssets(input: { page?: number; pageSize?: nu
     const pageSize = Math.max(1, Math.min(100, Math.floor(Number(input.pageSize) || 20)));
     const search = (input.search || "").trim().toLowerCase();
     const ownerUserIds = new Set(input.ownerUserIds || []);
-    const registrations = new Map((await listLocalMediaRegistrations()).map((item) => [item.storageKey, item]));
+    const registrations = new Map((await listFileLocalMediaRegistrations()).map((item) => [item.storageKey, item]));
     const all = [...(await scanGenerationMedia()), ...(await scanReferenceMedia())].map((asset) => ({ ...asset, ...registrationMetadata(registrations.get(asset.storageKey) || null) })).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
     const filtered = all
         .filter((asset) => (input.storageClass === "temporary" || input.storageClass === "permanent" ? asset.storageClass === input.storageClass : true))
@@ -82,8 +91,9 @@ async function listRegisteredLocalMediaAssets(input: { page?: number; pageSize?:
 }
 
 export async function cleanupExpiredLocalMediaAssets() {
-    const registered = (await listLocalMediaRegistrations()).filter((asset) => asset.storageClass === "temporary" && asset.expiresAt && Date.parse(asset.expiresAt) <= Date.now());
+    const registered = await listExpiredLocalMediaRegistrations();
     const registeredResult = await deleteRegisteredMediaAssets(registered);
+    if (getDatabaseProvider() === "postgres") return registeredResult;
     const registeredKeys = new Set(registered.map((asset) => asset.storageKey));
     const legacy = (await scanReferenceMedia()).filter((asset) => asset.storageClass === "temporary" && asset.expiresAt && Date.parse(asset.expiresAt) <= Date.now() && !registeredKeys.has(asset.storageKey));
     if (!legacy.length) return registeredResult;
@@ -125,14 +135,14 @@ export async function deleteLocalMediaAssets(ids: string[]) {
 }
 
 export async function deleteUserLocalMediaAssets(userId: string, storageKeys: string[]) {
-    const registrations = await Promise.all(storageKeys.map((key) => getLocalMediaRegistration(key)));
-    return deleteRegisteredMediaAssets(registrations.filter((item): item is NonNullable<typeof item> => Boolean(item && item.ownerUserId === userId)));
+    const registrations = await getLocalMediaRegistrations(storageKeys);
+    return deleteRegisteredMediaAssets(registrations.filter((item) => item.ownerUserId === userId));
 }
 
 export async function deleteLocalMediaAssetsByStorageKeys(storageKeys: string[], scope?: "generation" | "reference") {
     const normalizedKeys = Array.from(new Set(storageKeys.map((key) => key.trim()).filter(Boolean)));
-    const registrations = await Promise.all(normalizedKeys.map((key) => getLocalMediaRegistration(key)));
-    const registered = registrations.filter((item): item is NonNullable<typeof item> => Boolean(item && (!scope || item.scope === scope)));
+    const registrations = await getLocalMediaRegistrations(normalizedKeys);
+    const registered = registrations.filter((item) => !scope || item.scope === scope);
     const result = await deleteRegisteredMediaAssets(registered);
     const registeredKeys = new Set(registered.map((item) => item.storageKey));
     const legacyIds = scope ? normalizedKeys.filter((key) => !registeredKeys.has(key)).map((key) => encodeMediaId(scope, key)) : [];

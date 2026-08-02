@@ -26,6 +26,7 @@
 - Route Handler 只处理 HTTP 入参、鉴权、调用服务和响应映射，不堆业务规则或数据库细节。
 - `web/src/lib/server/` 放业务服务、领域校验、任务编排和 provider 适配。
 - 数据库访问统一沿用 `web/src/lib/server/database/` repository 与参数化查询；文件 Provider 只作为项目既有的服务端回退实现。
+- PostgreSQL 在线功能必须按用户、实体、状态、时间窗、分页或聚合结果定向查询；禁止先读取完整数据库、整张业务表或大批 JSON 再在 Node.js/浏览器筛选。完整快照只允许用于管理员显式备份/恢复，并必须要求备份事务执行器；批量维护使用有界分页或批次查询。
 - 业务不变量在 service/helper 层校验，数据库唯一性、事务和并发约束在持久层保证。
 - 业务接口保持 `{ code, data, msg }` 的响应结构。
 - 新增数据表时同步更新 `docs/backend-database.md`。

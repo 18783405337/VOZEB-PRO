@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { AuthInputError } from "@/lib/auth/store";
-import { createPostgresRepositories, ensurePostgresSchema, isPostgresDatabaseEnabled, postgresQuery, withPostgresTransaction, type QueryExecutor } from "@/lib/server/database";
+import { createPostgresRepositories, ensurePostgresSchema, isPostgresDatabaseEnabled, withPostgresTransaction, type QueryExecutor } from "@/lib/server/database";
 import type { PromptRecord } from "@/lib/server/database/repository-types";
 import { readJsonDataFile, writeJsonDataFile } from "@/lib/server/data-adapter";
 
@@ -231,10 +231,7 @@ function normalizeTags(value: PromptInput["tags"]) {
 }
 
 async function readPromptDb({ includeSeeds }: { includeSeeds: boolean }): Promise<PromptDatabase> {
-    if (isPostgresDatabaseEnabled()) {
-        if (includeSeeds) await ensurePostgresPromptSeeds();
-        return readPostgresPromptDb();
-    }
+    if (isPostgresDatabaseEnabled()) throw new Error("PostgreSQL prompt reads must use scoped repositories");
     const db = await readJsonDataFile<Partial<PromptDatabase>>(PROMPT_DATA_FILE, emptyPromptDb());
     const normalized: PromptDatabase = {
         version: 1,
@@ -372,10 +369,7 @@ async function mutatePromptDb<T>(mutator: (db: PromptDatabase) => T | Promise<T>
 }
 
 async function writePromptDb(db: PromptDatabase) {
-    if (isPostgresDatabaseEnabled()) {
-        await writePostgresPromptDb(db);
-        return;
-    }
+    if (isPostgresDatabaseEnabled()) throw new Error("Full PostgreSQL prompt writes are reserved for explicit backup restore");
     await writeJsonDataFile(PROMPT_DATA_FILE, db);
 }
 
@@ -387,20 +381,15 @@ export function writePromptBackup(db: PromptDatabase) {
     return writePromptDb(db);
 }
 
-export async function readPostgresPromptDb(executor?: QueryExecutor): Promise<PromptDatabase> {
-    if (!executor) await ensurePostgresSchema();
-    const query: QueryExecutor["query"] = executor ? executor.query.bind(executor) : postgresQuery;
+/** Full prompt snapshot for the explicit administrator backup transaction only. */
+export async function readPostgresPromptDb(executor: QueryExecutor): Promise<PromptDatabase> {
+    const query: QueryExecutor["query"] = executor.query.bind(executor);
     const [promptResult, seedResult] = await Promise.all([query("SELECT * FROM prompts ORDER BY updated_at DESC"), query("SELECT source FROM prompt_seed_sources ORDER BY imported_at ASC")]);
     return {
         version: 1,
         prompts: promptResult.rows.map(mapPostgresPrompt).map(normalizeStoredPrompt).filter(Boolean),
         seedSources: seedResult.rows.map((row) => dbText(row.source)).filter(Boolean),
     };
-}
-
-async function writePostgresPromptDb(db: PromptDatabase) {
-    await ensurePostgresSchema();
-    await withPostgresTransaction(async (client) => writePostgresPromptDbWithExecutor(db, client));
 }
 
 export async function writePostgresPromptDbWithExecutor(db: PromptDatabase, client: QueryExecutor) {

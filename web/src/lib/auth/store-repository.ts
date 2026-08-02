@@ -162,7 +162,7 @@ import {
 export let mutationQueue = Promise.resolve();
 
 export async function readAuthDb(): Promise<AuthDatabase> {
-    if (isPostgresDatabaseEnabled()) return readPostgresAuthDb();
+    if (isPostgresDatabaseEnabled()) throw new Error("PostgreSQL auth reads must use entity repositories");
     return normalizeDb(await readJsonDataFile<Partial<AuthDatabase>>(AUTH_DATA_FILE, emptyDb()));
 }
 
@@ -191,9 +191,9 @@ export async function writeAuthDb(db: AuthDatabase) {
     await writeJsonDataFile(AUTH_DATA_FILE, encryptAuthDbSecretsForStorage(db));
 }
 
-export async function readPostgresAuthDb(executor?: QueryExecutor): Promise<AuthDatabase> {
-    if (!executor) await ensurePostgresSchema();
-    const query: QueryExecutor["query"] = executor ? executor.query.bind(executor) : postgresQuery;
+/** Full authentication snapshot for the explicit administrator backup transaction only. */
+export async function readPostgresAuthDb(executor: QueryExecutor): Promise<AuthDatabase> {
+    const query: QueryExecutor["query"] = executor.query.bind(executor);
     const [settingsResult, planResult, channelResult, userResult, sessionResult, quotaResult, pointRecordResult, dailyWalletResult, emailCodeResult, cdkResult, cdkRedemptionResult, announcementResult] = await Promise.all([
         query("SELECT * FROM app_settings WHERE id = 'default'"),
         query("SELECT * FROM entitlement_plans ORDER BY sort_order ASC, created_at ASC"),
@@ -228,22 +228,6 @@ export async function readPostgresAuthDb(executor?: QueryExecutor): Promise<Auth
         announcements: announcementResult.rows.map(mapPostgresAnnouncement),
         settings: mapPostgresSettings(settingsResult.rows[0], planResult.rows, channelResult.rows),
     });
-}
-
-export async function readPostgresPublicUserData(date: string, executor?: QueryExecutor) {
-    if (!executor) await ensurePostgresSchema();
-    const query: QueryExecutor["query"] = executor ? executor.query.bind(executor) : postgresQuery;
-    const [settingsResult, planResult, userResult, dailyWalletResult] = await Promise.all([
-        query("SELECT * FROM app_settings WHERE id = 'default'"),
-        query("SELECT * FROM entitlement_plans ORDER BY sort_order ASC, created_at ASC"),
-        query("SELECT * FROM users ORDER BY created_at DESC"),
-        query("SELECT * FROM daily_plan_point_wallets WHERE date = $1", [date]),
-    ]);
-    return {
-        users: userResult.rows.map(mapPostgresUser),
-        dailyPlanPointWallets: dailyWalletResult.rows.map(mapPostgresDailyPlanPointWallet),
-        settings: mapPostgresSettings(settingsResult.rows[0], planResult.rows, []),
-    };
 }
 
 export async function readPostgresCdkListData(input?: { page?: number; pageSize?: number; keyword?: string; codeHash?: string; filter?: "all" | "redeemed" | "unused" | "expired" }, executor?: QueryExecutor) {

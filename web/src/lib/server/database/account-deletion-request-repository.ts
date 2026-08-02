@@ -181,8 +181,8 @@ export async function listAccountDeletionRequests(input: { page?: number; pageSi
 
 export async function readAccountDeletionRequestBackup(executor?: QueryExecutor): Promise<AccountDeletionRequestDatabase> {
     if (getDatabaseProvider() === "postgres") {
-        if (!executor) await ensurePostgresSchema();
-        const query = executor ? executor.query.bind(executor) : postgresQuery;
+        if (!executor) throw new Error("PostgreSQL account deletion snapshots require an explicit backup transaction");
+        const query = executor.query.bind(executor);
         const result = await query("SELECT * FROM account_deletion_requests ORDER BY requested_at ASC");
         return { version: 1, requests: result.rows.map(mapRow) };
     }
@@ -192,8 +192,8 @@ export async function readAccountDeletionRequestBackup(executor?: QueryExecutor)
 export async function writeAccountDeletionRequestBackup(data: AccountDeletionRequestDatabase, executor?: QueryExecutor) {
     const normalized = { version: 1 as const, requests: Array.isArray(data.requests) ? data.requests.map(normalizeRequest) : [] };
     if (getDatabaseProvider() === "postgres") {
-        if (!executor) await ensurePostgresSchema();
-        const query = executor ? executor.query.bind(executor) : postgresQuery;
+        if (!executor) throw new Error("Full PostgreSQL account deletion writes require an explicit backup transaction");
+        const query = executor.query.bind(executor);
         await query("DELETE FROM account_deletion_requests");
         await upsertPostgresAccountDeletionRequests(query, normalized.requests);
         return;

@@ -16,7 +16,7 @@ vi.mock("@/lib/server/data-adapter", () => ({
     }),
 }));
 
-import { consumeUserPoints, createUserByAdmin, listPointRecordsPage, listPublicUsers, refundUserPoints } from "./store";
+import { consumeUserPoints, createUserByAdmin, listPointRecordsPage, listPublicUsersPage, refundUserPoints } from "./store";
 
 describe("refundUserPoints idempotency", () => {
     beforeEach(() => {
@@ -30,7 +30,7 @@ describe("refundUserPoints idempotency", () => {
         await refundUserPoints(user.id, "audio-model", 5, "audio", 5, "audio-task:one:refund", consumption.recordId);
         await refundUserPoints(user.id, "audio-model", 5, "audio", 5, "audio-task:one:refund", consumption.recordId);
 
-        expect((await listPublicUsers()).find((item) => item.id === user.id)?.pointsBalance).toBe(user.pointsBalance);
+        expect((await listPublicUsersPage({ pageSize: 100 })).users.find((item) => item.id === user.id)?.pointsBalance).toBe(user.pointsBalance);
         expect((await listPointRecordsPage(user.id)).records.filter((record) => record.type === "refund")).toHaveLength(1);
 
         const debitPage = await listPointRecordsPage(user.id, { direction: "debit", page: 1, pageSize: 1 });
