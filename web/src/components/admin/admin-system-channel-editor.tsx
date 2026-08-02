@@ -5,19 +5,14 @@ import { App, Button, Checkbox, Input, Popconfirm, Select, Switch, Tag, Tooltip 
 import { Eye, EyeOff, PlugZap, RefreshCw, Sparkles, Trash2 } from "lucide-react";
 
 import { LabeledControl } from "@/components/admin/admin-settings-controls";
-import { formatCreditAmount } from "@/constant/credits";
 import { parseChannelExampleConfig } from "@/lib/channel-example-parser";
 import { buildGlobalAiOpcSelection, GLOBAL_AIOPC_PRESETS, globalAiOpcPresetOptions, resolveGlobalAiOpcCatalogPresets, resolveGlobalAiOpcPresets } from "@/lib/globalaiopc-catalog";
 import type { LogicalModelCapability, SystemChannelAdvancedConfig, SystemChannelModelConfig, SystemChannelProtocol, SystemModelChannel } from "@/lib/auth/store";
-import type { ChannelHealthKind as SharedChannelHealthKind, ChannelHealthResult as SharedChannelHealthResult } from "@/lib/channel-health-result";
 import { capabilityLabel, channelDetectedCapabilities, channelModelCapability } from "@/lib/model-routing-config";
 import { normalizeModelId } from "@/lib/model-capability";
 import { revealAdminChannelApiKey } from "@/services/api/admin-settings";
 import { AdminChannelProtocolSetup } from "@/components/admin/admin-channel-protocol-setup";
-import { applyModelProtocol, channelConnectionReady, channelProtocolDefinition, channelProtocolOptions, channelRequiresApiKey, emptyAdvancedConfig } from "@/lib/channel-protocol-registry";
-
-export type ChannelHealthKind = SharedChannelHealthKind;
-export type ChannelHealthResult = SharedChannelHealthResult;
+import { applyModelProtocol, channelProtocolDefinition, channelProtocolOptions, channelRequiresApiKey, emptyAdvancedConfig } from "@/lib/channel-protocol-registry";
 
 const protocolOptions = channelProtocolOptions().map(({ value, label }) => ({ value, label }));
 const ALL_GLOBAL_AIOPC_PRESETS = "__all_globalaiopc_presets__";
@@ -32,34 +27,12 @@ export function createDefaultChannelAdvancedConfig(): SystemChannelAdvancedConfi
     return emptyAdvancedConfig();
 }
 
-export function SystemChannelEditor({
-    channel,
-    fetching,
-    testingKey,
-    healthResults,
-    onChange,
-    onDelete,
-    onFetchModels,
-    onTestHealth,
-    onTestAllHealth,
-}: {
-    channel: SystemModelChannel;
-    fetching: boolean;
-    testingKey: string;
-    healthResults: Record<string, ChannelHealthResult>;
-    onChange: (patch: Partial<SystemModelChannel>) => void;
-    onDelete: () => void;
-    onFetchModels: () => void;
-    onTestHealth: (kind: ChannelHealthKind) => void;
-    onTestAllHealth: () => void;
-}) {
+export function SystemChannelEditor({ channel, fetching, onChange, onDelete, onFetchModels }: { channel: SystemModelChannel; fetching: boolean; onChange: (patch: Partial<SystemModelChannel>) => void; onDelete: () => void; onFetchModels: () => void }) {
     const { message } = App.useApp();
     const [exampleText, setExampleText] = useState("");
     const [revealedApiKey, setRevealedApiKey] = useState("");
     const [apiKeyVisible, setApiKeyVisible] = useState(false);
     const [apiKeyLoading, setApiKeyLoading] = useState(false);
-    const healthKinds = channelHealthKinds(channel);
-    const visibleHealthResults = healthKinds.map((kind) => healthResults[`${channel.id}:${kind}`] || channel.healthResults?.[kind]).filter((item): item is ChannelHealthResult => Boolean(item));
     const advanced = channel.advancedConfig || createDefaultChannelAdvancedConfig();
     const protocolDefinition = channelProtocolDefinition(advanced.protocol);
     const capabilitySummary = channelCapabilitySummary(channel);
@@ -158,12 +131,9 @@ export function SystemChannelEditor({
                         {capabilitySummary ? <Tag className="m-0">{capabilitySummary}</Tag> : null}
                     </div>
                     <div className="mt-1 truncate text-xs text-stone-500 dark:text-stone-400">{channel.baseUrl || "未填写 Base URL"}</div>
-                    <div className="mt-1 text-xs text-stone-400 dark:text-stone-500">{requiresApiKey ? "填写名称、Base URL 和 API Key，再执行渠道检测。" : "填写名称和 Base URL 后即可执行渠道检测；当前协议无需 API Key。"}</div>
+                    <div className="mt-1 text-xs text-stone-400 dark:text-stone-500">{requiresApiKey ? "填写名称、Base URL 和 API Key，再同步上游模型。" : "填写名称和 Base URL 后即可同步上游模型；当前协议无需 API Key。"}</div>
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5 sm:w-full sm:justify-start sm:gap-2 lg:w-auto lg:justify-end">
-                    <Button type="primary" size="small" aria-label="一键检测接口" title="一键检测接口" icon={<RefreshCw className="size-3.5" />} loading={testingKey === `${channel.id}:all`} onClick={onTestAllHealth}>
-                        <span className="hidden sm:inline">一键检测接口</span>
-                    </Button>
                     <Switch checkedChildren="启用" unCheckedChildren="停用" checked={channel.enabled} onChange={(enabled) => onChange({ enabled })} />
                     <Popconfirm title="删除这个接口渠道？" description="关联的逻辑模型绑定会同步移除；失去绑定的模型和默认值也会清理。" okText="删除" cancelText="取消" onConfirm={onDelete}>
                         <Button size="small" danger icon={<Trash2 className="size-3.5" />} aria-label="删除渠道" title="删除渠道" />
@@ -249,14 +219,6 @@ export function SystemChannelEditor({
                     </LabeledControl>
                 </div>
             </div>
-            <ChannelCapabilitySummary channel={channel} results={visibleHealthResults} />
-            {visibleHealthResults.length ? (
-                <div className="mt-3 space-y-2 border-t border-stone-100 pt-3 dark:border-stone-800">
-                    {visibleHealthResults.map((result) => (
-                        <ChannelHealthResultRow key={`${result.kind}:${result.model}`} result={result} />
-                    ))}
-                </div>
-            ) : null}
             <details className="mt-3 rounded-lg border border-stone-200 bg-stone-50/70 dark:border-stone-800 dark:bg-stone-900/40">
                 <summary className="cursor-pointer px-3 py-2 text-sm font-semibold text-stone-800 dark:text-stone-100">高级设置</summary>
                 <div className="grid gap-3 border-t border-stone-200 p-3 md:grid-cols-2 dark:border-stone-800">
@@ -416,11 +378,6 @@ export function SystemChannelEditor({
                         <Button size="small" icon={<RefreshCw className="size-3.5" />} loading={fetching} onClick={onFetchModels}>
                             拉取模型
                         </Button>
-                        {healthKinds.map((kind) => (
-                            <Button key={kind} size="small" loading={testingKey === `${channel.id}:${kind}`} onClick={() => onTestHealth(kind)}>
-                                单测{healthKindLabel(kind)}
-                            </Button>
-                        ))}
                     </div>
                     <div className="text-xs leading-5 text-stone-500 md:col-span-2 dark:text-stone-400">拉取会合并上游模型、官方目录和已有手工模型，不会覆盖手工配置；混合接口优先使用模型级路由，上方兜底字段只在模型没有专属配置时生效。</div>
                 </div>
@@ -599,115 +556,4 @@ function channelCapabilitySummary(channel: SystemModelChannel) {
         .filter(({ value }) => counts[value])
         .map(({ value }) => `${capabilityLabel(value)} ${counts[value]}`)
         .join(" · ");
-}
-
-export function channelHealthKinds(channel: SystemModelChannel): ChannelHealthKind[] {
-    const supported = new Set(channelProtocolDefinition(channel.advancedConfig?.protocol || "auto").capabilities);
-    const detected = channelDetectedCapabilities(channel);
-    return (["text", "image", "video", "audio"] as ChannelHealthKind[]).filter((kind) => supported.has(kind) && detected.has(kind));
-}
-
-function ChannelCapabilitySummary({ channel, results }: { channel: SystemModelChannel; results: ChannelHealthResult[] }) {
-    const advanced = channel.advancedConfig || createDefaultChannelAdvancedConfig();
-    const credentialsReady = channelConnectionReady(channel);
-    const verifiedResults = credentialsReady ? results : [];
-    const text = verifiedResults.find((result) => result.kind === "text");
-    const image = verifiedResults.find((result) => result.kind === "image");
-    const video = verifiedResults.find((result) => result.kind === "video");
-    const audio = verifiedResults.find((result) => result.kind === "audio");
-    const needsPublicReference = /公网|public|localhost|NEXT_PUBLIC_SITE_URL/i.test(advanced.referenceRule || video?.referenceHint || "");
-    const pending = credentialsReady ? undefined : "未配置";
-    const capabilities = new Set(channelHealthKinds(channel));
-    const items: Array<{ label: string; value: string; tone: "default" | "green" | "red" }> = [];
-    if (capabilities.has("text")) items.push({ label: "文本", value: pending || healthStateText(text), tone: pending ? "default" : healthStateTone(text) });
-    if (capabilities.has("image")) {
-        items.push({ label: "图片生成", value: pending || healthStateText(image), tone: pending ? "default" : healthStateTone(image) });
-        items.push({ label: "参考图编辑", value: pending || referenceImageText(image, advanced, needsPublicReference), tone: pending ? "default" : referenceImageTone(image) });
-    }
-    if (capabilities.has("video")) {
-        items.push({ label: "视频", value: pending || healthStateText(video), tone: pending ? "default" : healthStateTone(video) });
-        items.push({ label: "图生视频", value: pending || referenceVideoText(video, advanced, needsPublicReference), tone: pending ? "default" : referenceImageTone(video) });
-        items.push({ label: "参考视频/音频", value: pending || referenceMediaText(video, advanced), tone: pending ? "default" : video && !video.ok ? "red" : "default" });
-    }
-    if (capabilities.has("audio")) items.push({ label: "音频", value: pending || healthStateText(audio), tone: pending ? "default" : healthStateTone(audio) });
-    if (!items.length) return null;
-    return (
-        <div className="mt-3 grid grid-cols-2 gap-1.5 sm:gap-2 xl:grid-cols-3">
-            {items.map((item) => (
-                <div key={item.label} className="flex min-w-0 items-center justify-between gap-1.5 rounded-md border border-stone-200 bg-stone-50/80 px-2 py-1.5 text-[11px] sm:gap-2 sm:px-3 sm:py-2 sm:text-xs dark:border-stone-800 dark:bg-stone-900/50">
-                    <span className="min-w-0 truncate font-medium text-stone-600 dark:text-stone-300">{item.label}</span>
-                    <Tag color={item.tone} className="m-0 max-w-[60%] truncate !px-1 !text-[10px] sm:max-w-[70%] sm:!px-[7px] sm:!text-xs">
-                        {item.value}
-                    </Tag>
-                </div>
-            ))}
-        </div>
-    );
-}
-
-function healthStateText(result?: ChannelHealthResult) {
-    if (!result) return "未检测";
-    return result.ok ? "可用" : "需检查";
-}
-
-function healthStateTone(result?: ChannelHealthResult) {
-    if (!result) return "default";
-    return result.ok ? "green" : "red";
-}
-
-function referenceImageText(result: ChannelHealthResult | undefined, advanced: SystemChannelAdvancedConfig, needsPublicReference: boolean) {
-    if (!result) return "未检测";
-    if (!result.ok) return "需检查";
-    if (!advanced.supportsReferenceImage) return "不支持";
-    if (result.referenceImageTest) return result.referenceImageTest.ok ? "可用" : "需检查";
-    return needsPublicReference ? "需公网图，未实测" : "未实测";
-}
-
-function referenceVideoText(result: ChannelHealthResult | undefined, advanced: SystemChannelAdvancedConfig, needsPublicReference: boolean) {
-    if (!result) return "未检测";
-    if (!result.ok) return "需检查";
-    if (!advanced.supportsReferenceImage) return "不支持";
-    return needsPublicReference ? "需公网图，未实测" : "未实测";
-}
-
-function referenceImageTone(result: ChannelHealthResult | undefined) {
-    if (result && !result.ok) return "red";
-    if (result?.referenceImageTest) return result.referenceImageTest.ok ? "green" : "red";
-    return "default";
-}
-
-function referenceMediaText(result: ChannelHealthResult | undefined, advanced: SystemChannelAdvancedConfig) {
-    if (!result) return "未检测";
-    if (!result.ok) return "需检查";
-    return advanced.supportsReferenceVideo || advanced.supportsReferenceAudio ? "未实测" : "不支持";
-}
-
-function ChannelHealthResultRow({ result }: { result: ChannelHealthResult }) {
-    const detail = result.remoteUrl || result.taskId || result.error;
-    return (
-        <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-stone-500 dark:text-stone-400">
-            <Tag color={result.ok ? "green" : "red"} className="m-0">
-                {healthKindLabel(result.kind)}
-                {result.ok ? "可用" : "不可用"}
-            </Tag>
-            <span className="truncate">模型：{result.model}</span>
-            {result.protocol ? <span className="truncate">协议：{result.protocol}</span> : null}
-            <span>状态：{result.status || "-"}</span>
-            <span>扣费：{typeof result.pointsCost === "number" ? formatCreditAmount(result.pointsCost) : "-"}</span>
-            {result.referenceHint ? <span className="min-w-0 flex-1 basis-full truncate sm:basis-auto">参考图：{result.referenceHint}</span> : null}
-            {result.referenceImageTest ? (
-                <span className="min-w-0 basis-full truncate">参考图编辑：{result.referenceImageTest.ok ? "可用" : `不可用（${result.referenceImageTest.error || `状态码 ${result.referenceImageTest.status || "-"}`}）`}</span>
-            ) : null}
-            {detail ? (
-                <span className="min-w-0 flex-1 truncate">
-                    {result.remoteUrl ? "远程地址：" : result.taskId ? "任务：" : "原因："}
-                    {detail}
-                </span>
-            ) : null}
-        </div>
-    );
-}
-
-export function healthKindLabel(kind: ChannelHealthKind) {
-    return kind === "text" ? "文本" : kind === "image" ? "图片" : kind === "video" ? "视频" : "音频";
 }

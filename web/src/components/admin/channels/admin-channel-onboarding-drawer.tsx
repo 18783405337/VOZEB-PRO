@@ -2,37 +2,32 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { App, Alert, Button, Drawer, Empty, Input, Select, Space, Switch, Tag } from "antd";
-import { ArrowLeft, Check, CircleDollarSign, FlaskConical, Link2, PlugZap, RefreshCw, Save, WandSparkles } from "lucide-react";
+import { ArrowLeft, Check, CircleDollarSign, Link2, PlugZap, RefreshCw, Save, WandSparkles } from "lucide-react";
 
 import { AdminChannelProtocolSetup } from "@/components/admin/admin-channel-protocol-setup";
 import { LabeledControl } from "@/components/admin/admin-settings-controls";
-import { channelHealthKinds } from "@/components/admin/admin-system-channel-editor";
-import type { ChannelHealthResult } from "@/components/admin/admin-system-channel-editor";
 import { createSystemChannel } from "@/components/admin/admin-dashboard-elements";
 import type { SystemChannelAuthMode, SystemChannelProtocol, SystemModelChannel } from "@/lib/auth/store";
 import { applyChannelProtocol, channelConnectionReady, channelProtocolDefinition, channelProtocolOptions, channelRequiresApiKey, resolveChannelAuthMode } from "@/lib/channel-protocol-registry";
 import { capabilityLabel, channelModelCapability, synchronizeLogicalModelsWithChannels } from "@/lib/model-routing-config";
 
-import { channelHealthEntries, defaultModelField, removeChannelFromWorkspace, type ChannelWorkspaceSettings } from "./admin-channel-workspace-model";
+import { defaultModelField, removeChannelFromWorkspace, type ChannelWorkspaceSettings } from "./admin-channel-workspace-model";
 
 type Props = {
     open: boolean;
     initialProtocol?: SystemChannelProtocol;
     settings: ChannelWorkspaceSettings;
     fetchingModelId: string;
-    testingChannelKey: string;
-    healthResults: Record<string, ChannelHealthResult>;
     saving: boolean;
     onClose: () => void;
     onChange: (settings: ChannelWorkspaceSettings) => void;
     onFetchModels: (channel: SystemModelChannel) => Promise<void>;
-    onTestAll: (channel: SystemModelChannel) => Promise<void>;
     onPersist: (settings: ChannelWorkspaceSettings, successText: string) => Promise<boolean>;
 };
 
-const steps = [{ title: "选择协议" }, { title: "连接上游" }, { title: "获取模型" }, { title: "验证能力" }, { title: "同步模型" }, { title: "确认启用" }];
+const steps = [{ title: "选择协议" }, { title: "连接上游" }, { title: "获取模型" }, { title: "同步模型" }, { title: "确认启用" }];
 
-export function AdminChannelOnboardingDrawer({ open, initialProtocol, settings, fetchingModelId, testingChannelKey, healthResults, saving, onClose, onChange, onFetchModels, onTestAll, onPersist }: Props) {
+export function AdminChannelOnboardingDrawer({ open, initialProtocol, settings, fetchingModelId, saving, onClose, onChange, onFetchModels, onPersist }: Props) {
     const { message, modal } = App.useApp();
     const [step, setStep] = useState(0);
     const [selectedProtocol, setSelectedProtocol] = useState<SystemChannelProtocol>("openai");
@@ -40,8 +35,6 @@ export function AdminChannelOnboardingDrawer({ open, initialProtocol, settings, 
     const [setAsDefault, setSetAsDefault] = useState(true);
     const channel = settings.systemChannels.find((item) => item.id === draftId);
     const webhookSecretInvalid = Boolean(channel?.webhookSecret?.trim() && channel.webhookSecret.trim().length < 32);
-    const validations = draftId ? channelHealthEntries(draftId, healthResults, channel?.healthResults) : [];
-    const verified = validations.some(({ result }) => result.ok);
     const modelsSynchronized = Boolean(
         channel?.models.length &&
         channel.models.every((upstreamModel) => settings.logicalModels.some((model) => model.bindings.some((binding) => binding.channelId === channel.id && normalizedUpstreamModel(binding.upstreamModel) === normalizedUpstreamModel(upstreamModel)))),
@@ -93,7 +86,7 @@ export function AdminChannelOnboardingDrawer({ open, initialProtocol, settings, 
         if (await onPersist(next, "渠道草稿已保存")) onClose();
     };
     const enableChannel = async () => {
-        if (!channel || !verified || !modelsSynchronized) return;
+        if (!channel || !channelConnectionReady(channel) || !modelsSynchronized) return;
         const next = { ...settings, systemChannels: settings.systemChannels.map((item) => (item.id === channel.id ? { ...item, enabled: true } : item)) };
         onChange(next);
         if (await onPersist(next, "渠道已启用")) onClose();
@@ -120,12 +113,11 @@ export function AdminChannelOnboardingDrawer({ open, initialProtocol, settings, 
         if (!channel) return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="渠道草稿不存在" />;
         if (step === 1) return <ConnectionStep channel={channel} onChange={updateChannel} />;
         if (step === 2) return <ModelStep channel={channel} fetching={fetchingModelId === channel.id} onChange={updateChannel} onFetch={() => void onFetchModels(channel)} />;
-        if (step === 3) return <ValidationStep channel={channel} entries={validations} testing={testingChannelKey === `${channel.id}:all`} onTest={() => void onTestAll(channel)} />;
-        if (step === 4) return <BindingStep channel={channel} logicalModels={settings.logicalModels} setAsDefault={setAsDefault} onSetAsDefault={setSetAsDefault} onSynchronize={synchronizeModels} />;
-        return <ReviewStep channel={channel} settings={settings} validations={validations} />;
+        if (step === 3) return <BindingStep channel={channel} logicalModels={settings.logicalModels} setAsDefault={setAsDefault} onSetAsDefault={setSetAsDefault} onSynchronize={synchronizeModels} />;
+        return <ReviewStep channel={channel} settings={settings} />;
     };
 
-    const nextDisabled = step === 1 ? !channel?.name.trim() || !channelConnectionReady(channel) || webhookSecretInvalid : step === 2 ? !channel?.models.length : step === 4 ? !modelsSynchronized : false;
+    const nextDisabled = step === 1 ? !channel?.name.trim() || !channelConnectionReady(channel) || webhookSecretInvalid : step === 2 ? !channel?.models.length : step === 3 ? !modelsSynchronized : false;
 
     return (
         <Drawer
@@ -151,7 +143,7 @@ export function AdminChannelOnboardingDrawer({ open, initialProtocol, settings, 
                                 {step === 0 ? "开始配置" : "下一步"}
                             </Button>
                         ) : (
-                            <Button type="primary" loading={saving} disabled={!verified || !modelsSynchronized} icon={<Check className="size-4" />} onClick={() => void enableChannel()}>
+                            <Button type="primary" loading={saving} disabled={!channel || !channelConnectionReady(channel) || !modelsSynchronized} icon={<Check className="size-4" />} onClick={() => void enableChannel()}>
                                 启用渠道
                             </Button>
                         )}
@@ -166,7 +158,7 @@ export function AdminChannelOnboardingDrawer({ open, initialProtocol, settings, 
                     </span>
                     <span className="text-sm font-semibold text-stone-950 dark:text-stone-100">{steps[step].title}</span>
                 </div>
-                <div className="grid grid-cols-6 gap-1" role="progressbar" aria-label={`接入进度：${steps[step].title}`} aria-valuemin={1} aria-valuemax={steps.length} aria-valuenow={step + 1}>
+                <div className="grid grid-cols-5 gap-1" role="progressbar" aria-label={`接入进度：${steps[step].title}`} aria-valuemin={1} aria-valuemax={steps.length} aria-valuenow={step + 1}>
                     {steps.map((item, index) => (
                         <span key={item.title} className={`h-1 rounded-full ${index < step ? "bg-emerald-500 dark:bg-emerald-400" : index === step ? "bg-stone-950 dark:bg-stone-100" : "bg-stone-200 dark:bg-stone-700"}`} aria-hidden />
                     ))}
@@ -378,49 +370,6 @@ function ModelStep({ channel, fetching, onChange, onFetch }: { channel: SystemMo
     );
 }
 
-function ValidationStep({ channel, entries, testing, onTest }: { channel: SystemModelChannel; entries: ReturnType<typeof channelHealthEntries>; testing: boolean; onTest: () => void }) {
-    const kinds = channelHealthKinds(channel);
-    return (
-        <div>
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-stone-200 pb-3 dark:border-stone-800">
-                <div>
-                    <div className="text-sm font-semibold text-stone-950 dark:text-stone-100">能力验证</div>
-                    <div className="mt-1 text-xs text-stone-500 dark:text-stone-400">检测会调用真实上游，图片、视频或音频测试可能产生费用。</div>
-                </div>
-                <Button type="primary" icon={<FlaskConical className="size-4" />} loading={testing} onClick={onTest}>
-                    执行全部检测
-                </Button>
-            </div>
-            <div className="mt-4 divide-y divide-stone-200 border-y border-stone-200 dark:divide-stone-800 dark:border-stone-800">
-                {kinds.map((kind) => {
-                    const result = entries.find((entry) => entry.result.kind === kind)?.result;
-                    return (
-                        <div key={kind} className="flex items-center justify-between gap-3 py-3">
-                            <div>
-                                <div className="text-sm font-medium text-stone-900 dark:text-stone-100">{capabilityLabel(kind)}</div>
-                                <div className="mt-0.5 text-xs text-stone-500 dark:text-stone-400">{result?.model || "等待检测"}</div>
-                            </div>
-                            <Tag color={result ? (result.ok ? "success" : "error") : "default"}>{result ? (result.ok ? "通过" : "失败") : "未检测"}</Tag>
-                        </div>
-                    );
-                })}
-            </div>
-            {entries.some(({ result }) => !result.ok) ? (
-                <Alert
-                    className="mt-4"
-                    type="warning"
-                    showIcon
-                    message="部分能力需要检查"
-                    description={entries
-                        .filter(({ result }) => !result.ok)
-                        .map(({ result }) => result.error || `${capabilityLabel(result.kind)}检测失败`)
-                        .join("；")}
-                />
-            ) : null}
-        </div>
-    );
-}
-
 function BindingStep({
     channel,
     logicalModels,
@@ -470,7 +419,7 @@ function displayUpstreamModel(value: string) {
     return value.trim().replace(/^models\//i, "");
 }
 
-function ReviewStep({ channel, settings, validations }: { channel: SystemModelChannel; settings: ChannelWorkspaceSettings; validations: ReturnType<typeof channelHealthEntries> }) {
+function ReviewStep({ channel, settings }: { channel: SystemModelChannel; settings: ChannelWorkspaceSettings }) {
     const bindings = settings.logicalModels.flatMap((model) => model.bindings.filter((binding) => binding.channelId === channel.id).map((binding) => ({ logical: model, binding })));
     return (
         <div className="space-y-5">
@@ -479,7 +428,7 @@ function ReviewStep({ channel, settings, validations }: { channel: SystemModelCh
                 <ReviewValue label="协议" value={channelProtocolDefinition(channel.advancedConfig?.protocol || "auto").label} />
                 <ReviewValue label="Base URL" value={channel.baseUrl} />
                 <ReviewValue label="上游模型" value={`${channel.models.length} 个`} />
-                <ReviewValue label="能力检测" value={`${validations.filter(({ result }) => result.ok).length}/${Math.max(validations.length, 1)} 通过`} />
+                <ReviewValue label="验证方式" value="用户工作台真实调用" />
                 <ReviewValue label="逻辑绑定" value={`${bindings.length} 个`} />
             </div>
             <div>
@@ -493,7 +442,7 @@ function ReviewStep({ channel, settings, validations }: { channel: SystemModelCh
                     ))}
                 </div>
             </div>
-            {!validations.some(({ result }) => result.ok) ? <Alert type="warning" showIcon message="尚未通过能力检测" description="可以保存为停用草稿；通过至少一项真实能力检测后才能启用。" /> : null}
+            <Alert type="info" showIcon message="启用后请在用户工作台验证" description="文本、图片、视频和音频能力以对应工作台的真实业务请求为准。" />
             <div className="flex items-start gap-2 text-xs leading-5 text-stone-500 dark:text-stone-400">
                 <CircleDollarSign className="mt-0.5 size-4 shrink-0" />
                 <span>用户积分仍按逻辑模型配置；上游模型名只用于真实请求。</span>

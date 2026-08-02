@@ -3,10 +3,9 @@
 import { useDeferredValue, useMemo, useState } from "react";
 import { Button, Empty, Input, Popconfirm, Select, Space, Switch, Table, Tabs, Tag } from "antd";
 import type { TableColumnsType } from "antd";
-import { Blocks, FlaskConical, ListFilter, Plus, RefreshCw, Route, Search, Settings2, Trash2 } from "lucide-react";
+import { Blocks, Plus, RefreshCw, Route, Search, Settings2, Trash2 } from "lucide-react";
 
 import { AdminLogicalModelManager } from "@/components/admin/admin-logical-model-manager";
-import type { ChannelHealthKind, ChannelHealthResult } from "@/components/admin/admin-system-channel-editor";
 import type { SystemChannelProtocol, SystemModelChannel } from "@/lib/auth/store";
 import { channelProtocolDefinitions } from "@/lib/channel-protocol-registry";
 import { capabilityLabel, isLogicalModelResolvable } from "@/lib/model-routing-config";
@@ -14,34 +13,20 @@ import { capabilityLabel, isLogicalModelResolvable } from "@/lib/model-routing-c
 import { AdminChannelDetailDrawer } from "./admin-channel-detail-drawer";
 import { AdminChannelOnboardingDrawer } from "./admin-channel-onboarding-drawer";
 import { ChannelStatusBadge } from "./admin-channel-status-badge";
-import {
-    channelBindingCount,
-    channelCapabilityLabels,
-    channelHealthEntries,
-    channelProtocolLabel,
-    channelSearchText,
-    channelWorkspaceStatus,
-    updateChannelInWorkspace,
-    type ChannelWorkspaceSettings,
-    type ChannelWorkspaceStatus,
-} from "./admin-channel-workspace-model";
+import { channelBindingCount, channelCapabilityLabels, channelProtocolLabel, channelSearchText, channelWorkspaceStatus, updateChannelInWorkspace, type ChannelWorkspaceSettings, type ChannelWorkspaceStatus } from "./admin-channel-workspace-model";
 
 type Props = {
     settings: ChannelWorkspaceSettings;
     fetchingModelId: string;
-    testingChannelKey: string;
-    healthResults: Record<string, ChannelHealthResult>;
     saving: boolean;
     onChange: (settings: ChannelWorkspaceSettings) => void;
     onDeleteChannel: (channelId: string) => Promise<boolean>;
     onFetchModels: (channel: SystemModelChannel) => Promise<void>;
     onFetchAll: () => Promise<void>;
-    onTestHealth: (channel: SystemModelChannel, kind: ChannelHealthKind) => Promise<ChannelHealthResult | null>;
-    onTestAll: (channel: SystemModelChannel) => Promise<void>;
     onPersist: (settings: ChannelWorkspaceSettings, successText: string) => Promise<boolean>;
 };
 
-export function AdminChannelWorkspace({ settings, fetchingModelId, testingChannelKey, healthResults, saving, onChange, onDeleteChannel, onFetchModels, onFetchAll, onTestHealth, onTestAll, onPersist }: Props) {
+export function AdminChannelWorkspace({ settings, fetchingModelId, saving, onChange, onDeleteChannel, onFetchModels, onFetchAll, onPersist }: Props) {
     const [activeTab, setActiveTab] = useState("channels");
     const [query, setQuery] = useState("");
     const [statusFilter, setStatusFilter] = useState<ChannelWorkspaceStatus | "all">("all");
@@ -54,13 +39,13 @@ export function AdminChannelWorkspace({ settings, fetchingModelId, testingChanne
     const visibleChannels = useMemo(
         () =>
             settings.systemChannels.filter((channel) => {
-                const status = channelWorkspaceStatus(channel, healthResults);
+                const status = channelWorkspaceStatus(channel);
                 return (!deferredQuery || channelSearchText(channel).includes(deferredQuery)) && (statusFilter === "all" || status === statusFilter) && (protocolFilter === "all" || (channel.advancedConfig?.protocol || "auto") === protocolFilter);
             }),
-        [deferredQuery, healthResults, protocolFilter, settings.systemChannels, statusFilter],
+        [deferredQuery, protocolFilter, settings.systemChannels, statusFilter],
     );
     const enabledChannels = settings.systemChannels.filter((channel) => channel.enabled).length;
-    const healthyChannels = settings.systemChannels.filter((channel) => channelWorkspaceStatus(channel, healthResults) === "healthy").length;
+    const synchronizedChannels = settings.systemChannels.filter((channel) => channel.models.length).length;
     const protocolCount = new Set(settings.systemChannels.map((channel) => channel.advancedConfig?.protocol || "auto")).size;
     const readyDefaults = (["text", "image", "video", "audio"] as const).filter((capability) => {
         const key = capability === "text" ? "textModel" : capability === "image" ? "imageModel" : capability === "video" ? "videoModel" : "audioModel";
@@ -79,7 +64,7 @@ export function AdminChannelWorkspace({ settings, fetchingModelId, testingChanne
                 <div className="min-w-0">
                     <div className="flex items-center gap-2">
                         <span className="max-w-[240px] truncate font-medium text-stone-950 dark:text-stone-100">{channel.name || "未命名渠道"}</span>
-                        <ChannelStatusTag channel={channel} healthResults={healthResults} />
+                        <ChannelStatusTag channel={channel} />
                     </div>
                     <div className="mt-1 max-w-[320px] truncate text-xs text-stone-500 dark:text-stone-400">{channel.baseUrl || "未配置 Base URL"}</div>
                 </div>
@@ -99,14 +84,13 @@ export function AdminChannelWorkspace({ settings, fetchingModelId, testingChanne
         {
             title: "操作",
             key: "actions",
-            width: 260,
+            width: 220,
             render: (_, channel) => (
                 <Space size={4}>
                     <Button size="small" onClick={() => setDetailId(channel.id)}>
                         查看
                     </Button>
                     <Button size="small" icon={<RefreshCw className="size-3.5" />} loading={fetchingModelId === channel.id} aria-label={`同步 ${channel.name} 模型`} title="同步模型" onClick={() => void onFetchModels(channel)} />
-                    <Button size="small" icon={<FlaskConical className="size-3.5" />} loading={testingChannelKey === `${channel.id}:all`} aria-label={`检测 ${channel.name}`} title="检测渠道" onClick={() => void onTestAll(channel)} />
                     <Popconfirm title="删除这个渠道？" description="关联逻辑模型绑定和失效默认值会同步清理。" okText="删除" cancelText="取消" onConfirm={() => onDeleteChannel(channel.id)}>
                         <Button size="small" danger icon={<Trash2 className="size-3.5" />} aria-label={`删除 ${channel.name}`} title="删除渠道" />
                     </Popconfirm>
@@ -117,7 +101,7 @@ export function AdminChannelWorkspace({ settings, fetchingModelId, testingChanne
 
     return (
         <div>
-            <ChannelMetrics enabled={enabledChannels} total={settings.systemChannels.length} healthy={healthyChannels} protocols={protocolCount} readyDefaults={readyDefaults} />
+            <ChannelMetrics enabled={enabledChannels} total={settings.systemChannels.length} synchronized={synchronizedChannels} protocols={protocolCount} readyDefaults={readyDefaults} />
             <Tabs
                 className="max-sm:[&_.ant-tabs-nav-list]:w-full max-sm:[&_.ant-tabs-tab]:!m-0 max-sm:[&_.ant-tabs-tab]:min-w-0 max-sm:[&_.ant-tabs-tab]:flex-1 max-sm:[&_.ant-tabs-tab]:justify-center max-sm:[&_.ant-tabs-tab]:!px-1"
                 activeKey={activeTab}
@@ -145,8 +129,6 @@ export function AdminChannelWorkspace({ settings, fetchingModelId, testingChanne
                                 statusFilter={statusFilter}
                                 protocolFilter={protocolFilter}
                                 fetchingModelId={fetchingModelId}
-                                testingChannelKey={testingChannelKey}
-                                healthResults={healthResults}
                                 settings={settings}
                                 onQuery={setQuery}
                                 onStatus={setStatusFilter}
@@ -155,7 +137,6 @@ export function AdminChannelWorkspace({ settings, fetchingModelId, testingChanne
                                 onCreate={() => openWizard()}
                                 onFetchAll={() => void onFetchAll()}
                                 onFetch={(channel) => void onFetchModels(channel)}
-                                onTest={(channel) => void onTestAll(channel)}
                             />
                         ),
                     },
@@ -165,7 +146,6 @@ export function AdminChannelWorkspace({ settings, fetchingModelId, testingChanne
                         label: <TabLabel icon={<Route className="size-4" />} text="逻辑模型" />,
                         children: <AdminLogicalModelManager channels={settings.systemChannels} logicalModels={settings.logicalModels} defaultModels={settings.defaultModels} onChange={(routing) => onChange({ ...settings, ...routing })} />,
                     },
-                    { key: "validation", label: <TabLabel icon={<FlaskConical className="size-4" />} text="验证记录" />, children: <ValidationRecords settings={settings} healthResults={healthResults} onOpen={setDetailId} /> },
                 ]}
             />
             <div className="mt-3 flex gap-2 sm:hidden">
@@ -181,13 +161,10 @@ export function AdminChannelWorkspace({ settings, fetchingModelId, testingChanne
                 initialProtocol={wizardProtocol}
                 settings={settings}
                 fetchingModelId={fetchingModelId}
-                testingChannelKey={testingChannelKey}
-                healthResults={healthResults}
                 saving={saving}
                 onClose={() => setWizardOpen(false)}
                 onChange={onChange}
                 onFetchModels={onFetchModels}
-                onTestAll={onTestAll}
                 onPersist={onPersist}
             />
             <AdminChannelDetailDrawer
@@ -195,23 +172,19 @@ export function AdminChannelWorkspace({ settings, fetchingModelId, testingChanne
                 channel={selectedChannel}
                 settings={settings}
                 fetching={fetchingModelId === selectedChannel?.id}
-                testingKey={testingChannelKey}
-                healthResults={healthResults}
                 onClose={() => setDetailId("")}
                 onChange={(patch) => selectedChannel && updateChannel(selectedChannel.id, patch)}
                 onDelete={async () => Boolean(selectedChannel && (await onDeleteChannel(selectedChannel.id)))}
                 onFetchModels={() => selectedChannel && void onFetchModels(selectedChannel)}
-                onTestHealth={(kind) => selectedChannel && void onTestHealth(selectedChannel, kind)}
-                onTestAll={() => selectedChannel && void onTestAll(selectedChannel)}
             />
         </div>
     );
 }
 
-function ChannelMetrics({ enabled, total, healthy, protocols, readyDefaults }: { enabled: number; total: number; healthy: number; protocols: number; readyDefaults: number }) {
+function ChannelMetrics({ enabled, total, synchronized, protocols, readyDefaults }: { enabled: number; total: number; synchronized: number; protocols: number; readyDefaults: number }) {
     const metrics = [
         { label: "启用渠道", value: `${enabled}/${total}` },
-        { label: "检测正常", value: String(healthy) },
+        { label: "已同步模型", value: String(synchronized) },
         { label: "使用协议", value: String(protocols) },
         { label: "默认能力", value: `${readyDefaults}/4` },
     ];
@@ -235,8 +208,6 @@ function ChannelList({
     statusFilter,
     protocolFilter,
     fetchingModelId,
-    testingChannelKey,
-    healthResults,
     settings,
     onQuery,
     onStatus,
@@ -245,7 +216,6 @@ function ChannelList({
     onCreate,
     onFetchAll,
     onFetch,
-    onTest,
 }: {
     channels: SystemModelChannel[];
     allChannels: SystemModelChannel[];
@@ -254,8 +224,6 @@ function ChannelList({
     statusFilter: ChannelWorkspaceStatus | "all";
     protocolFilter: SystemChannelProtocol | "all";
     fetchingModelId: string;
-    testingChannelKey: string;
-    healthResults: Record<string, ChannelHealthResult>;
     settings: ChannelWorkspaceSettings;
     onQuery: (value: string) => void;
     onStatus: (value: ChannelWorkspaceStatus | "all") => void;
@@ -264,7 +232,6 @@ function ChannelList({
     onCreate: () => void;
     onFetchAll: () => void;
     onFetch: (channel: SystemModelChannel) => void;
-    onTest: (channel: SystemModelChannel) => void;
 }) {
     return (
         <div>
@@ -277,9 +244,7 @@ function ChannelList({
                             value={statusFilter}
                             options={[
                                 { label: "全部状态", value: "all" },
-                                { label: "正常", value: "healthy" },
-                                { label: "需检查", value: "warning" },
-                                { label: "待检测", value: "untested" },
+                                { label: "已启用", value: "enabled" },
                                 { label: "草稿", value: "draft" },
                                 { label: "已停用", value: "disabled" },
                             ]}
@@ -309,7 +274,7 @@ function ChannelList({
                             <div className="min-w-0">
                                 <div className="flex min-w-0 items-center gap-2">
                                     <span className="truncate text-sm font-semibold text-stone-950 dark:text-stone-100">{channel.name || "未命名渠道"}</span>
-                                    <ChannelStatusTag channel={channel} healthResults={healthResults} />
+                                    <ChannelStatusTag channel={channel} />
                                 </div>
                                 <div className="mt-1 truncate text-xs text-stone-500 dark:text-stone-400">{channelProtocolLabel(channel)}</div>
                             </div>
@@ -325,7 +290,6 @@ function ChannelList({
                                 查看
                             </Button>
                             <Button size="small" icon={<RefreshCw className="size-3.5" />} loading={fetchingModelId === channel.id} aria-label={`同步 ${channel.name} 模型`} onClick={() => onFetch(channel)} />
-                            <Button size="small" icon={<FlaskConical className="size-3.5" />} loading={testingChannelKey === `${channel.id}:all`} aria-label={`检测 ${channel.name}`} onClick={() => onTest(channel)} />
                         </div>
                     </div>
                 ))}
@@ -406,38 +370,8 @@ function ProtocolCenter({ settings, onCreate, onOpenChannel }: { settings: Chann
     );
 }
 
-function ValidationRecords({ settings, healthResults, onOpen }: { settings: ChannelWorkspaceSettings; healthResults: Record<string, ChannelHealthResult>; onOpen: (id: string) => void }) {
-    const records = settings.systemChannels.flatMap((channel) => channelHealthEntries(channel.id, healthResults, channel.healthResults).map((entry) => ({ ...entry, channel })));
-    return (
-        <div>
-            <div className="mb-3 flex items-center gap-2 text-xs text-stone-500 dark:text-stone-400">
-                <ListFilter className="size-4" /> 当前管理会话的能力检测结果
-            </div>
-            <div className="divide-y divide-stone-200 border-y border-stone-200 dark:divide-stone-800 dark:border-stone-800">
-                {records.map(({ key, result, channel }) => (
-                    <button key={key} type="button" className="flex w-full min-w-0 flex-col gap-2 py-3 text-left hover:bg-stone-50 sm:flex-row sm:items-center sm:justify-between dark:hover:bg-stone-900/60" onClick={() => onOpen(channel.id)}>
-                        <div className="min-w-0 px-2">
-                            <div className="truncate text-sm font-medium text-stone-950 dark:text-stone-100">
-                                {channel.name} · {capabilityLabel(result.kind)}
-                            </div>
-                            <div className="mt-1 truncate text-xs text-stone-500 dark:text-stone-400">
-                                {result.model || "未选择模型"} · {result.protocol || channelProtocolLabel(channel)}
-                            </div>
-                        </div>
-                        <div className="flex shrink-0 items-center gap-2 px-2">
-                            <span className="text-xs text-stone-500 dark:text-stone-400">HTTP {result.status || "-"}</span>
-                            <Tag color={result.ok ? "success" : "error"}>{result.ok ? "通过" : "失败"}</Tag>
-                        </div>
-                    </button>
-                ))}
-                {!records.length ? <div className="py-12 text-center text-sm text-stone-500 dark:text-stone-400">还没有验证记录，请在渠道列表执行检测</div> : null}
-            </div>
-        </div>
-    );
-}
-
-function ChannelStatusTag({ channel, healthResults }: { channel: SystemModelChannel; healthResults: Record<string, ChannelHealthResult> }) {
-    const status = channelWorkspaceStatus(channel, healthResults);
+function ChannelStatusTag({ channel }: { channel: SystemModelChannel }) {
+    const status = channelWorkspaceStatus(channel);
     return <ChannelStatusBadge status={status} />;
 }
 

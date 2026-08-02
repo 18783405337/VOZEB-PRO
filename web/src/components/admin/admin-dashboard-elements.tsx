@@ -31,8 +31,7 @@ import type { AdminSectionKey } from "@/components/admin/admin-sections";
 import { UpdateCenterPanel } from "@/components/admin/admin-update-center";
 import { LabeledControl, SectionTitle, SettingInlineToggle, SettingToggle } from "@/components/admin/admin-settings-controls";
 import { SiteLogoPreview, SiteSettingStatus, SiteShowcasePreview, siteSocialItems } from "@/components/admin/admin-site-preview";
-import { createDefaultChannelAdvancedConfig, healthKindLabel, SystemChannelEditor } from "@/components/admin/admin-system-channel-editor";
-import type { ChannelHealthKind, ChannelHealthResult } from "@/components/admin/admin-system-channel-editor";
+import { createDefaultChannelAdvancedConfig } from "@/components/admin/admin-system-channel-editor";
 import { formatAdminMoney, toNumberOrOne, toNumberOrZero, uniqueList } from "@/components/admin/admin-values";
 import {
     ArrowRight,
@@ -67,29 +66,12 @@ import {
 } from "lucide-react";
 import dayjs from "dayjs";
 import { nanoid } from "nanoid";
-import { applyChannelProtocol, channelProtocolDefinition, normalizeStrictProtocolModelConfig } from "@/lib/channel-protocol-registry";
+import { applyChannelProtocol } from "@/lib/channel-protocol-registry";
 
 import { formatCreditAmount } from "@/constant/credits";
 import { AdminAccountId } from "@/components/admin/admin-user-identity";
-import { channelModelCapability, normalizeDefaultModelsConfig } from "@/lib/model-routing-config";
-import { normalizeModelId } from "@/lib/model-capability";
-import { resolveGlobalAiOpcPreset } from "@/lib/globalaiopc-catalog";
-import type {
-    AgentSkill,
-    AuthSettings,
-    CreatedCdkCode,
-    PublicAnnouncement,
-    PublicCdkCode,
-    PublicUser,
-    SiteFriendLink,
-    SiteShowcaseItem,
-    SiteSocialKey,
-    SystemChannelAdvancedConfig,
-    SystemChannelModelConfig,
-    SystemModelChannel,
-    UserRole,
-    UserStatus,
-} from "@/lib/auth/store";
+import { normalizeDefaultModelsConfig } from "@/lib/model-routing-config";
+import type { AgentSkill, CreatedCdkCode, PublicAnnouncement, PublicCdkCode, PublicUser, SiteFriendLink, SiteShowcaseItem, SiteSocialKey, SystemChannelAdvancedConfig, SystemModelChannel, UserRole, UserStatus } from "@/lib/auth/store";
 import type { GenerationAssetStats, StoredGenerationLog } from "@/lib/server/generation-log-store";
 import type { AdminSetupSummary } from "@/lib/server/admin-setup-status";
 import type { PaymentConfigSummary } from "@/lib/payment-config-types";
@@ -168,72 +150,6 @@ export function suggestedChannelModels(channel: Pick<SystemModelChannel, "baseUr
     return [];
 }
 
-export function buildAdvancedConfigFromHealth(channel: SystemModelChannel, results: ChannelHealthResult[]): SystemChannelAdvancedConfig {
-    const current = channel.advancedConfig || createDefaultChannelAdvancedConfig();
-    const text = firstOkResult(results, "text");
-    const image = firstOkResult(results, "image");
-    const video = firstOkResult(results, "video");
-    const protocol = video?.protocolKey || image?.protocolKey || text?.protocolKey || current.protocol || "auto";
-    const modelCapabilities = { ...(current.modelCapabilities || {}) };
-    const modelConfigs = { ...(current.modelConfigs || {}) };
-    results.forEach((result) => {
-        if (!result.ok || !result.model) return;
-        const key = normalizeModelId(result.model);
-        modelCapabilities[key] = result.kind;
-        modelConfigs[key] = normalizeStrictProtocolModelConfig(healthModelConfig(result, modelConfigs[key]), protocol);
-    });
-    return {
-        ...current,
-        protocol,
-        textModel: text?.model || current.textModel,
-        imageModel: image?.model || current.imageModel,
-        videoModel: video?.model || current.videoModel,
-        createPath: video?.createPath || image?.createPath || text?.createPath || current.createPath,
-        editPath: image?.editPath || current.editPath,
-        imageToVideoPath: video?.imageToVideoPath || current.imageToVideoPath,
-        queryPath: video?.queryPath || current.queryPath,
-        cancelPath: video?.cancelPath || current.cancelPath,
-        cancelMethod: video?.cancelMethod || current.cancelMethod,
-        requestTemplate: video?.requestTemplate || image?.requestTemplate || text?.requestTemplate || current.requestTemplate,
-        resultField: video?.resultField || image?.resultField || text?.resultField || current.resultField,
-        statusField: video?.statusField || current.statusField,
-        durationRange: video?.durationRange || current.durationRange,
-        referenceRule: video?.referenceRule || video?.referenceHint || image?.referenceRule || image?.referenceHint || current.referenceRule,
-        supportsReferenceImage: Boolean(video?.supportsReferenceImage || image?.supportsReferenceImage || current.supportsReferenceImage),
-        supportsReferenceVideo: Boolean(video?.supportsReferenceVideo || current.supportsReferenceVideo),
-        supportsReferenceAudio: Boolean(video?.supportsReferenceAudio || current.supportsReferenceAudio),
-        modelCapabilities,
-        modelConfigs,
-    };
-}
-
-function healthModelConfig(result: ChannelHealthResult, current?: SystemChannelModelConfig): SystemChannelModelConfig {
-    return {
-        ...(current || {}),
-        capability: result.kind,
-        source: "health",
-        ...(result.protocolKey ? { protocol: result.protocolKey } : {}),
-        ...(result.createPath ? { createPath: result.createPath } : {}),
-        ...(result.editPath ? { editPath: result.editPath } : {}),
-        ...(result.imageToVideoPath ? { imageToVideoPath: result.imageToVideoPath } : {}),
-        ...(result.queryPath ? { queryPath: result.queryPath } : {}),
-        ...(result.cancelPath ? { cancelPath: result.cancelPath } : {}),
-        ...(result.cancelMethod ? { cancelMethod: result.cancelMethod } : {}),
-        ...(result.requestTemplate ? { requestTemplate: result.requestTemplate } : {}),
-        ...(result.resultField ? { resultField: result.resultField } : {}),
-        ...(result.statusField ? { statusField: result.statusField } : {}),
-        ...(result.durationRange ? { durationRange: result.durationRange } : {}),
-        ...(result.referenceRule || result.referenceHint ? { referenceRule: result.referenceRule || result.referenceHint } : {}),
-        ...(typeof result.supportsReferenceImage === "boolean" ? { supportsReferenceImage: result.supportsReferenceImage } : {}),
-        ...(typeof result.supportsReferenceVideo === "boolean" ? { supportsReferenceVideo: result.supportsReferenceVideo } : {}),
-        ...(typeof result.supportsReferenceAudio === "boolean" ? { supportsReferenceAudio: result.supportsReferenceAudio } : {}),
-    };
-}
-
-export function firstOkResult(results: ChannelHealthResult[], kind: ChannelHealthKind) {
-    return results.find((result) => result.kind === kind && result.ok);
-}
-
 export type AdminModelsResult = {
     models: string[];
     modelCapabilities?: SystemChannelAdvancedConfig["modelCapabilities"];
@@ -272,29 +188,6 @@ export async function requestAdminModels(channel: SystemModelChannel): Promise<A
     const payload = (await response.json()) as AdminModelsResult & { error?: string };
     if (!response.ok || !payload.models) throw new Error(payload.error || "拉取模型失败");
     return payload;
-}
-
-export function selectChannelHealthModel(channel: SystemModelChannel, defaults: AuthSettings["defaultModels"], kind: ChannelHealthKind) {
-    if (!channelProtocolDefinition(channel.advancedConfig?.protocol || "auto").capabilities.includes(kind)) return undefined;
-    const models = channel.models;
-    const configured = kind === "image" ? channel.advancedConfig?.imageModel : kind === "video" ? channel.advancedConfig?.videoModel : kind === "text" ? channel.advancedConfig?.textModel : "";
-    const configuredModel = models.find((model) => normalizeModelId(model) === normalizeModelId(configured || ""));
-    if (configuredModel && channelModelCapability(channel, configuredModel) === kind) return configuredModel;
-    const catalogModel = models.find((model) => channelModelCapability(channel, model) === kind);
-    if (catalogModel) return catalogModel;
-    const defaultValue = kind === "image" ? defaults.imageModel : kind === "video" ? defaults.videoModel : kind === "audio" ? defaults.audioModel : defaults.textModel;
-    const normalizedDefault = modelNameFromOption(defaultValue || "");
-    if (normalizedDefault && models.includes(normalizedDefault) && channelModelCapability(channel, normalizedDefault) === kind) return normalizedDefault;
-    if (channel.advancedConfig?.protocol === "globalaiopc") return models.find((model) => resolveGlobalAiOpcPreset(channel.advancedConfig, model)?.capability === kind);
-    const matcher =
-        kind === "image"
-            ? /image|img|gpt-image|dall|flux|sd|midjourney/i
-            : kind === "video"
-              ? /video|vid|i2v|t2v|seedance|kling|sora|veo|grok-imagine/i
-              : kind === "audio"
-                ? /audio|speech|voice|tts|music|whisper|sensevoice/i
-                : /gpt|chat|claude|deepseek|qwen|grok|text|gemini|glm/i;
-    return models.find((model) => matcher.test(model) && channelModelCapability(channel, model) === kind);
 }
 
 export function modelNameFromOption(value: string) {

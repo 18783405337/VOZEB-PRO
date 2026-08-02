@@ -36,7 +36,6 @@ describe("serializePublicSettings", () => {
                 apiFormat: "openai",
                 models: ["vendor-image"],
                 enabled: true,
-                healthResults: { image: { ok: true, kind: "image", model: "vendor-image", status: 200 } },
                 advancedConfig: {
                     protocol: "custom",
                     authHeader: "X-Secret-Key",

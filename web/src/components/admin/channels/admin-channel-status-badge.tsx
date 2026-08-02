@@ -1,9 +1,7 @@
 import { channelWorkspaceStatusLabel, type ChannelWorkspaceStatus } from "./admin-channel-workspace-model";
 
 const statusTone: Record<ChannelWorkspaceStatus, string> = {
-    healthy: "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/45 dark:text-emerald-300",
-    warning: "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300",
-    untested: "border-stone-300 bg-transparent text-stone-600 dark:border-stone-700 dark:text-stone-300",
+    enabled: "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/45 dark:text-emerald-300",
     draft: "border-stone-200 bg-stone-50 text-stone-600 dark:border-stone-800 dark:bg-stone-900 dark:text-stone-300",
     disabled: "border-stone-200 bg-stone-100 text-stone-500 dark:border-stone-800 dark:bg-stone-900/70 dark:text-stone-400",
 };

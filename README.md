@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="web/public/logo.svg?v=0.0.3" width="108" alt="VOZEB PRO logo">
+  <img src="web/public/logo.svg?v=0.0.4" width="108" alt="VOZEB PRO logo">
 </p>
 
 <h1 align="center">VOZEB PRO</h1>
@@ -8,7 +8,7 @@
 
 <p align="center">
   <a href="https://github.com/csyqlz/VOZEB-PRO"><img src="https://img.shields.io/github/stars/csyqlz/VOZEB-PRO?style=flat-square&logo=github" alt="GitHub stars"></a>
-  <a href="VERSION"><img src="https://img.shields.io/badge/version-v0.0.3-2563eb?style=flat-square" alt="Version"></a>
+  <a href="VERSION"><img src="https://img.shields.io/badge/version-v0.0.4-2563eb?style=flat-square" alt="Version"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-f97316?style=flat-square" alt="License"></a>
   <a href="https://nextjs.org/"><img src="https://img.shields.io/badge/Next.js-16.2-000000?style=flat-square&logo=nextdotjs" alt="Next.js"></a>
   <a href="https://www.postgresql.org/"><img src="https://img.shields.io/badge/PostgreSQL-16-4169e1?style=flat-square&logo=postgresql" alt="PostgreSQL"></a>
@@ -17,7 +17,7 @@
 <p align="center">
   <a href="https://www.vozeb.com">演示站</a> ·
   <a href="docs/index.md">文档索引</a> ·
-  <a href="docs/content/docs/overview/configuration.mdx">0.0.3 发布说明</a> ·
+  <a href="docs/content/docs/overview/configuration.mdx">0.0.4 发布说明</a> ·
   <a href="docs/content/docs/overview/project-structure.mdx">项目结构</a> ·
   <a href="docs/content/docs/overview/page-gallery.mdx">页面图册</a> ·
   <a href="https://linux.do">LINUX DO</a> ·
@@ -316,8 +316,8 @@ flowchart TB
     ADMIN --> CONTENT["内容运营"]
 
     UPSTREAM --> CHANNELS["模型渠道<br/>协议、Base URL、API Key 和模型目录"]
-    CHANNELS --> DETECT["检测文本、图片、视频和音频能力"]
-    DETECT --> LOGICAL["绑定逻辑模型、优先级和默认模型"]
+    CHANNELS --> LOGICAL["同步逻辑模型、优先级和默认模型"]
+    LOGICAL --> VERIFY["在用户工作台发起真实业务请求"]
     UPSTREAM --> SKILLS["Agent Skills<br/>分类、触发规则、能力约束和启停"]
 
     SYSTEM --> SITE["站点资料<br/>名称、Logo、SEO、首页内容和友情链接"]
@@ -404,7 +404,7 @@ VOZEB PRO 调用外部 AI 模型，不要求 GPU。服务器主要承担 Web、P
 
 ## 快速开始
 
-> 安装过 0.0.2 的用户必须先删除旧数据库或数据库卷，再重新安装 0.0.3，并通过 `/install` 重新初始化数据库；不支持沿用旧数据库或原地升级。
+> 安装过 0.0.2 的用户必须先删除旧数据库或数据库卷，再重新安装 0.0.4，并通过 `/install` 重新初始化数据库；不支持沿用旧数据库或原地升级。
 
 ### Docker Compose
 
@@ -484,8 +484,8 @@ pnpm run dev
 ## 首次配置顺序
 
 1. 在 `/install` 完成数据库初始化和首个管理员创建。
-2. 在后台“模型渠道”按六步向导选择协议、配置连接、获取模型并验证能力；无鉴权协议无需 API Key，未知上游可生成自定义协议草稿。
-3. 把真实上游模型绑定为稳定逻辑模型，设置默认值，并在验证记录中复核结果。
+2. 在后台“模型渠道”按五步向导选择协议、配置连接、获取模型、同步逻辑模型并确认启用；无鉴权协议无需 API Key，未知上游可生成自定义协议草稿。
+3. 设置默认逻辑模型，并在用户端文本、图片、视频和音频工作台发起真实业务请求验证。
 4. 配置套餐、积分规则和可选支付渠道。
 5. 配置 SMTP、注册策略、本地媒体或 S3 兼容对象存储。
 6. 在“初始化配置”检查上线项，再验证真实生成、退款和备份恢复。

@@ -124,7 +124,6 @@ import {
     normalizeLinkUrl,
     normalizeSystemChannel,
     normalizeSystemChannelAdvancedConfig,
-    normalizeSystemChannelHealthResults,
     normalizeApiPath,
     textOrEmpty,
     normalizePoints,
@@ -328,7 +327,7 @@ export async function readPostgresAuthSettings(executor?: QueryExecutor): Promis
 
 export function mapPostgresSettings(settingsRow: Record<string, unknown> | undefined, planRows: Record<string, unknown>[], channelRows: Record<string, unknown>[]): AuthSettings {
     const fallback = DEFAULT_SETTINGS;
-    return {
+    return normalizeSettings({
         site: normalizeSiteSettings(dbJson(settingsRow?.site, fallback.site)),
         registrationEnabled: dbBool(settingsRow?.registration_enabled, fallback.registrationEnabled),
         emailRegistrationEnabled: dbBool(settingsRow?.email_registration_enabled, fallback.emailRegistrationEnabled),
@@ -354,25 +353,21 @@ export function mapPostgresSettings(settingsRow: Record<string, unknown> | undef
         },
         generationConcurrency: dbJson(settingsRow?.generation_concurrency, fallback.generationConcurrency),
         generationDefaults: normalizeGenerationDefaults(dbJson(settingsRow?.generation_defaults, fallback.generationDefaults)),
-        systemChannels: channelRows.map((row) => {
-            const healthResults = normalizeSystemChannelHealthResults(row.health_results);
-            return {
-                id: dbText(row.id),
-                name: dbText(row.name),
-                baseUrl: dbText(row.base_url),
-                apiKey: dbText(row.api_key_ciphertext),
-                webhookSecret: dbText(row.webhook_secret_ciphertext),
-                apiFormat: row.api_format === "gemini" ? "gemini" : "openai",
-                models: dbJson(row.models, []),
-                enabled: dbBool(row.enabled, true),
-                advancedConfig: dbJson(row.advanced_config, undefined),
-                ...(Object.keys(healthResults).length ? { healthResults } : {}),
-            };
-        }),
+        systemChannels: channelRows.map((row) => ({
+            id: dbText(row.id),
+            name: dbText(row.name),
+            baseUrl: dbText(row.base_url),
+            apiKey: dbText(row.api_key_ciphertext),
+            webhookSecret: dbText(row.webhook_secret_ciphertext),
+            apiFormat: row.api_format === "gemini" ? "gemini" : "openai",
+            models: dbJson(row.models, []),
+            enabled: dbBool(row.enabled, true),
+            advancedConfig: dbJson(row.advanced_config, undefined),
+        })),
         logicalModels: dbJson(settingsRow?.logical_models, fallback.logicalModels),
         defaultModels: dbJson(settingsRow?.default_models, fallback.defaultModels),
         agentSkills: dbJson(settingsRow?.agent_skills, fallback.agentSkills),
-    };
+    });
 }
 
 export function mapPostgresUser(row: Record<string, unknown>): StoredUser {
@@ -570,8 +565,8 @@ export async function upsertPostgresSystemChannels(db: QueryExecutor, channels: 
     for (const [index, channel] of channels.entries()) {
         await db.query(
             `
-            INSERT INTO system_model_channels (id, name, base_url, api_key_ciphertext, webhook_secret_ciphertext, api_format, models, enabled, advanced_config, health_results, sort_order)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            INSERT INTO system_model_channels (id, name, base_url, api_key_ciphertext, webhook_secret_ciphertext, api_format, models, enabled, advanced_config, sort_order)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             ON CONFLICT (id) DO UPDATE SET
                 name = EXCLUDED.name,
                 base_url = EXCLUDED.base_url,
@@ -581,11 +576,10 @@ export async function upsertPostgresSystemChannels(db: QueryExecutor, channels: 
                 models = EXCLUDED.models,
                 enabled = EXCLUDED.enabled,
                 advanced_config = EXCLUDED.advanced_config,
-                health_results = EXCLUDED.health_results,
                 sort_order = EXCLUDED.sort_order,
                 updated_at = now()
             `,
-            [channel.id, channel.name, channel.baseUrl, channel.apiKey, channel.webhookSecret || "", channel.apiFormat, dbJsonParam(channel.models), channel.enabled, dbJsonParam(channel.advancedConfig), dbJsonParam(channel.healthResults || {}), index],
+            [channel.id, channel.name, channel.baseUrl, channel.apiKey, channel.webhookSecret || "", channel.apiFormat, dbJsonParam(channel.models), channel.enabled, dbJsonParam(channel.advancedConfig), index],
         );
     }
 }

@@ -27,7 +27,6 @@ export function GenerationOperationsClient() {
     const [reviewAction, setReviewAction] = useState<"resume_upstream" | "provide_result" | "confirm_failed">("resume_upstream");
     const [reviewValue, setReviewValue] = useState("");
     const [reviewing, setReviewing] = useState(false);
-    const [health, setHealth] = useState<Record<string, { loading?: boolean; ok?: boolean; error?: string; status?: number }>>({});
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -72,23 +71,6 @@ export function GenerationOperationsClient() {
             message.error(error instanceof Error ? error.message : "任务操作失败");
         } finally {
             setActingId("");
-        }
-    };
-
-    const testChannel = async (channel: AdminGenerationChannel) => {
-        const key = channelKey(channel);
-        setHealth((current) => ({ ...current, [key]: { loading: true } }));
-        try {
-            const response = await fetch("/api/admin/channel-health", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ channelId: channel.id, model: channel.upstreamModel, kind: channel.capability }),
-            });
-            const payload = (await response.json().catch(() => ({}))) as { result?: { ok?: boolean; status?: number; error?: string }; error?: string };
-            if (!response.ok || !payload.result) throw new Error(payload.error || "渠道探测失败");
-            setHealth((current) => ({ ...current, [key]: { ok: Boolean(payload.result?.ok), status: payload.result?.status, error: payload.result?.error } }));
-        } catch (error) {
-            setHealth((current) => ({ ...current, [key]: { ok: false, error: error instanceof Error ? error.message : "渠道探测失败" } }));
         }
     };
 
@@ -329,10 +311,9 @@ export function GenerationOperationsClient() {
                 </Panel>
 
                 <Panel>
-                    <PanelHeader title="渠道健康" description="展示当前绑定、运行时冷却与规划协议；手动探测会发起真实最小请求并可能消耗积分。" />
+                    <PanelHeader title="渠道运行状态" description="只读展示真实业务请求产生的运行时冷却、规划协议和调用样本。" />
                     <section className="grid gap-3 p-3 sm:p-4 lg:grid-cols-2">
                         {(data?.channels || []).map((channel) => {
-                            const state = health[channelKey(channel)];
                             return (
                                 <article key={channelKey(channel)} className="min-w-0 rounded-lg border border-zinc-200 p-3.5 dark:border-zinc-800">
                                     <div className="flex items-start justify-between gap-3">
@@ -347,9 +328,6 @@ export function GenerationOperationsClient() {
                                                 {channel.logicalModelName} → {channel.upstreamModel}
                                             </div>
                                         </div>
-                                        <Button className={generationOperationThemeClasses.secondaryButton} size="small" disabled={!channel.enabled} loading={state?.loading} onClick={() => void testChannel(channel)}>
-                                            探测
-                                        </Button>
                                     </div>
                                     {channel.runtimeHealth.status === "cooling" ? <div className="mt-3 line-clamp-2 text-xs leading-5 text-amber-700 dark:text-amber-300">{channel.runtimeHealth.lastError || "连续失败，等待自动恢复"}</div> : null}
                                     <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-zinc-100 pt-3 text-xs text-zinc-500 dark:border-zinc-900 dark:text-zinc-400">
@@ -361,7 +339,6 @@ export function GenerationOperationsClient() {
                                         ) : (
                                             <span>暂无规划调用样本</span>
                                         )}
-                                        {state && !state.loading ? <Tag className={generationOperationStatusTagClass(state.ok ? "success" : "error")}>{state.ok ? `探测正常 ${state.status || ""}` : state.error || "探测异常"}</Tag> : null}
                                     </div>
                                 </article>
                             );

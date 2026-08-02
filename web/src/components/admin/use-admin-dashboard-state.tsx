@@ -31,8 +31,7 @@ import { adminSectionHref, type AdminSectionKey } from "@/components/admin/admin
 import { UpdateCenterPanel } from "@/components/admin/admin-update-center";
 import { LabeledControl, SectionTitle, SettingInlineToggle, SettingToggle } from "@/components/admin/admin-settings-controls";
 import { SiteLogoPreview, SiteSettingStatus, SiteShowcasePreview, siteSocialItems } from "@/components/admin/admin-site-preview";
-import { createDefaultChannelAdvancedConfig, healthKindLabel, SystemChannelEditor } from "@/components/admin/admin-system-channel-editor";
-import type { ChannelHealthKind, ChannelHealthResult } from "@/components/admin/admin-system-channel-editor";
+import { createDefaultChannelAdvancedConfig, SystemChannelEditor } from "@/components/admin/admin-system-channel-editor";
 import { formatAdminMoney, toNumberOrOne, toNumberOrZero, uniqueList } from "@/components/admin/admin-values";
 import {
     ArrowRight,
@@ -134,11 +133,7 @@ import {
     FinanceFlowItem,
     FinanceMiniRow,
     createSystemChannel,
-    suggestedChannelModels,
-    buildAdvancedConfigFromHealth,
-    firstOkResult,
     requestAdminModels,
-    selectChannelHealthModel,
     modelNameFromOption,
     isCdkExpired,
     cdkStatusLabel,
@@ -178,8 +173,6 @@ export function useAdminDashboardState({ initialUsers, initialUserSummary, initi
     const [mailTestLoading, setMailTestLoading] = useState(false);
     const [mailTestTo, setMailTestTo] = useState("");
     const [fetchingModelId, setFetchingModelId] = useState("");
-    const [testingChannelKey, setTestingChannelKey] = useState("");
-    const [channelHealthResults, setChannelHealthResults] = useState<Record<string, ChannelHealthResult>>({});
     const [promptSaving, setPromptSaving] = useState(false);
     const [promptsLoading, setPromptsLoading] = useState(false);
     const [deletingPromptId, setDeletingPromptId] = useState("");
@@ -322,10 +315,6 @@ export function useAdminDashboardState({ initialUsers, initialUserSummary, initi
         setMailTestTo,
         fetchingModelId,
         setFetchingModelId,
-        testingChannelKey,
-        setTestingChannelKey,
-        channelHealthResults,
-        setChannelHealthResults,
         promptSaving,
         setPromptSaving,
         promptsLoading,

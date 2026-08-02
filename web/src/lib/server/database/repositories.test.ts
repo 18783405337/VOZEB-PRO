@@ -85,9 +85,8 @@ describe("split Postgres repositories", () => {
         expect(String(queryArgs(query, 0)[0])).not.toContain("system_model_channels");
     });
 
-    it("persists channel health snapshots with the channel record", async () => {
+    it("persists channel configuration without validation records", async () => {
         const timestamp = "2026-08-01T00:00:00.000Z";
-        const healthResults = { text: { ok: true, kind: "text", model: "gpt-test", status: 200, checkedAt: timestamp } };
         const { executor, query } = mockExecutor([
             [
                 {
@@ -99,7 +98,6 @@ describe("split Postgres repositories", () => {
                     api_format: "openai",
                     models: ["gpt-test"],
                     enabled: true,
-                    health_results: healthResults,
                     sort_order: 0,
                     created_at: timestamp,
                     updated_at: timestamp,
@@ -116,14 +114,12 @@ describe("split Postgres repositories", () => {
             apiFormat: "openai",
             models: ["gpt-test"],
             enabled: true,
-            healthResults,
             sortOrder: 0,
         });
 
-        expect(String(queryArgs(query, 0)[0])).toContain("health_results");
+        expect(String(queryArgs(query, 0)[0])).not.toContain("health_results");
         expect((queryArgs(query, 0)[1] as unknown[])[4]).toBe("webhook-ciphertext");
-        expect(JSON.parse(String((queryArgs(query, 0)[1] as unknown[])[9]))).toEqual(healthResults);
-        expect(channel.healthResults).toEqual(healthResults);
+        expect((queryArgs(query, 0)[1] as unknown[])[9]).toBe(0);
         expect(channel.webhookSecretCiphertext).toBe("webhook-ciphertext");
     });
 

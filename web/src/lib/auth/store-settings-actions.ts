@@ -1,8 +1,8 @@
 import { isPostgresDatabaseEnabled } from "@/lib/server/database";
-import { updatePostgresAuthSettings, updatePostgresSystemChannelHealth } from "./postgres-auth-settings-service";
+import { updatePostgresAuthSettings } from "./postgres-auth-settings-service";
 import { normalizeSettings } from "./store-normalizers";
 import { mutateAuthDb, readAuthDb, readPostgresAuthSettings } from "./store-repository";
-import type { AuthSettings, SystemChannelHealthSnapshot } from "./store-types";
+import type { AuthSettings } from "./store-types";
 
 const AUTH_SETTINGS_CACHE_TTL_MS = 1000;
 let postgresAuthSettingsCache: { value: AuthSettings; expiresAt: number } | null = null;
@@ -38,27 +38,6 @@ export async function setAuthSettings(patch: Partial<AuthSettings>) {
         ? await updatePostgresAuthSettings(patch)
         : await mutateAuthDb((db) => {
               db.settings = normalizeSettings({ ...db.settings, ...patch });
-              return db.settings;
-          });
-    updatePostgresCache(settings);
-    return settings;
-}
-
-export async function setSystemChannelHealthResult(channelId: string, result: SystemChannelHealthSnapshot) {
-    const settings = isPostgresDatabaseEnabled()
-        ? await updatePostgresSystemChannelHealth(channelId, result)
-        : await mutateAuthDb((db) => {
-              db.settings = normalizeSettings({
-                  ...db.settings,
-                  systemChannels: db.settings.systemChannels.map((channel) =>
-                      channel.id === channelId
-                          ? {
-                                ...channel,
-                                healthResults: { ...(channel.healthResults || {}), [result.kind]: result },
-                            }
-                          : channel,
-                  ),
-              });
               return db.settings;
           });
     updatePostgresCache(settings);

@@ -16,7 +16,7 @@ const content = `${[
     "本清单由 `pnpm licenses list --json --prod` 根据锁文件生成，仅列运行时依赖；依赖自身的许可证正文和版权声明以对应软件包为准。",
     "",
     ...(await Promise.all(sections.map(([title, directory]) => renderSection(title, directory)))).flat(),
-].join("\n")}\n`;
+].join("\n").trimEnd()}\n`;
 
 if (process.argv.includes("--check")) {
     const current = await readFile(outputPath, "utf8").catch(() => "");

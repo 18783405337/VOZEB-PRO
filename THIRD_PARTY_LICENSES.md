@@ -4,7 +4,7 @@
 
 ## Web 应用
 
-共 405 个运行时依赖记录。
+共 413 个运行时依赖记录。
 
 | 包 | 版本 | 许可证 | 项目主页 |
 | --- | --- | --- | --- |
@@ -52,6 +52,7 @@
 | @babel/template | 7.29.7 | MIT | [链接](https://babel.dev/docs/en/next/babel-template) |
 | @babel/traverse | 7.29.7 | MIT | [链接](https://babel.dev/docs/en/next/babel-traverse) |
 | @babel/types | 7.29.7 | MIT | [链接](https://babel.dev/docs/en/next/babel-types) |
+| @borewit/text-codec | 0.2.2 | MIT | [链接](https://github.com/Borewit/text-codec#readme) |
 | @emotion/hash | 0.8.0 | MIT | [链接](https://github.com/emotion-js/emotion/tree/master#readme) |
 | @emotion/unitless | 0.7.5 | MIT | [链接](https://github.com/emotion-js/emotion/tree/master#readme) |
 | @floating-ui/core | 1.7.5 | MIT | [链接](https://floating-ui.com) |
@@ -180,6 +181,8 @@
 | @swc/helpers | 0.5.15 | Apache-2.0 | [链接](https://swc.rs) |
 | @tanstack/query-core | 5.101.2 | MIT | [链接](https://tanstack.com/query) |
 | @tanstack/react-query | 5.101.2 | MIT | [链接](https://tanstack.com/query) |
+| @tokenizer/inflate | 0.4.1 | MIT | [链接](https://github.com/Borewit/tokenizer-inflate#readme) |
+| @tokenizer/token | 0.3.0 | MIT | [链接](https://github.com/Borewit/tokenizer-token#readme) |
 | @types/debug | 4.1.13 | MIT | [链接](https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/debug) |
 | @types/estree | 1.0.9 | MIT | [链接](https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/estree) |
 | @types/estree-jsx | 1.0.5 | MIT | [链接](https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/estree-jsx) |
@@ -241,6 +244,7 @@
 | extend | 3.0.2 | MIT | [链接](https://github.com/justmoon/node-extend#readme) |
 | fflate | 0.8.3 | MIT | [链接](https://101arrowz.github.io/fflate) |
 | file-saver | 2.0.5 | MIT | [链接](https://github.com/eligrey/FileSaver.js#readme) |
+| file-type | 21.3.4 | MIT | [链接](https://github.com/sindresorhus/file-type#readme) |
 | follow-redirects | 1.16.0 | MIT | [链接](https://github.com/follow-redirects/follow-redirects) |
 | form-data | 4.0.6 | MIT | [链接](https://github.com/form-data/form-data#readme) |
 | framer-motion | 12.42.2 | MIT | [链接](https://github.com/motiondivision/motion#readme) |
@@ -257,6 +261,7 @@
 | hast-util-whitespace | 3.0.0 | MIT | [链接](https://github.com/syntax-tree/hast-util-whitespace#readme) |
 | html-url-attributes | 3.0.1 | MIT | [链接](https://github.com/rehypejs/rehype-minify/tree/main#readme) |
 | https-proxy-agent | 5.0.1 | MIT | [链接](https://github.com/TooTallNate/node-https-proxy-agent#readme) |
+| ieee754 | 1.2.1 | BSD-3-Clause | [链接](https://github.com/feross/ieee754#readme) |
 | import-fresh | 3.3.1 | MIT | [链接](https://github.com/sindresorhus/import-fresh#readme) |
 | inline-style-parser | 0.2.7 | MIT | [链接](https://github.com/remarkablemark/inline-style-parser#readme) |
 | is-alphabetical | 2.0.1 | MIT | [链接](https://github.com/wooorm/is-alphabetical#readme) |
@@ -381,6 +386,7 @@
 | split2 | 4.2.0 | ISC | [链接](https://github.com/mcollina/split2#readme) |
 | string-convert | 0.2.1 | MIT | [链接](https://github.com/akiran/string-convert#readme) |
 | stringify-entities | 4.0.4 | MIT | [链接](https://github.com/wooorm/stringify-entities#readme) |
+| strtok3 | 10.3.5 | MIT | [链接](https://github.com/Borewit/strtok3#readme) |
 | style-to-js | 1.1.21 | MIT | [链接](https://github.com/remarkablemark/style-to-js#readme) |
 | style-to-object | 1.0.14 | MIT | [链接](https://github.com/remarkablemark/style-to-object#readme) |
 | styled-jsx | 5.1.6 | MIT | [链接](https://github.com/vercel/styled-jsx#readme) |
@@ -390,10 +396,12 @@
 | tailwindcss | 4.3.2 | MIT | [链接](https://tailwindcss.com) |
 | three | 0.179.1 | MIT | [链接](https://threejs.org/) |
 | throttle-debounce | 5.0.2 | MIT | [链接](https://github.com/niksy/throttle-debounce#readme) |
+| token-types | 6.1.2 | MIT | [链接](https://github.com/Borewit/token-types#readme) |
 | trim-lines | 3.0.1 | MIT | [链接](https://github.com/wooorm/trim-lines#readme) |
 | trough | 2.2.0 | MIT | [链接](https://github.com/wooorm/trough#readme) |
 | tslib | 2.8.1 | 0BSD | [链接](https://www.typescriptlang.org/) |
 | tw-animate-css | 1.4.0 | MIT | [链接](https://github.com/Wombosvideo/tw-animate-css#readme) |
+| uint8array-extras | 1.5.0 | MIT | [链接](https://github.com/sindresorhus/uint8array-extras#readme) |
 | undici | 8.6.0 | MIT | [链接](https://undici.nodejs.org) |
 | undici-types | 6.21.0 | MIT | [链接](https://undici.nodejs.org) |
 | unified | 11.0.5 | MIT | [链接](https://unifiedjs.com) |

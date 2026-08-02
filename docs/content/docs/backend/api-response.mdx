@@ -7,7 +7,9 @@ description: 当前接口响应事实与管理员敏感配置契约
 
 ## 当前响应规则
 
-现有 Next.js Route Handler 按业务返回 JSON，错误通常使用 `{ error: string }` 并配合对应 HTTP 状态码。项目尚未统一为 `{ code, data, msg }`，新增或修改接口时应保持调用方已有契约，并在边界校验身份、权限和外部输入。
+现有 Next.js Route Handler 按业务返回 JSON，错误通常使用 `{ error: string }` 并配合对应 HTTP 状态码。项目正在渐进统一为 `{ code, data, msg }`，不能一次性改写现有消费者。公共 helper `apiSuccess()`、`apiError()` 和 `apiCompatError()` 分别提供标准成功、标准失败和同时保留旧 `error` 字段的兼容失败响应；新增或修改接口应在契约测试保护下选择对应 helper，并在边界校验身份、权限和外部输入。
+
+`GET /api/auth/session` 使用显式公开 DTO：只返回当前用户公开会话字段、站点展示、注册开关、公开计价与生成默认值、启用逻辑模型，以及指向站内 `/api/ai/system/{channelId}` 的可用渠道摘要。响应禁止包含渠道高级协议、真实上游地址、SMTP、支付密钥、完整 `advancedConfig`、Skill 指令或内部运营策略。
 
 促销与优惠券新增接口使用 `{ code, data, msg }`，其中成功时 `code = 0`，业务数据位于 `data`，失败时 `data = null` 且 HTTP 状态与 `code` 一致：
 
@@ -139,7 +141,7 @@ Canvas 使用 `GET/POST/DELETE /api/canvas/projects` 与 `PATCH /api/canvas/proj
 - `GET/PATCH/DELETE /api/drama/projects/{id}`：读取、更新或删除当前用户拥有的短剧项目。
 - `GET /api/admin/generation-operations`：管理员按任务类型、状态、Surface、用户和关键词分页查询统一生成运营数据，并返回任务摘要与可探测渠道。
 
-短剧接口使用 `{ code, data, msg }`，服务端校验项目归属并保存完整项目聚合快照。生成运营接口只允许管理员访问；取消、重试和渠道探测继续调用现有任务控制与健康检查接口，不建立独立任务状态机。
+短剧接口使用 `{ code, data, msg }`，服务端校验项目归属并保存完整项目聚合快照。生成运营接口只允许管理员访问；取消和重试继续调用现有任务控制接口，渠道运行状态只读取真实业务请求形成的运行时数据，不建立独立任务状态机。
 
 ## 生成任务恢复、Worker 与回调
 

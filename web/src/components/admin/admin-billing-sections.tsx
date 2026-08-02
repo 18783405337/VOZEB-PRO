@@ -31,8 +31,7 @@ import type { AdminSectionKey } from "@/components/admin/admin-sections";
 import { UpdateCenterPanel } from "@/components/admin/admin-update-center";
 import { LabeledControl, SectionTitle, SettingInlineToggle, SettingToggle } from "@/components/admin/admin-settings-controls";
 import { SiteLogoPreview, SiteSettingStatus, SiteShowcasePreview, siteSocialItems } from "@/components/admin/admin-site-preview";
-import { createDefaultChannelAdvancedConfig, healthKindLabel, SystemChannelEditor } from "@/components/admin/admin-system-channel-editor";
-import type { ChannelHealthKind, ChannelHealthResult } from "@/components/admin/admin-system-channel-editor";
+import { createDefaultChannelAdvancedConfig, SystemChannelEditor } from "@/components/admin/admin-system-channel-editor";
 import { formatAdminMoney, toNumberOrOne, toNumberOrZero, uniqueList } from "@/components/admin/admin-values";
 import {
     ArrowRight,
@@ -86,10 +85,7 @@ import {
     FinanceMiniRow,
     createSystemChannel,
     suggestedChannelModels,
-    buildAdvancedConfigFromHealth,
-    firstOkResult,
     requestAdminModels,
-    selectChannelHealthModel,
     modelNameFromOption,
     isCdkExpired,
     cdkStatusLabel,

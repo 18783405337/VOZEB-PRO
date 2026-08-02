@@ -31,11 +31,8 @@ import type { AdminSectionKey } from "@/components/admin/admin-sections";
 import { UpdateCenterPanel } from "@/components/admin/admin-update-center";
 import { LabeledControl, SectionTitle, SettingInlineToggle, SettingToggle } from "@/components/admin/admin-settings-controls";
 import { SiteLogoPreview, SiteSettingStatus, SiteShowcasePreview, siteSocialItems } from "@/components/admin/admin-site-preview";
-import { channelHealthKinds, createDefaultChannelAdvancedConfig, healthKindLabel, SystemChannelEditor } from "@/components/admin/admin-system-channel-editor";
-import type { ChannelHealthKind, ChannelHealthResult } from "@/components/admin/admin-system-channel-editor";
-import { normalizeModelId } from "@/lib/model-capability";
-import { channelHealthSnapshot } from "@/lib/channel-health-result";
-import { channelConnectionReady, channelProtocolDefinition, normalizeStrictProtocolModelConfig } from "@/lib/channel-protocol-registry";
+import { createDefaultChannelAdvancedConfig, SystemChannelEditor } from "@/components/admin/admin-system-channel-editor";
+import { channelProtocolDefinition, normalizeStrictProtocolModelConfig } from "@/lib/channel-protocol-registry";
 import { formatAdminMoney, toNumberOrOne, toNumberOrZero, uniqueList } from "@/components/admin/admin-values";
 import {
     ArrowRight,
@@ -73,7 +70,7 @@ import { nanoid } from "nanoid";
 
 import { formatCreditAmount } from "@/constant/credits";
 import { normalizeDefaultModelsConfig, synchronizeLogicalModelsWithChannels } from "@/lib/model-routing-config";
-import { buildGlobalAiOpcSelection, isGlobalAiOpcBaseUrl } from "@/lib/globalaiopc-catalog";
+import { buildGlobalAiOpcSelection } from "@/lib/globalaiopc-catalog";
 import type {
     AgentSkill,
     AuthSettings,
@@ -136,12 +133,8 @@ import {
     FinanceFlowItem,
     FinanceMiniRow,
     createSystemChannel,
-    suggestedChannelModels,
-    buildAdvancedConfigFromHealth,
-    firstOkResult,
     requestAdminModels,
     type AdminModelsResult,
-    selectChannelHealthModel,
     modelNameFromOption,
     isCdkExpired,
     cdkStatusLabel,
@@ -157,18 +150,16 @@ import type { AdminDashboardState } from "./use-admin-dashboard-state";
 import type { AdminDashboardDataActions } from "./use-admin-dashboard-data-actions";
 
 export function useAdminDashboardSettingsActions({ state, data }: { state: AdminDashboardState; data: AdminDashboardDataActions }) {
-    const { message, settings, setSettings, setMailTestLoading, mailTestTo, setFetchingModelId, setTestingChannelKey, setChannelHealthResults, customPointModel, setCustomPointModel } = state;
+    const { message, settings, setSettings, setMailTestLoading, mailTestTo, setFetchingModelId, customPointModel, setCustomPointModel } = state;
     const { saveSettings } = data;
 
     const updateChannel = (id: string, patch: Partial<SystemModelChannel>) => {
         setSettings((current) => {
             const systemChannels = current.systemChannels.map((channel) => {
                 if (channel.id !== id) return channel;
-                const invalidatesHealth = patch.healthResults === undefined && ["baseUrl", "apiKey", "apiFormat", "models", "advancedConfig"].some((key) => key in patch);
                 return {
                     ...channel,
                     ...patch,
-                    ...(invalidatesHealth ? { healthResults: undefined } : {}),
                     apiFormat: patch.apiFormat || channel.apiFormat,
                     models: patch.models ? uniqueList(patch.models) : channel.models,
                 };
@@ -177,13 +168,6 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
             const logicalModels = synchronizeLogicalModelsWithChannels(current.logicalModels, systemChannels);
             return { ...current, systemChannels, logicalModels, defaultModels: normalizeDefaultModelsConfig(current.defaultModels, logicalModels, systemChannels) };
         });
-    };
-
-    const updateChannelHealth = (id: string, result: ChannelHealthResult) => {
-        setSettings((current) => ({
-            ...current,
-            systemChannels: current.systemChannels.map((channel) => (channel.id === id ? { ...channel, healthResults: { ...(channel.healthResults || {}), [result.kind]: channelHealthSnapshot(result) } } : channel)),
-        }));
     };
 
     const addChannel = () => {
@@ -453,127 +437,6 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
         }
     };
 
-    const testChannelHealth = async (channel: SystemModelChannel, kind: ChannelHealthKind, options?: { quiet?: boolean; loadingKey?: string; keepLoading?: boolean }) => {
-        if (!channelConnectionReady(channel)) {
-            message.error("请先填写该渠道需要的连接信息");
-            return null;
-        }
-        const model = selectChannelHealthModel(channel, settings.defaultModels, kind);
-        if (!model) {
-            const result = { ok: false, kind, model: "", status: 0, error: "没有找到可检测的模型名" } satisfies ChannelHealthResult;
-            if (!options?.quiet) message.error("请先为该渠道填写至少一个模型名");
-            return result;
-        }
-        const resultKey = `${channel.id}:${kind}`;
-        setTestingChannelKey(options?.loadingKey || resultKey);
-        try {
-            const response = await fetch("/api/admin/channel-health", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    channelId: channel.id,
-                    baseUrl: channel.baseUrl,
-                    apiKey: channel.apiKey,
-                    apiFormat: channel.apiFormat,
-                    model,
-                    kind,
-                    protocol: channel.advancedConfig?.protocol,
-                    authMode: channel.advancedConfig?.authMode,
-                    authHeader: channel.advancedConfig?.authHeader,
-                    authPrefix: channel.advancedConfig?.authPrefix,
-                    globalAiOpcPreset: channel.advancedConfig?.globalAiOpcPreset,
-                    globalAiOpcPresets: channel.advancedConfig?.globalAiOpcPresets,
-                    createPath: channel.advancedConfig?.createPath,
-                    editPath: channel.advancedConfig?.editPath,
-                    imageToVideoPath: channel.advancedConfig?.imageToVideoPath,
-                    queryPath: channel.advancedConfig?.queryPath,
-                    requestTemplate: channel.advancedConfig?.requestTemplate,
-                    resultField: channel.advancedConfig?.resultField,
-                    statusField: channel.advancedConfig?.statusField,
-                    durationRange: channel.advancedConfig?.durationRange,
-                    referenceRule: channel.advancedConfig?.referenceRule,
-                    supportsReferenceImage: channel.advancedConfig?.supportsReferenceImage,
-                    supportsReferenceVideo: channel.advancedConfig?.supportsReferenceVideo,
-                    supportsReferenceAudio: channel.advancedConfig?.supportsReferenceAudio,
-                    modelConfig: channel.advancedConfig?.modelConfigs?.[normalizeModelId(model)] || channel.advancedConfig?.operationConfigs?.[kind],
-                }),
-            });
-            const payload = (await response.json()) as { result?: ChannelHealthResult; error?: string };
-            if (!response.ok || !payload.result) throw new Error(payload.error || "接口测试失败");
-            setChannelHealthResults((current) => ({ ...current, [resultKey]: payload.result! }));
-            updateChannelHealth(channel.id, payload.result);
-            if (!options?.quiet) {
-                if (payload.result.ok) message.success(`${channel.name || "渠道"} ${healthKindLabel(kind)}测试成功`);
-                else message.warning(payload.result.error || `${healthKindLabel(kind)}测试失败`);
-            }
-            return payload.result;
-        } catch (error) {
-            const messageText = error instanceof Error ? error.message : "接口测试失败";
-            setChannelHealthResults((current) => ({
-                ...current,
-                [resultKey]: { ok: false, kind, model, status: 0, error: messageText },
-            }));
-            updateChannelHealth(channel.id, { ok: false, kind, model, status: 0, error: messageText });
-            if (!options?.quiet) message.error(messageText);
-            return { ok: false, kind, model, status: 0, error: messageText } satisfies ChannelHealthResult;
-        } finally {
-            if (!options?.keepLoading) setTestingChannelKey("");
-        }
-    };
-
-    const testAllChannelHealth = async (channel: SystemModelChannel) => {
-        if (!channelConnectionReady(channel)) {
-            message.error("请先填写该渠道需要的连接信息");
-            return;
-        }
-        const loadingKey = `${channel.id}:all`;
-        setTestingChannelKey(loadingKey);
-        const results: ChannelHealthResult[] = [];
-        try {
-            let channelForTest = channel;
-            let detectedModels = channel.models;
-            const protocolDefinition = channelProtocolDefinition(channel.advancedConfig?.protocol || "auto");
-            const hasModelCatalog = Boolean(protocolDefinition.builtInModels?.length || protocolDefinition.modelCatalogPaths.length || channel.advancedConfig?.modelCatalogPaths?.length);
-            if (hasModelCatalog || isGlobalAiOpcBaseUrl(channel.baseUrl)) {
-                try {
-                    const catalog = await requestAdminModels(channel);
-                    const patch = adminModelsChannelPatch(channel, catalog);
-                    channelForTest = { ...channel, ...patch };
-                    detectedModels = catalog.models;
-                } catch {
-                    channelForTest = channel;
-                }
-            }
-            detectedModels = uniqueList([...detectedModels, ...suggestedChannelModels(channel)]);
-            channelForTest = { ...channelForTest, models: detectedModels };
-            if (detectedModels.length) updateChannel(channel.id, adminModelsChannelPatch(channelForTest, { models: detectedModels, globalAiOpcPresets: channelForTest.advancedConfig?.globalAiOpcPresets }));
-            const kinds = channelHealthKinds(channelForTest);
-            if (!kinds.length) {
-                message.warning("没有识别到该协议可检测的真实模型");
-                return;
-            }
-            for (const kind of kinds) {
-                const result = await testChannelHealth(channelForTest, kind, { quiet: true, loadingKey, keepLoading: true });
-                if (result) results.push(result);
-            }
-            const advancedConfig = buildAdvancedConfigFromHealth(channelForTest, results);
-            updateChannel(channel.id, {
-                models: uniqueList([...detectedModels, ...results.map((result) => result.model).filter(Boolean)]),
-                advancedConfig,
-                healthResults: Object.fromEntries(results.map((result) => [result.kind, channelHealthSnapshot(result)])),
-            });
-            const okKinds: string[] = results.filter((result) => result.ok).map((result) => healthKindLabel(result.kind));
-            const failedKinds: string[] = results.filter((result) => !result.ok).map((result) => healthKindLabel(result.kind));
-            const imageReferenceTest = results.find((result) => result.kind === "image")?.referenceImageTest;
-            if (imageReferenceTest?.ok) okKinds.push("参考图编辑");
-            else if (imageReferenceTest && !imageReferenceTest.ok) failedKinds.push("参考图编辑");
-            const summary = `可用：${okKinds.join("、") || "无"}${failedKinds.length ? `；需检查：${failedKinds.join("、")}` : ""}`;
-            if (failedKinds.length) message.warning(`${channel.name || "渠道"} 智能检测完成，${summary}`);
-            else message.success(`${channel.name || "渠道"} 智能检测完成，${summary}`);
-        } finally {
-            setTestingChannelKey("");
-        }
-    };
     return {
         updateChannel,
         addChannel,
@@ -600,8 +463,6 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
         deleteHomeShowcaseItem,
         fetchModelsForChannel,
         fetchAllModels,
-        testChannelHealth,
-        testAllChannelHealth,
     };
 }
 

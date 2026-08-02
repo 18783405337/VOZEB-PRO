@@ -40,7 +40,7 @@ VOZEB PRO 的 PostgreSQL 真实表名统一使用项目名前缀 `vozeb_pro_`。
 - `vozeb_pro_schema_migrations`：已应用的数据库结构版本。
 - `vozeb_pro_app_settings`：站点、注册、邮箱、积分、生成、支付配置、逻辑模型目录、渠道绑定和默认模型等全局设置；`logical_models` JSONB 保存用户可见模型及其能力、上游模型、渠道、启用状态和优先级。
 - `vozeb_pro_object_storage_settings`：S3 兼容外部存储单例配置，保存启用状态、Endpoint、Region、Bucket、对象前缀、path-style 模式及加密后的 Access Key/Secret Key；管理接口只返回密钥是否已配置，不回传明文。
-- `vozeb_pro_system_model_channels`：系统模型渠道、分别加密保存的 API Key 与渠道生成回调密钥、模型列表、高级配置和不含密钥及上游任务信息的检测结果快照。
+- `vozeb_pro_system_model_channels`：系统模型渠道、分别加密保存的 API Key 与渠道生成回调密钥、模型列表和高级配置；后台不保存渠道验证记录。
 - `vozeb_pro_entitlement_plans`：商业套餐权益、每日额度、调用限制和功能标记；新用户不再通过套餐获得注册初始积分。
 - `vozeb_pro_users`：用户账号、角色、状态、头像存储键、最多 160 字的个人简介、当前套餐、积分余额和密码哈希；公开创作者接口只按用户名返回允许公开的资料字段，不暴露邮箱和内部用户 ID。
 - `vozeb_pro_sessions`：登录会话 token 哈希和过期时间。
@@ -122,11 +122,11 @@ Agent Run 的状态与任务数组继续保存在 `generation_tasks.payload`，�
 
 业务层后续应通过 Repository 读写数据库，不再直接依赖 `.data/*.json` 路径。图片、视频和音频二进制不混入业务主库表：外部存储关闭时写入服务器数据目录，开启时新媒体只写 S3 兼容对象存储。
 
-积分消费、失败退款和余额读取属于在线高频路径：PostgreSQL 使用定向的用户、套餐、每日钱包、额度和流水查询，并在同一事务中完成锁定、扣减/恢复和流水写入；不会为一次生成请求读取完整认证快照。完整快照读取仍保留给整库备份或兼容性路径，不能重新用于高频生成扣费。
+用户、Session、邮箱验证码、积分、CDK、公告和设置属于在线实体：PostgreSQL 使用定向 Repository、参数化 SQL 和必要的事务行锁更新，积分消费、失败退款与管理员调整在同一事务内完成用户锁定、每日钱包结算和幂等流水写入。完整认证快照读取只保留给整库备份或显式恢复，禁止重新用于在线读改写或生成扣费。
 
 ## 当前接入状态
 
-`web/src/lib/auth/store.ts` 已接入 PostgreSQL 快照读写：用户、会话、全局设置、套餐权益、系统渠道、积分流水、每日额度、CDK、邮箱验证码和公告会读写上面的关系表。系统渠道 API Key 在数据库中只保存密文，所有 PostgreSQL 设置读取路径必须在服务端解密后才能参与模型拉取、能力检测或按需显示。
+`web/src/lib/auth/` 通过用户、Session、设置、积分、CDK、邮箱验证码和公告 Repository 读写对应关系表；文件 Provider 保留相同业务接口和进程内串行 mutation。PostgreSQL 在线路径不再把完整 `AuthDatabase` 删除重写。系统渠道 API Key 在数据库中只保存密文，所有设置读取路径必须在服务端解密后才能参与模型拉取、真实业务调用或管理员按需查看。
 
 `web/src/lib/prompts/store.ts` 以及 `web/src/lib/server/` 下的生成日志、统一创作运行时、Canvas 项目、素材库、短剧项目和审计日志 Store 已接入 PostgreSQL。对应 JSON Provider 保留为单机文件部署方式。媒体业务记录始终保存稳定站内路径；读取时按每条媒体登记的 `storage_provider` 选择本地文件或短期对象签名地址，不受当前外部存储开关影响。
 
@@ -142,7 +142,7 @@ Agent Run 的状态与任务数组继续保存在 `generation_tasks.payload`，�
 
 ## 支付配置
 
-用户创建商业订单后，可调用 `POST /api/billing/orders/{id}/checkout` 生成真实支付下单参数。接口会校验订单归属和状态，然后按订单支付渠道返回 Stripe Checkout 跳转链接、支付宝官方支付 `alipay.trade.page.pay` 表单/链接、支付宝当面付 `alipay.trade.precreate` 二维码、微信支付 v3 Native `code_url` 二维码内容，或 PayPly 自定义接口返回的支付链接、二维码内容、表单 HTML。支付宝两种模式在用户端都显示为“支付宝”。
+用户创建商业订单后，可调用 `POST /api/billing/orders/{id}/checkout` 生成真实支付下单参数。接口会校验订单归属和状态，然后按订单支付渠道返回 Stripe Checkout 跳转链接、支付宝官方支付 `alipay.trade.page.pay` 结构化表单/链接、支付宝当面付 `alipay.trade.precreate` 二维码、微信支付 v3 Native `code_url` 二维码内容，或 PayPly 自定义接口返回的支付链接、二维码内容、结构化表单。支付宝两种模式在用户端都显示为“支付宝”。
 
 管理员也可以在后台支付配置页直接填写渠道开关、下单密钥、回调验签密钥、PayPly 返回字段映射和返回地址。页面只返回配置状态与非密钥字段；已保存的密钥不会回显到浏览器，留空保存会保留原密钥。
 
@@ -205,7 +205,7 @@ VOZEB_PRO_PAYPLY_WEBHOOK_CURRENCY_FIELD=data.currency
 VOZEB_PRO_PAYPLY_WEBHOOK_PAID_AT_FIELD=data.paidAt
 ```
 
-PayPly 下单由服务端向 `VOZEB_PRO_PAYPLY_CHECKOUT_URL` 发起请求，密钥只读取服务器环境变量或后台加密配置，不会返回给浏览器。默认使用 `POST + application/json`，也可通过 `VOZEB_PRO_PAYPLY_REQUEST_METHOD`、`VOZEB_PRO_PAYPLY_CONTENT_TYPE`、`VOZEB_PRO_PAYPLY_EXTRA_HEADERS` 和 `VOZEB_PRO_PAYPLY_REQUEST_TEMPLATE` 适配 GET、表单提交、额外请求头和自定义请求体模板。返回字段可通过 `VOZEB_PRO_PAYPLY_URL_FIELD`、`VOZEB_PRO_PAYPLY_QR_FIELD`、`VOZEB_PRO_PAYPLY_FORM_FIELD` 等点路径配置；例如网关返回 `{ "data": { "payUrl": "..." } }` 时可填写 `data.payUrl`。
+PayPly 下单由服务端向 `VOZEB_PRO_PAYPLY_CHECKOUT_URL` 发起请求，密钥只读取服务器环境变量或后台加密配置，不会返回给浏览器。默认使用 `POST + application/json`，也可通过 `VOZEB_PRO_PAYPLY_REQUEST_METHOD`、`VOZEB_PRO_PAYPLY_CONTENT_TYPE`、`VOZEB_PRO_PAYPLY_EXTRA_HEADERS` 和 `VOZEB_PRO_PAYPLY_REQUEST_TEMPLATE` 适配 GET、表单提交、额外请求头和自定义请求体模板。返回字段可通过 `VOZEB_PRO_PAYPLY_URL_FIELD`、`VOZEB_PRO_PAYPLY_QR_FIELD`、`VOZEB_PRO_PAYPLY_FORM_FIELD` 等点路径配置；表单 HTML 只在服务端解析为有限的 `action/method/fields`，脚本、事件处理器和其它节点不会进入浏览器。浏览器仅向校验后的 HTTP(S) 目标提交结构化隐藏字段，不执行上游 HTML。
 
 支付回调入口为 `/api/billing/webhooks/{provider}`。`stripe` 校验 `Stripe-Signature`，支付宝校验异步通知 RSA2 签名，微信支付校验 `Wechatpay-*` 回调头后使用 API v3 key 解密资源；PayPly 使用 `VOZEB_PRO_PAYPLY_WEBHOOK_SECRET` 或通用 `VOZEB_PRO_PAYMENT_WEBHOOK_SECRET` 做 HMAC-SHA256 验签，并可通过 `VOZEB_PRO_PAYPLY_WEBHOOK_*_FIELD` 配置回调字段路径。通过校验且状态为支付成功的回调会进入订单开通服务。
 

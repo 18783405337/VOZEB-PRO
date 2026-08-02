@@ -83,10 +83,7 @@ import {
     FinanceFlowItem,
     FinanceMiniRow,
     suggestedChannelModels,
-    buildAdvancedConfigFromHealth,
-    firstOkResult,
     requestAdminModels,
-    selectChannelHealthModel,
     modelNameFromOption,
     isCdkExpired,
     cdkStatusLabel,
@@ -100,7 +97,7 @@ import {
 import { PROMPT_PAGE_SIZE, PROMPT_SEARCH_DEBOUNCE_MS, CDK_PAGE_SIZE, GENERATION_LOG_PAGE_SIZE } from "./use-admin-dashboard-controller";
 
 export function AdminChannelsSection({ controller }: { controller: AdminDashboardController }) {
-    const { settings, setSettings, settingsLoading, fetchingModelId, testingChannelKey, channelHealthResults, activeSection, saveSettings, deleteChannel, fetchModelsForChannel, fetchAllModels, testChannelHealth, testAllChannelHealth } = controller;
+    const { settings, setSettings, settingsLoading, fetchingModelId, activeSection, saveSettings, deleteChannel, fetchModelsForChannel, fetchAllModels } = controller;
     if (activeSection !== "channels") return null;
     return (
         <Panel>
@@ -124,15 +121,11 @@ export function AdminChannelsSection({ controller }: { controller: AdminDashboar
                 <AdminChannelWorkspace
                     settings={{ systemChannels: settings.systemChannels, logicalModels: settings.logicalModels, defaultModels: settings.defaultModels }}
                     fetchingModelId={fetchingModelId}
-                    testingChannelKey={testingChannelKey}
-                    healthResults={channelHealthResults}
                     saving={settingsLoading}
                     onChange={(next) => setSettings((current) => ({ ...current, ...next }))}
                     onDeleteChannel={deleteChannel}
                     onFetchModels={fetchModelsForChannel}
                     onFetchAll={fetchAllModels}
-                    onTestHealth={testChannelHealth}
-                    onTestAll={testAllChannelHealth}
                     onPersist={(next, successText) => saveSettings(next, successText)}
                 />
             </div>
@@ -183,9 +176,9 @@ export function AdminSkillsSection({ controller }: { controller: AdminDashboardC
                     </div>
                 </div>
             ) : null}
-            <div className="grid gap-3 p-3 sm:gap-4 sm:p-5 lg:grid-cols-2">
+            <div className="columns-1 gap-4 p-3 sm:p-5 lg:columns-2">
                 {settings.agentSkills.map((skill) => (
-                    <section key={skill.id} className="rounded-lg border border-stone-200 bg-stone-50/70 p-3 sm:p-4 dark:border-stone-800 dark:bg-stone-900/40">
+                    <section key={skill.id} className="mb-3 break-inside-avoid rounded-lg border border-stone-200 bg-stone-50/70 p-3 sm:mb-4 sm:p-4 dark:border-stone-800 dark:bg-stone-900/40">
                         <div className="flex items-center justify-between gap-3 sm:mb-3">
                             <div>
                                 <div className="font-semibold">{skill.name}</div>

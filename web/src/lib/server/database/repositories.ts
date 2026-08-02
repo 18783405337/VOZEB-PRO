@@ -265,8 +265,8 @@ class SettingsRepository {
     async upsertSystemModelChannel(channel: Omit<SystemModelChannelRecord, "createdAt" | "updatedAt">) {
         const result = await this.db.query(
             `
-            INSERT INTO system_model_channels (id, name, base_url, api_key_ciphertext, webhook_secret_ciphertext, api_format, models, enabled, advanced_config, health_results, sort_order)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            INSERT INTO system_model_channels (id, name, base_url, api_key_ciphertext, webhook_secret_ciphertext, api_format, models, enabled, advanced_config, sort_order)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             ON CONFLICT (id) DO UPDATE SET
                 name = EXCLUDED.name,
                 base_url = EXCLUDED.base_url,
@@ -276,23 +276,10 @@ class SettingsRepository {
                 models = EXCLUDED.models,
                 enabled = EXCLUDED.enabled,
                 advanced_config = EXCLUDED.advanced_config,
-                health_results = EXCLUDED.health_results,
                 sort_order = EXCLUDED.sort_order
             RETURNING *
             `,
-            [
-                channel.id,
-                channel.name,
-                channel.baseUrl,
-                channel.apiKeyCiphertext,
-                channel.webhookSecretCiphertext,
-                channel.apiFormat,
-                jsonParam(channel.models),
-                channel.enabled,
-                jsonParam(channel.advancedConfig),
-                jsonParam(channel.healthResults || {}),
-                channel.sortOrder,
-            ],
+            [channel.id, channel.name, channel.baseUrl, channel.apiKeyCiphertext, channel.webhookSecretCiphertext, channel.apiFormat, jsonParam(channel.models), channel.enabled, jsonParam(channel.advancedConfig), channel.sortOrder],
         );
         return mapSystemModelChannel(result.rows[0]);
     }
@@ -300,11 +287,6 @@ class SettingsRepository {
     async deleteSystemModelChannelsNotIn(ids: string[]) {
         const result = await this.db.query("DELETE FROM system_model_channels WHERE id <> ALL($1::text[])", [ids]);
         return result.rowCount || 0;
-    }
-
-    async updateSystemModelChannelHealth(id: string, healthResults: JsonValue) {
-        const result = await this.db.query("UPDATE system_model_channels SET health_results = $2 WHERE id = $1 RETURNING *", [id, jsonParam(healthResults)]);
-        return result.rows[0] ? mapSystemModelChannel(result.rows[0]) : null;
     }
 }
 
@@ -358,7 +340,6 @@ function mapSystemModelChannel(row: Record<string, unknown>): SystemModelChannel
         models: jsonValue(row.models),
         enabled: row.enabled !== false,
         advancedConfig: optionalJson(row.advanced_config),
-        healthResults: optionalJson(row.health_results),
         sortOrder: numberValue(row.sort_order),
         createdAt: isoValue(row.created_at),
         updatedAt: isoValue(row.updated_at),

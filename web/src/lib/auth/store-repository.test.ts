@@ -36,6 +36,21 @@ describe("PostgreSQL auth read paths", () => {
         });
     });
 
+    it("fills missing fields in partial PostgreSQL settings JSON", () => {
+        const settings = mapPostgresSettings({ mail: {}, generation_concurrency: {} }, [], []);
+
+        expect(settings.mail).toMatchObject({
+            host: "smtp.qq.com",
+            username: "",
+            password: "",
+        });
+        expect(settings.generationConcurrency).toMatchObject({
+            agent: 2,
+            image: 4,
+            video: 1,
+        });
+    });
+
     it("decrypts system channel API keys and webhook secrets on the settings fast path", async () => {
         process.env.VOZEB_PRO_ENCRYPTION_KEY = "31".repeat(32);
         const encryptedApiKey = encryptSecretValue("provider-secret");
@@ -54,20 +69,14 @@ describe("PostgreSQL auth read paths", () => {
         expect(settings.systemChannels[0].webhookSecret).not.toContain("vozeb-pro-secret:v1:");
     });
 
-    it("round-trips channel health snapshots through PostgreSQL", async () => {
-        const healthResults = { text: { ok: true, kind: "text" as const, model: "gpt-test", status: 200, checkedAt: "2026-08-01T00:00:00.000Z" } };
-        const settings = mapPostgresSettings({ id: "default" }, [], [{ id: "channel-one", name: "主渠道", base_url: "https://api.example.com/v1", api_format: "openai", models: ["gpt-test"], enabled: true, health_results: healthResults }]);
-        expect(settings.systemChannels[0].healthResults).toEqual(healthResults);
-
+    it("persists channel configuration without validation records", async () => {
         const { executor, query } = mockExecutor([[]]);
-        await upsertPostgresSystemChannels(executor, [
-            { id: "channel-one", name: "主渠道", baseUrl: "https://api.example.com/v1", apiKey: "encrypted", webhookSecret: "encrypted-webhook", apiFormat: "openai", models: ["gpt-test"], enabled: true, healthResults },
-        ]);
+        await upsertPostgresSystemChannels(executor, [{ id: "channel-one", name: "主渠道", baseUrl: "https://api.example.com/v1", apiKey: "encrypted", webhookSecret: "encrypted-webhook", apiFormat: "openai", models: ["gpt-test"], enabled: true }]);
         const [statement, values] = query.mock.calls[0];
-        expect(statement).toContain("health_results");
+        expect(statement).not.toContain("health_results");
         expect(values?.[4]).toBe("encrypted-webhook");
-        expect(JSON.parse(String(values?.[9]))).toEqual(healthResults);
-        expect(POSTGRESQL_SCHEMA_SQL).toContain("health_results jsonb NOT NULL DEFAULT '{}'::jsonb");
+        expect(values?.[9]).toBe(0);
+        expect(POSTGRESQL_SCHEMA_SQL).not.toContain("health_results");
     });
 
     it("loads public users with only plans, users and today's wallets", async () => {

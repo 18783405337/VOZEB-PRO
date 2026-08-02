@@ -3,7 +3,7 @@ import { createPostgresRepositories, ensurePostgresSchema, withPostgresTransacti
 import { AuthInputError } from "./store-foundation";
 import { encryptAuthSettingsSecrets, normalizeSettings } from "./store-normalizers";
 import { readPostgresAuthSettings } from "./store-repository";
-import type { AuthSettings, SystemChannelHealthSnapshot } from "./store-types";
+import type { AuthSettings } from "./store-types";
 
 export async function updatePostgresAuthSettings(patch: Partial<AuthSettings>) {
     await ensurePostgresSchema();
@@ -55,7 +55,6 @@ export async function updatePostgresAuthSettings(patch: Partial<AuthSettings>) {
                 models: asJson(channel.models),
                 enabled: channel.enabled,
                 advancedConfig: channel.advancedConfig ? asJson(channel.advancedConfig) : undefined,
-                healthResults: asJson(channel.healthResults || {}),
                 sortOrder,
             });
         }
@@ -67,24 +66,6 @@ export async function updatePostgresAuthSettings(patch: Partial<AuthSettings>) {
     });
 }
 
-export async function updatePostgresSystemChannelHealth(channelId: string, result: SystemChannelHealthSnapshot) {
-    await ensurePostgresSchema();
-    return withPostgresTransaction(async (client) => {
-        const settingsRepository = createPostgresRepositories(client).settings;
-        await settingsRepository.lock();
-        const channel = await settingsRepository.getSystemModelChannelById(channelId, true);
-        if (channel) {
-            const healthResults = isRecord(channel.healthResults) ? channel.healthResults : {};
-            await settingsRepository.updateSystemModelChannelHealth(channelId, asJson({ ...healthResults, [result.kind]: result }));
-        }
-        return readPostgresAuthSettings(client);
-    });
-}
-
 function asJson(value: unknown) {
     return value as JsonValue;
-}
-
-function isRecord(value: unknown): value is Record<string, JsonValue> {
-    return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }

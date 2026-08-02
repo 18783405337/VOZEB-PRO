@@ -1,5 +1,4 @@
 import type { LogicalModelCapability, SystemDefaultModels, SystemModelChannel } from "@/lib/auth/store";
-import type { ChannelHealthResult } from "@/components/admin/admin-system-channel-editor";
 import { channelDetectedCapabilities, normalizeDefaultModelsConfig } from "@/lib/model-routing-config";
 import { channelProtocolDefinition } from "@/lib/channel-protocol-registry";
 
@@ -9,23 +8,21 @@ export type ChannelWorkspaceSettings = {
     defaultModels: SystemDefaultModels;
 };
 
-export type ChannelWorkspaceStatus = "healthy" | "warning" | "untested" | "draft" | "disabled";
+export type ChannelWorkspaceStatus = "enabled" | "draft" | "disabled";
 
 const capabilityLabels: Record<LogicalModelCapability, string> = { text: "文本", image: "图片", video: "视频", audio: "音频" };
 
-export function channelWorkspaceStatus(channel: SystemModelChannel, healthResults: Record<string, ChannelHealthResult>): ChannelWorkspaceStatus {
-    if (!channel.enabled) return channel.baseUrl.trim() ? "disabled" : "draft";
-    const results = channelHealthEntries(channel.id, healthResults, channel.healthResults).map((entry) => entry.result);
-    if (!results.length) return "untested";
-    return results.every((result) => result.ok) ? "healthy" : "warning";
+export function channelWorkspaceStatus(channel: SystemModelChannel): ChannelWorkspaceStatus {
+    if (channel.enabled) return "enabled";
+    return channel.baseUrl.trim() ? "disabled" : "draft";
 }
 
 export function channelWorkspaceStatusLabel(status: ChannelWorkspaceStatus) {
-    return { healthy: "正常", warning: "需检查", untested: "待检测", draft: "草稿", disabled: "已停用" }[status];
+    return { enabled: "已启用", draft: "草稿", disabled: "已停用" }[status];
 }
 
 export function channelWorkspaceStatusColor(status: ChannelWorkspaceStatus) {
-    return { healthy: "success", warning: "warning", untested: "processing", draft: "default", disabled: "default" }[status];
+    return { enabled: "success", draft: "default", disabled: "default" }[status];
 }
 
 export function channelCapabilityLabels(channel: SystemModelChannel) {
@@ -34,14 +31,6 @@ export function channelCapabilityLabels(channel: SystemModelChannel) {
 
 export function channelProtocolLabel(channel: SystemModelChannel) {
     return channelProtocolDefinition(channel.advancedConfig?.protocol || "auto").label;
-}
-
-export function channelHealthEntries(channelId: string, healthResults: Record<string, ChannelHealthResult>, persistedResults?: SystemModelChannel["healthResults"]) {
-    const entries = new Map(Object.entries(persistedResults || {}).map(([kind, result]) => [`${channelId}:${kind}`, result]));
-    Object.entries(healthResults).forEach(([key, result]) => {
-        if (key.startsWith(`${channelId}:`)) entries.set(key, result);
-    });
-    return Array.from(entries, ([key, result]) => ({ key, result }));
 }
 
 export function removeChannelFromWorkspace(settings: ChannelWorkspaceSettings, channelId: string): ChannelWorkspaceSettings {
