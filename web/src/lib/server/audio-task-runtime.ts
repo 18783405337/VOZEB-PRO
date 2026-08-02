@@ -1,8 +1,9 @@
 import { getAuthSettings, refundUserPoints } from "@/lib/auth/store";
 import { mediaTaskSource } from "@/lib/media-management-contract";
-import { audioTaskRefundIdempotencyKey } from "@/lib/server/audio-task-refund";
+import { audioTaskRefundIdempotencyKey, refundAudioTask } from "@/lib/server/audio-task-refund";
 import { getAudioTask, transitionAudioTask, updateAudioTask, type AudioTask } from "@/lib/server/audio-task-store";
-import { generationModelId } from "@/lib/server/generation-channel";
+import { generationModelId, systemGenerationChannelId } from "@/lib/server/generation-channel";
+import { generationMediaProxyHeaders } from "@/lib/server/generation-media-authorization";
 import { finishGenerationAttempt, startGenerationAttempt } from "@/lib/server/generation-attempt";
 import { fetchInternalApi, isInternalApiBaseUrl } from "@/lib/server/internal-origin";
 import { maintenanceWorkerHeaders } from "@/lib/server/maintenance-auth";
@@ -13,6 +14,7 @@ import { registerGenerationTaskAssetsForUser } from "@/lib/server/creative-runti
 import { scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
 import { GenerationSubmissionSafeFailure, GenerationSubmissionUncertainError, generationSubmissionResponseError, generationSubmissionUncertainError } from "@/lib/server/generation-submission-error";
 import { systemAiBillingHeaders } from "@/lib/server/system-ai-billing";
+import { fetchSafeOutbound } from "@/lib/server/safe-outbound-fetch";
 
 export type AudioUpstreamStep =
     | { state: "pending"; status: string; upstreamTaskId: string; createPath: string; pointsCost?: number; pointsRecordId?: string }
@@ -60,9 +62,12 @@ export async function createAudioTaskUpstreamStep(task: AudioTask, origin: strin
             if (billing.pointsRecordId) await updateAudioTask(task.id, { billing: { pointsCost: billing.pointsCost ?? 0, pointsRecordId: billing.pointsRecordId, refunded: false } });
             const contentType = response.headers.get("content-type")?.split(";")[0].toLowerCase() || "";
             if (!contentType.includes("json")) {
-                await persistAudioBytes(candidate, origin, Buffer.from(await response.arrayBuffer()), contentType);
-                await markAudioAttemptSucceeded(candidate, billing);
-                return { state: "completed" };
+                const completed = await persistAudioBytes(candidate, origin, Buffer.from(await response.arrayBuffer()), contentType);
+                if (completed?.status === "success") {
+                    await markAudioAttemptSucceeded(candidate, billing);
+                    return { state: "completed" };
+                }
+                return { state: "failed", status: completed?.status || "cancelled", error: completed?.error || "任务已取消" };
             }
 
             let data: unknown;
@@ -183,9 +188,16 @@ async function persistAudioBytes(task: AudioTask, origin: string, bytes: Buffer,
 
 async function completeAudioTask(task: AudioTask, url: string, mimeType: string) {
     const current = await getAudioTask(task.id);
-    if (!current || current.status === "cancelled") return current;
+    if (!current || current.status === "cancelled") {
+        if (current?.status === "cancelled") await refundAudioTask(current);
+        return current;
+    }
     const completed = await transitionAudioTask(current, ["pending", "running"], { status: "success", result: { url, mimeType }, config: { ...current.config, apiKey: "" }, billing: current.billing });
-    if (!completed) return getAudioTask(task.id);
+    if (!completed) {
+        const latest = await getAudioTask(task.id);
+        if (latest?.status === "cancelled") await refundAudioTask(latest);
+        return latest;
+    }
     await registerGenerationTaskAssetsForUser(completed.userId, {
         ...completed,
         taskId: completed.id,
@@ -207,8 +219,21 @@ function providerFetch(task: AudioTask, origin: string, cookie: string, workerUs
     const headers = new Headers(init.headers);
     if (task.config.baseUrl.startsWith("/") && workerUserId) Object.entries(maintenanceWorkerHeaders(workerUserId)).forEach(([key, value]) => headers.set(key, value));
     else if (cookie) headers.set("cookie", cookie);
+    if (task.config.baseUrl.startsWith("/")) Object.entries(systemAiBillingHeaders(generationModelId(task.config), undefined, task.config.model)).forEach(([key, value]) => headers.set(key, value));
+    const mediaUrl = task.config.baseUrl.startsWith("/") ? mediaUrlFromProxyPath(path) : "";
+    const channelId = task.config.channelId || systemGenerationChannelId(task.config.baseUrl);
+    if (mediaUrl && channelId) Object.entries(generationMediaProxyHeaders({ userId: task.userId, taskType: "audio", taskId: task.id, channelId, upstreamModel: task.config.model, url: mediaUrl })).forEach(([key, value]) => headers.set(key, value));
     if (!task.config.baseUrl.startsWith("/")) headers.set(task.config.apiFormat === "gemini" ? "x-goog-api-key" : "authorization", task.config.apiFormat === "gemini" ? task.config.apiKey : `Bearer ${task.config.apiKey}`);
-    return (isInternalApiBaseUrl(task.config.baseUrl) ? fetchInternalApi : fetch)(url, { ...init, headers });
+    return isInternalApiBaseUrl(task.config.baseUrl) ? fetchInternalApi(url, { ...init, headers }) : fetchSafeOutbound(url, { ...init, headers });
+}
+
+function mediaUrlFromProxyPath(path: string) {
+    try {
+        const parsed = new URL(path, "http://internal");
+        return parsed.pathname === "/_media" ? parsed.searchParams.get("url")?.trim() || "" : "";
+    } catch {
+        return "";
+    }
 }
 
 function readBilling(headers: Headers) {

@@ -28,6 +28,7 @@ vi.mock("@/lib/server/video-task-store", () => ({
     touchVideoTask: mocks.touch,
     updateVideoTask: mocks.update,
 }));
+vi.mock("@/lib/server/generation-media-authorization", () => ({ generationMediaProxyHeaders: vi.fn(() => ({ "x-media-auth": "signed" })) }));
 
 import { queryVideoTaskUpstream, refreshVideoTaskFromUpstream } from "./video-task-runtime";
 import type { VideoTask } from "./video-task-store";
@@ -64,6 +65,7 @@ describe("video task upstream reconciliation", () => {
         const task = videoTask({ status: "error", error: "视频任务长时间未更新，请重新查询或生成。" });
         const completed = { ...task, status: "success", result: { url: "/api/reference-assets/result.mp4", mimeType: "video/mp4", durationMs: 5_000 } };
         mocks.claim.mockResolvedValue(task);
+        mocks.get.mockResolvedValue(task);
         mocks.fetchInternalApi.mockResolvedValue(json({ id: task.upstream.id, status: "completed", video_url: "https://cdn.example.com/result.mp4" }));
         mocks.complete.mockResolvedValue(completed);
 
@@ -99,6 +101,7 @@ describe("video task upstream reconciliation", () => {
             });
             const completed = { ...task, status: "success" as const, result: { url: "/api/reference-assets/result.mp4", mimeType: "video/mp4", durationMs: 5_000 } };
             mocks.claim.mockResolvedValue(task);
+            mocks.get.mockResolvedValue(task);
             mocks.fetchInternalApi.mockImplementation((url: string | URL | Request, init?: RequestInit) => fetch(url, init));
             mocks.complete.mockResolvedValue(completed);
 

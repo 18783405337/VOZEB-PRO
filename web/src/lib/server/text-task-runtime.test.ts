@@ -1,14 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("@/lib/server/safe-outbound-fetch", () => ({ fetchSafeOutbound: (url: string | URL, init?: RequestInit) => fetch(url, init) }));
+
 const mocks = vi.hoisted(() => ({
     getTask: vi.fn(),
     updateTask: vi.fn(),
     transitionTask: vi.fn(),
+    schedule: vi.fn(),
     refund: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/store", () => ({ refundUserPoints: mocks.refund }));
 vi.mock("@/lib/server/proxy-dispatcher", () => ({ configureServerProxyDispatcher: vi.fn() }));
+vi.mock("@/lib/server/generation-task-scheduler", () => ({ scheduleGenerationTask: mocks.schedule }));
 vi.mock("@/lib/server/text-task-store", () => ({
     getTextTask: mocks.getTask,
     updateTextTask: mocks.updateTask,
@@ -137,6 +141,20 @@ describe("text task runtime recovery", () => {
         expect(state.config.channelId).toBe("channel-two");
         expect(state.attempts?.map(({ status }) => status)).toEqual(["failed", "succeeded"]);
         expect(state.result?.content).toBe("备用渠道结果");
+    });
+
+    it("switches channels after an explicit synchronous 5xx response", async () => {
+        state = textTask(openAiConfig("channel-one", "https://one.example"), [openAiConfig("channel-two", "https://two.example")]);
+        const fetchMock = vi
+            .fn()
+            .mockResolvedValueOnce(Response.json({ error: { message: "渠道暂不可用" } }, { status: 503 }))
+            .mockResolvedValueOnce(Response.json({ choices: [{ message: { content: "备用渠道成功" } }] }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        await expect(runTextTaskStep(state, "http://internal", "")).resolves.toEqual({ state: "completed" });
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(state.config.channelId).toBe("channel-two");
+        expect(state.attempts?.map(({ status }) => status)).toEqual(["failed", "succeeded"]);
     });
 
     it("switches models instead of trying another protocol on the same model", async () => {

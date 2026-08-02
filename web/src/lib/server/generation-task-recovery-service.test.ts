@@ -9,8 +9,22 @@ const mocks = vi.hoisted(() => ({
     processAgentRunReview: vi.fn(),
     getAgentRun: vi.fn(),
     getImageTask: vi.fn(),
+    updateImageTask: vi.fn(),
     getVideoTask: vi.fn(),
     queryVideoTaskUpstream: vi.fn(),
+    getAudioTask: vi.fn(),
+    updateAudioTask: vi.fn(),
+    queryAudioTaskUpstreamStep: vi.fn(),
+    queryCancelledImageTaskUpstreamStep: vi.fn(),
+    queryCancelledTextTaskUpstreamStep: vi.fn(),
+    getTextTask: vi.fn(),
+    updateTextTask: vi.fn(),
+    runTextTaskStep: vi.fn(),
+    requestCancellation: vi.fn(),
+    refundImageTask: vi.fn(),
+    refundVideoTask: vi.fn(),
+    refundAudioTask: vi.fn(),
+    refundTextTask: vi.fn(),
 }));
 
 vi.mock("@/lib/server/generation-task-scheduler", () => ({
@@ -26,11 +40,28 @@ vi.mock("@/lib/server/agent-run-store", () => ({ getAgentRun: mocks.getAgentRun 
 vi.mock("@/lib/server/maintenance-auth", () => ({ maintenanceWorkerContext: vi.fn((userId: string) => `worker-context:${userId}`) }));
 vi.mock("@/lib/server/video-task-runtime", () => ({ failVideoTaskFromWorker: vi.fn(), persistVideoTaskResult: vi.fn(), queryVideoTaskUpstream: mocks.queryVideoTaskUpstream }));
 vi.mock("@/lib/server/video-task-store", () => ({ getVideoTask: mocks.getVideoTask }));
-vi.mock("@/lib/server/audio-task-runtime", () => ({ createAudioTaskUpstreamStep: vi.fn(), markAudioTaskFailed: vi.fn(), persistAudioTaskResult: vi.fn(), queryAudioTaskUpstreamStep: vi.fn() }));
-vi.mock("@/lib/server/audio-task-store", () => ({ getAudioTask: vi.fn() }));
-vi.mock("@/lib/server/image-task-runtime", () => ({ createImageTaskUpstreamStep: vi.fn(), markImageTaskFailed: vi.fn(), persistImageTaskResult: vi.fn(), queryImageTaskUpstreamStep: vi.fn() }));
-vi.mock("@/lib/server/image-task-store", () => ({ getImageTask: mocks.getImageTask }));
-vi.mock("@/lib/server/text-task-store", () => ({ getTextTask: vi.fn() }));
+vi.mock("@/lib/server/audio-task-runtime", () => ({ createAudioTaskUpstreamStep: vi.fn(), markAudioTaskFailed: vi.fn(), persistAudioTaskResult: vi.fn(), queryAudioTaskUpstreamStep: mocks.queryAudioTaskUpstreamStep }));
+vi.mock("@/lib/server/audio-task-store", () => ({ getAudioTask: mocks.getAudioTask, updateAudioTask: mocks.updateAudioTask }));
+vi.mock("@/lib/server/image-task-runtime", () => ({
+    createImageTaskUpstreamStep: vi.fn(),
+    markImageTaskFailed: vi.fn(),
+    persistImageTaskResult: vi.fn(),
+    queryCancelledImageTaskUpstreamStep: mocks.queryCancelledImageTaskUpstreamStep,
+    queryImageTaskUpstreamStep: vi.fn(),
+}));
+vi.mock("@/lib/server/image-task-store", () => ({ getImageTask: mocks.getImageTask, updateImageTask: mocks.updateImageTask }));
+vi.mock("@/lib/server/text-task-runtime", () => ({ queryCancelledTextTaskUpstreamStep: mocks.queryCancelledTextTaskUpstreamStep, runTextTaskStep: mocks.runTextTaskStep }));
+vi.mock("@/lib/server/text-task-store", () => ({ getTextTask: mocks.getTextTask, updateTextTask: mocks.updateTextTask }));
+vi.mock("@/lib/server/model-request-policy", () => ({ resolveModelRequestTimeoutMs: vi.fn(() => 180_000) }));
+vi.mock("@/lib/server/image-task-refund", () => ({ refundImageTask: mocks.refundImageTask }));
+vi.mock("@/lib/server/video-task-refund", () => ({ refundVideoTask: mocks.refundVideoTask }));
+vi.mock("@/lib/server/audio-task-refund", () => ({ refundAudioTask: mocks.refundAudioTask }));
+vi.mock("@/lib/server/text-task-refund", () => ({ refundTextTask: mocks.refundTextTask }));
+vi.mock("@/lib/server/generation-task-cancellation-service", () => ({
+    hasCancellableUpstreamTaskId: vi.fn((value: string) => Boolean(value)),
+    isCancellationExecutionPhase: vi.fn((value: string) => value === "cancel_requested" || value === "cancel_polling"),
+    requestUpstreamGenerationCancellation: mocks.requestCancellation,
+}));
 
 import { runGenerationTaskRecoveryBatch } from "./generation-task-recovery-service";
 
@@ -117,6 +148,42 @@ describe("generation task recovery service", () => {
         expect(mocks.queryVideoTaskUpstream).toHaveBeenCalledWith(task, "http://internal", "", task.userId);
         expect(mocks.release).toHaveBeenCalledWith("video", task.id, "worker-one", expect.objectContaining({ executionPhase: "polling", lastUpstreamStatus: "processing" }));
         expect(result).toMatchObject({ claimed: 1, pending: 1 });
+    });
+
+    it("persists the selected text channel before the next upstream query", async () => {
+        const task = {
+            id: "text-one",
+            userId: "user-one",
+            status: "running",
+            upstream: { id: "upstream-one", createPath: "/jobs" },
+            config: { channelId: "channel-two", apiFormat: "openai", advancedConfig: { protocol: "custom", queryPath: "/jobs/:task_id" } },
+        };
+        mocks.claim.mockResolvedValue([{ ...lease(), id: task.id, type: "text", status: "running", executionPhase: "submitting" }]);
+        mocks.getTextTask.mockResolvedValue(task);
+        mocks.runTextTaskStep.mockResolvedValue({ state: "pending", status: "submitted", upstreamTaskId: "upstream-one", createPath: "/jobs" });
+
+        const result = await runGenerationTaskRecoveryBatch({ origin: "http://internal", workerId: "worker-one" });
+
+        expect(mocks.release).toHaveBeenCalledWith("text", task.id, "worker-one", expect.objectContaining({ upstreamTaskId: "upstream-one", channelId: "channel-two", provider: "custom", queryPath: "/jobs/:task_id" }));
+        expect(result).toMatchObject({ claimed: 1, pending: 1 });
+    });
+
+    it("keeps polling a cancelled task after the upstream only accepts the cancellation request", async () => {
+        const task = {
+            id: "image-one",
+            userId: "user-one",
+            status: "cancelled",
+            upstream: { id: "upstream-one" },
+            config: { baseUrl: "https://provider.example", apiKey: "key", apiFormat: "openai", model: "image-model" },
+        };
+        mocks.claim.mockResolvedValue([{ ...lease(), id: task.id, userId: task.userId, type: "image", status: "cancelled", executionPhase: "cancel_requested", upstreamTaskId: "upstream-one", resultPayload: { cancellationRequestedAt: 1_000 } }]);
+        mocks.getImageTask.mockResolvedValue(task);
+        mocks.requestCancellation.mockResolvedValue("accepted");
+
+        const result = await runGenerationTaskRecoveryBatch({ origin: "http://internal", workerId: "worker-one" });
+
+        expect(mocks.release).toHaveBeenCalledWith("image", task.id, "worker-one", expect.objectContaining({ executionPhase: "cancel_polling", lastUpstreamStatus: "cancel_accepted_polling" }), { cancellation: true });
+        expect(result).toMatchObject({ claimed: 1, pending: 1, completed: 0 });
     });
 });
 

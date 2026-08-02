@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
     currentUser: vi.fn(),
     getImageTask: vi.fn(),
+    getSchedule: vi.fn(),
     recover: vi.fn(),
 }));
 
@@ -14,6 +15,7 @@ vi.mock("@/lib/auth/session", () => ({ getCurrentUser: mocks.currentUser }));
 vi.mock("@/app/api/image-tasks/image-task-reference-urls", () => ({ requestPublicOrigin: vi.fn(() => "https://public.example.com") }));
 vi.mock("@/lib/server/image-task-store", () => ({ getImageTask: mocks.getImageTask, transitionImageTask: vi.fn() }));
 vi.mock("@/lib/server/generation-task-recovery-service", () => ({ runGenerationTaskRecoveryBatch: mocks.recover }));
+vi.mock("@/lib/server/generation-task-store", () => ({ getStoredGenerationTaskRecord: mocks.getSchedule }));
 vi.mock("@/lib/server/internal-origin", () => ({ resolveInternalOrigin: vi.fn(() => "http://localhost") }));
 vi.mock("@/lib/server/points-response", () => ({ pointsResponseHeaders: vi.fn(() => new Headers()) }));
 vi.mock("@/lib/server/generation-channel", () => ({ generationModelId: vi.fn(() => "image-model") }));
@@ -27,6 +29,7 @@ describe("GET /api/image-tasks/[id]", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.currentUser.mockResolvedValue({ id: "user", role: "user" });
+        mocks.getSchedule.mockResolvedValue({ executionPhase: "polling" });
     });
 
     it("returns the current image state and schedules the same task for recovery", async () => {
@@ -43,7 +46,8 @@ describe("GET /api/image-tasks/[id]", () => {
     });
 
     it.each(["success", "error", "cancelled"])("does not wake a %s task", async (status) => {
-        mocks.getImageTask.mockResolvedValue(imageTask({ status, executionPhase: "completed" }));
+        mocks.getImageTask.mockResolvedValue(imageTask({ status }));
+        mocks.getSchedule.mockResolvedValue({ executionPhase: "completed" });
 
         await GET(new Request("http://localhost/api/image-tasks/image-one"), context);
 
@@ -51,7 +55,8 @@ describe("GET /api/image-tasks/[id]", () => {
     });
 
     it("leaves an uncertain submission for manual review", async () => {
-        mocks.getImageTask.mockResolvedValue(imageTask({ executionPhase: "needs_review" }));
+        mocks.getImageTask.mockResolvedValue(imageTask());
+        mocks.getSchedule.mockResolvedValue({ executionPhase: "needs_review" });
 
         await GET(new Request("http://localhost/api/image-tasks/image-one"), context);
 
@@ -65,7 +70,6 @@ function imageTask(patch: Record<string, unknown> = {}) {
         userId: "user",
         kind: "generation",
         status: "running",
-        executionPhase: "polling",
         config: { channelId: "channel", baseUrl: "/api/ai/system/channel", apiKey: "system", apiFormat: "openai", model: "image-model" },
         ...patch,
     };

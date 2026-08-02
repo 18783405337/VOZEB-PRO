@@ -1,6 +1,6 @@
-import { refundUserPoints } from "@/lib/auth/store";
 import { resolveGlobalAiOpcPreset } from "@/lib/globalaiopc-catalog";
-import { generationModelId } from "@/lib/server/generation-channel";
+import { generationModelId, systemGenerationChannelId } from "@/lib/server/generation-channel";
+import { generationMediaProxyHeaders } from "@/lib/server/generation-media-authorization";
 import { finishGenerationAttempt } from "@/lib/server/generation-attempt";
 import { fetchInternalApi } from "@/lib/server/internal-origin";
 import { resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy";
@@ -12,6 +12,7 @@ import { claimVideoTaskPoll, completeReconciledVideoTask, failReconciledVideoTas
 import { writeVideoGenerationLog } from "@/lib/server/video-task-log";
 import { maintenanceWorkerHeaders } from "@/lib/server/maintenance-auth";
 import { systemAiBillingHeaders } from "@/lib/server/system-ai-billing";
+import { refundVideoTask } from "@/lib/server/video-task-refund";
 
 export type VideoUpstreamStep = { state: "pending"; status: string } | { state: "result_ready"; status: string; resultUrl: string } | { state: "failed"; status: string; error: string };
 
@@ -51,19 +52,30 @@ function taskPollingPolicy(task: VideoTask) {
 }
 
 async function completeVideoTask(task: VideoTask, resultUrl: string, origin: string, cookie: string, workerUserId = "") {
+    const beforePersistence = await getVideoTask(task.id);
+    if (!beforePersistence || beforePersistence.status === "cancelled") {
+        if (beforePersistence?.status === "cancelled") await refundVideoTask(beforePersistence);
+        return beforePersistence;
+    }
+    task = beforePersistence;
     const attempts = finishGenerationAttempt(task.attempts || [], task.attempts?.at(-1)?.attemptNo || 1, {
         status: "succeeded",
         pointsCost: task.upstream.pointsCost,
         pointsRecordId: task.upstream.pointsRecordId,
     });
     await updateVideoTask(task.id, { attempts });
+    const channelId = task.config.channelId || systemGenerationChannelId(task.config.baseUrl);
+    const workerHeaders = new Headers(workerUserId ? maintenanceWorkerHeaders(workerUserId) : undefined);
+    if (/^https?:\/\//i.test(resultUrl) && channelId) {
+        Object.entries(generationMediaProxyHeaders({ userId: task.userId, taskType: "video", taskId: task.id, channelId, upstreamModel: task.config.model, url: resultUrl })).forEach(([key, value]) => workerHeaders.set(key, value));
+    }
     const result = task.result?.url
         ? task.result
         : await normalizeVideoResult({
               url: videoProviderMediaUrl(task.config.baseUrl, resultUrl),
               origin,
               cookie,
-              internalHeaders: workerUserId ? maintenanceWorkerHeaders(workerUserId) : undefined,
+              internalHeaders: workerHeaders,
               requestedDurationSeconds: task.requestedDurationSeconds,
               mimeType: "video/mp4",
               ownerUserId: task.userId,
@@ -73,20 +85,25 @@ async function completeVideoTask(task: VideoTask, resultUrl: string, origin: str
               taskId: task.id,
               projectId: task.projectId,
           });
-    if (!task.result?.url) await updateVideoTask(task.id, { result });
-    const staged = { ...task, result };
-    await writeVideoGenerationLog(staged, "success");
     const completed = await completeReconciledVideoTask(task.id, result);
-    if (completed) await registerVideoAsset(completed);
-    return completed || getVideoTask(task.id);
+    if (!completed) {
+        const latest = await getVideoTask(task.id);
+        if (latest?.status === "cancelled") await refundVideoTask(latest);
+        return latest;
+    }
+    await writeVideoGenerationLog(completed, "success");
+    await registerVideoAsset(completed);
+    return completed;
 }
 
 async function failVideoTask(task: VideoTask, error: string, retryable = true) {
     const attempts = finishGenerationAttempt(task.attempts || [], task.attempts?.at(-1)?.attemptNo || 1, { status: "failed", error });
     await updateVideoTask(task.id, { attempts });
-    await writeVideoGenerationLog({ ...task, attempts }, "failed", error, retryable);
     const failed = await failReconciledVideoTask(task.id, error, retryable);
-    if (failed && task.status === "running") await refundVideoTask(failed);
+    if (failed) {
+        await writeVideoGenerationLog({ ...failed, attempts }, "failed", error, retryable);
+        if (task.status === "running") await refundVideoTask(failed);
+    }
     return failed || getVideoTask(task.id);
 }
 
@@ -99,11 +116,6 @@ async function registerVideoAsset(task: VideoTask) {
         title: task.prompt?.slice(0, 80) || "生成视频",
         assets: [{ type: "video", url, mimeType: task.result?.mimeType || "video/mp4", durationMs: task.result?.durationMs }],
     }).catch((error) => console.error("Creative video asset registration failed", error));
-}
-
-async function refundVideoTask(task: VideoTask) {
-    if (task.upstream.pointsCost === undefined || !task.upstream.pointsRecordId) return;
-    await refundUserPoints(task.userId, generationModelId(task.config), task.upstream.pointsCost, "video", task.upstream.pointsUnits || 1, `video-task:${task.id}:refund`, task.upstream.pointsRecordId);
 }
 
 async function queryVideoUpstream(task: VideoTask, origin: string, cookie: string, workerUserId = "") {

@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { lookup } from "node:dns/promises";
 import { mkdir, readdir, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
 
@@ -11,7 +10,8 @@ import { normalizeGeneratedImageBytes } from "@/lib/server/generated-image-norma
 import { createDatedMediaPath, GENERATION_MEDIA_ROOT } from "@/lib/server/local-media-storage";
 import { deleteLocalMediaRegistrations, getLocalMediaRegistration, registerLocalMediaAsset } from "@/lib/server/local-media-registry";
 import { deleteExternalMediaObject, persistExternalMediaIfEnabled } from "@/lib/server/object-storage-service";
-import { isPublicIpAddress } from "@/lib/server/security";
+import { fetchSafeOutbound } from "@/lib/server/safe-outbound-fetch";
+import { isSafeOutboundUrl } from "@/lib/server/security";
 import type { GenerationLogAsset, GenerationLogDatabase, GenerationLogKind, GenerationLogSource, GenerationLogStatus, StoredGenerationLog } from "./generation-log-types";
 
 const LOG_DATA_FILE = "generation-logs.json";
@@ -105,7 +105,7 @@ export async function writeRemoteAsset(url: string, type: GenerationLogKind, con
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), SERVER_ASSET_DOWNLOAD_TIMEOUT_MS);
     try {
-        const response = await fetch(url, { cache: "no-store", redirect: "manual", signal: controller.signal });
+        const response = await fetchSafeOutbound(url, { cache: "no-store", redirect: "manual", signal: controller.signal });
         if (!response.ok || !response.body) return null;
         const contentLength = Number(response.headers.get("content-length") || 0);
         const maxBytes = maxServerAssetBytes(type);
@@ -123,15 +123,7 @@ export async function writeRemoteAsset(url: string, type: GenerationLogKind, con
 }
 
 export async function isSafeRemoteAssetUrl(value: string) {
-    try {
-        const url = new URL(value);
-        if (url.protocol !== "http:" && url.protocol !== "https:") return false;
-        if (url.username || url.password) return false;
-        const addresses = await lookup(url.hostname, { all: true, verbatim: true });
-        return addresses.length > 0 && addresses.every((item) => isPublicIpAddress(item.address));
-    } catch {
-        return false;
-    }
+    return isSafeOutboundUrl(value, { allowCredentials: false });
 }
 
 export async function writeAssetBytes(bytes: Buffer, mimeType: string, type: GenerationLogKind, context: GenerationAssetContext): Promise<GenerationLogAsset> {

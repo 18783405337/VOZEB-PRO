@@ -1,13 +1,15 @@
 import { runCustomImageTask, pollCustomImageTask } from "@/app/api/image-tasks/image-task-custom";
 import { runGeminiImageTask } from "@/app/api/image-tasks/image-task-gemini";
 import { runOpenAiImageTask } from "@/app/api/image-tasks/image-task-openai";
-import { directRemoteImageResult, imageUnits, ImageUpstreamTerminalError, inlineRemoteImageResult, pollOpenAiImageTask } from "@/app/api/image-tasks/image-task-support";
+import { directRemoteImageResult, imageUnits, ImageUpstreamTerminalError, inlineRemoteImageResult, pollOpenAiImageTask, resolveProxiedMediaSource } from "@/app/api/image-tasks/image-task-support";
 import type { ImageTaskResult, ImageTaskRunResult } from "@/app/api/image-tasks/image-task-types";
 import { stableMediaUrl, writeImageGenerationLog } from "@/app/api/image-tasks/image-task-runner";
 import { getAuthSettings, refundUserPoints } from "@/lib/auth/store";
 import { registerGenerationTaskAssetsForUser } from "@/lib/server/creative-runtime-service";
 import { finishGenerationAttempt, startGenerationAttempt } from "@/lib/server/generation-attempt";
-import { generationModelId } from "@/lib/server/generation-channel";
+import { generationModelId, systemGenerationChannelId } from "@/lib/server/generation-channel";
+import { generationMediaProxyHeaders } from "@/lib/server/generation-media-authorization";
+import { refundImageTask } from "@/lib/server/image-task-refund";
 import { scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
 import { GenerationSubmissionSafeFailure, generationSubmissionUncertainError } from "@/lib/server/generation-submission-error";
 import { getImageTask, transitionImageTask, updateImageTask, type ImageTask } from "@/lib/server/image-task-store";
@@ -15,6 +17,8 @@ import { maintenanceWorkerContext } from "@/lib/server/maintenance-auth";
 
 export type ImageUpstreamStep =
     { state: "pending"; upstream: NonNullable<ImageTask["upstream"]>; status: string } | { state: "result_ready"; resultUrl: string; status: string } | { state: "completed" } | { state: "failed"; error: string; status: string };
+
+const INLINE_IMAGE_RESULT_REFERENCE = "inline://image-task-result";
 
 export async function createImageTaskUpstreamStep(task: ImageTask, origin: string, publicOrigin: string, cookie = "", workerUserId = ""): Promise<ImageUpstreamStep> {
     const current = await getImageTask(task.id);
@@ -75,9 +79,28 @@ export async function queryImageTaskUpstreamStep(task: ImageTask, origin: string
     }
 }
 
+export async function queryCancelledImageTaskUpstreamStep(task: ImageTask, origin: string, cookie = "", workerUserId = "") {
+    const upstream = task.upstream;
+    if (!upstream?.id) return { state: "terminal" as const, status: "missing_upstream_id" };
+    const authContext = cookie || maintenanceWorkerContext(workerUserId || task.userId);
+    try {
+        const result =
+            task.config.advancedConfig?.protocol === "custom" || task.config.advancedConfig?.protocol === "stable-diffusion"
+                ? await pollCustomImageTask(task, upstream.id, upstream.pollBaseUrl, authContext, true)
+                : await pollOpenAiImageTask(task.config, upstream.id, upstream.mediaBaseUrl, upstream.pollBaseUrl, authContext, upstream.explicitPollUrl || "", true);
+        return result.pending ? { state: "pending" as const, status: "processing" } : { state: "terminal" as const, status: "completed" };
+    } catch (error) {
+        if (error instanceof ImageUpstreamTerminalError || error instanceof GenerationSubmissionSafeFailure) return { state: "terminal" as const, status: "failed" };
+        throw error;
+    }
+}
+
 export async function persistImageTaskResult(task: ImageTask, origin: string, resultUrl: string, cookie = "", workerUserId = "") {
     const authContext = cookie || maintenanceWorkerContext(workerUserId || task.userId);
-    return completeImageResult(task, { dataUrl: resultUrl, remoteUrl: /^https?:\/\//i.test(resultUrl) ? resultUrl : undefined, pointsCost: task.billing?.pointsCost, pointsRecordId: task.billing?.pointsRecordId }, origin, authContext);
+    const inlineDataUrl = resultUrl === INLINE_IMAGE_RESULT_REFERENCE ? task.result?.dataUrl || "" : resultUrl;
+    const remoteUrl = resultUrl === INLINE_IMAGE_RESULT_REFERENCE ? task.result?.remoteUrl : /^https?:\/\//i.test(resultUrl) ? resultUrl : undefined;
+    if (!inlineDataUrl && !remoteUrl) throw new GenerationSubmissionSafeFailure("图片任务缺少可持久化结果");
+    return completeImageResult(task, { dataUrl: inlineDataUrl, remoteUrl, pointsCost: task.billing?.pointsCost, pointsRecordId: task.billing?.pointsRecordId }, origin, authContext);
 }
 
 export async function markImageTaskFailed(task: ImageTask, error: string) {
@@ -103,8 +126,8 @@ export async function markImageTaskFailed(task: ImageTask, error: string) {
         pointsRecordId: current.billing?.pointsRecordId,
     });
     await updateImageTask(current.id, { attempts, candidateConfigs: [], attemptNo: attempts.at(-1)?.attemptNo });
-    const failed = await transitionImageTask(current, ["pending", "running"], { status: "error", error: error.slice(0, 500) });
-    await writeImageGenerationLog(current, "failed", "", Date.now() - current.createdAt, error).catch((logError) => console.error("Image generation failure log write failed", logError));
+    const failed = await transitionImageTask(current, ["pending", "running"], { status: "error", error: error.slice(0, 500), retryable: true });
+    await writeImageGenerationLog({ ...current, retryable: true }, "failed", "", Date.now() - current.createdAt, error).catch((logError) => console.error("Image generation failure log write failed", logError));
     return failed;
 }
 
@@ -115,16 +138,13 @@ async function handleImageProviderResult(task: ImageTask, result: ImageTaskRunRe
         await updateImageTask(task.id, { upstream: result.pending, billing });
         return { state: "pending", upstream: result.pending, status: "submitted" };
     }
+    if (result.dataUrl?.startsWith("data:") || result.dataUrl?.startsWith("/api/")) {
+        await updateImageTask(task.id, { result: { dataUrl: result.dataUrl, remoteUrl: result.remoteUrl } });
+        return { state: "result_ready", resultUrl: INLINE_IMAGE_RESULT_REFERENCE, status: "completed" };
+    }
     const resultUrl = stableMediaUrl(result.remoteUrl || result.dataUrl);
     if (resultUrl) return { state: "result_ready", resultUrl, status: "completed" };
-    try {
-        await completeImageResult(task, result, origin, authContext);
-    } catch (error) {
-        if (error instanceof GenerationSubmissionSafeFailure) throw error;
-        console.warn("Image result validation or persistence failed", { taskId: task.id, error: error instanceof Error ? error.message : String(error) });
-        throw new GenerationSubmissionSafeFailure("上游返回的图片文件无效或保存失败");
-    }
-    return { state: "completed" };
+    return { state: "failed", error: "上游返回的图片文件无效或保存失败", status: "failed" };
 }
 
 async function refundImageCandidate(task: ImageTask) {
@@ -144,39 +164,63 @@ async function refundImageCandidate(task: ImageTask) {
 }
 
 async function completeImageResult(task: ImageTask, result: ImageTaskRunResult, origin: string, authContext: string) {
+    const beforePersistence = await getImageTask(task.id);
+    if (!beforePersistence || beforePersistence.status === "cancelled") {
+        if (beforePersistence?.status === "cancelled") await refundImageTask(beforePersistence);
+        return beforePersistence;
+    }
+    task = beforePersistence;
     const remoteUrl = typeof result.remoteUrl === "string" ? result.remoteUrl : undefined;
-    const safeResult: ImageTaskResult = directRemoteImageResult(remoteUrl) || (await inlineRemoteImageResult(result.dataUrl, origin, authContext, remoteUrl));
-    const logged = await writeImageGenerationLog(task, "success", safeResult, Date.now() - task.createdAt);
-    const asset = logged.asset;
+    const proxiedMedia = resolveProxiedMediaSource(result.dataUrl || "", origin);
+    const proxiedRemoteUrl = proxiedMedia.remoteUrl;
+    const channelId = task.config.channelId || systemGenerationChannelId(task.config.baseUrl);
+    const mediaHeaders = proxiedRemoteUrl && channelId ? generationMediaProxyHeaders({ userId: task.userId, taskType: "image", taskId: task.id, channelId, upstreamModel: task.config.model, url: proxiedRemoteUrl }) : undefined;
+    const inlineResult = proxiedMedia.proxyUrl ? await inlineRemoteImageResult(result.dataUrl, origin, authContext, remoteUrl, mediaHeaders) : null;
+    if (proxiedMedia.proxyUrl && !inlineResult?.dataUrl?.startsWith("data:image/")) throw new GenerationSubmissionSafeFailure("上游图片无法通过授权媒体路径读取");
+    const safeResult: ImageTaskResult = inlineResult || directRemoteImageResult(remoteUrl) || (await inlineRemoteImageResult(result.dataUrl, origin, authContext, remoteUrl, mediaHeaders));
     const current = await getImageTask(task.id);
-    if (!current || current.status === "cancelled") return current;
+    if (!current || current.status === "cancelled") {
+        if (current?.status === "cancelled") await refundImageTask(current);
+        return current;
+    }
+    const logged = await writeImageGenerationLog(current, "success", safeResult, Date.now() - current.createdAt);
     const completed = await transitionImageTask(current, ["pending", "running"], {
         status: "success",
         result: {
             dataUrl: safeResult.dataUrl,
-            remoteUrl: asset?.remoteUrl || safeResult.remoteUrl,
-            serverUrl: asset?.serverUrl,
-            width: asset?.width,
-            height: asset?.height,
-            bytes: asset?.bytes,
-            mimeType: asset?.mimeType,
+            remoteUrl: safeResult.remoteUrl,
         },
         pointsRemaining: result.pointsRemaining,
+        retryable: false,
     });
-    if (!completed) return getImageTask(task.id);
+    if (!completed) {
+        const latest = await getImageTask(task.id);
+        if (latest?.status === "cancelled") await refundImageTask(latest);
+        return latest;
+    }
+    const asset = logged?.asset;
+    const finalResult = {
+        dataUrl: safeResult.dataUrl,
+        remoteUrl: asset?.remoteUrl || safeResult.remoteUrl,
+        serverUrl: asset?.serverUrl,
+        width: asset?.width,
+        height: asset?.height,
+        bytes: asset?.bytes,
+        mimeType: asset?.mimeType,
+    };
     const attempts = finishGenerationAttempt(completed.attempts || [], completed.attemptNo || completed.attempts?.at(-1)?.attemptNo || 1, {
         status: "succeeded",
         pointsCost: result.pointsCost ?? completed.billing?.pointsCost,
         pointsRecordId: result.pointsRecordId || completed.billing?.pointsRecordId,
     });
-    await updateImageTask(task.id, { config: { ...completed.config, apiKey: "system" }, candidateConfigs: [], attempts, attemptNo: attempts.at(-1)?.attemptNo });
-    const url = completed.result?.serverUrl || completed.result?.remoteUrl || stableMediaUrl(completed.result?.dataUrl);
+    const finalized = (await updateImageTask(task.id, { result: finalResult, config: { ...completed.config, apiKey: "system" }, candidateConfigs: [], attempts, attemptNo: attempts.at(-1)?.attemptNo })) || completed;
+    const url = finalized.result?.serverUrl || finalized.result?.remoteUrl || stableMediaUrl(finalized.result?.dataUrl);
     if (url)
-        await registerGenerationTaskAssetsForUser(completed.userId, {
-            ...completed,
-            taskId: completed.id,
-            title: completed.title || completed.prompt.slice(0, 80),
+        await registerGenerationTaskAssetsForUser(finalized.userId, {
+            ...finalized,
+            taskId: finalized.id,
+            title: finalized.title || finalized.prompt.slice(0, 80),
             assets: [{ type: "image", url }],
         }).catch((error) => console.error("Creative image asset registration failed", error));
-    return completed;
+    return finalized;
 }

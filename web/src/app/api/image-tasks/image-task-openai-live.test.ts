@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/server/proxy-dispatcher", () => ({ configureServerProxyDispatcher: vi.fn() }));
 
@@ -10,6 +10,12 @@ import { emptyAdvancedConfig } from "@/lib/channel-protocol-registry";
 
 afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+});
+
+beforeEach(() => {
+    vi.stubEnv("VOZEB_PRO_ALLOW_PRIVATE_UPSTREAMS", "1");
+    vi.stubEnv("VOZEB_PRO_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1");
 });
 
 describe("OpenAI image provider over a live compatible fixture", () => {

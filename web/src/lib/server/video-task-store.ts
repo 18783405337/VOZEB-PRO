@@ -17,7 +17,7 @@ export type VideoTask = GenerationTaskContext & {
     createdAt: number;
     updatedAt: number;
     config: SystemGenerationChannelConfig;
-    upstream: { id: string; provider: "openai" | "seedance" | "generation"; model: string; pollPath?: string; resultUrl?: string; pointsCost?: number; pointsUnits?: number; pointsRecordId?: string };
+    upstream: { id: string; provider: "openai" | "seedance" | "generation"; model: string; pollPath?: string; resultUrl?: string; pointsCost?: number; pointsUnits?: number; pointsRecordId?: string; refunded?: boolean };
     requestedDurationSeconds?: number;
     source?: string;
     prompt?: string;
@@ -53,8 +53,12 @@ export function failReconciledVideoTask(id: string, error: string, retryable = f
     return mutateStoredGenerationTask<VideoTask>("video", id, GENERATION_TASK_RETENTION_MS, (task) => (canReconcileVideoTask(task) ? { ...task, status: "error", result: undefined, error, retryable } : null));
 }
 
-export function transitionVideoTask(task: VideoTask, patch: Partial<Pick<VideoTask, "result" | "error" | "retryable">> & { status: "success" | "error" | "cancelled" }) {
-    return transitionStoredGenerationTask<VideoTask>("video", task.id, task.userId, ["running"], patch, GENERATION_TASK_RETENTION_MS);
+export function transitionVideoTask(
+    task: VideoTask,
+    patch: Partial<Pick<VideoTask, "result" | "error" | "retryable" | "upstream">> & { status: "success" | "error" | "cancelled" },
+    executionPatch?: import("@/lib/server/generation-task-scheduler").GenerationTaskSchedulePatch,
+) {
+    return transitionStoredGenerationTask<VideoTask>("video", task.id, task.userId, ["running"], patch, GENERATION_TASK_RETENTION_MS, executionPatch);
 }
 
 export function updateVideoTask(id: string, patch: Partial<Pick<VideoTask, "config" | "upstream" | "requestedDurationSeconds" | "attempts" | "result">>) {

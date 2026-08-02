@@ -27,6 +27,7 @@ import { assertCapabilityConstraints } from "@/lib/server/capability-constraints
 import { resolveModelPollingAttempts, resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy";
 import { systemAiBillingHeaders } from "@/lib/server/system-ai-billing";
 import { maintenanceWorkerContextHeaders } from "@/lib/server/maintenance-auth";
+import { fetchSafeOutbound } from "@/lib/server/safe-outbound-fetch";
 import { GenerationSubmissionSafeFailure, GenerationSubmissionUncertainError, generationSubmissionResponseError, generationSubmissionUncertainError } from "@/lib/server/generation-submission-error";
 
 import {
@@ -258,7 +259,7 @@ export function taskFetch(config: ImageTaskConfig, url: string, init: RequestIni
         ...init,
         signal: init.signal || AbortSignal.timeout(imageTaskRequestTimeoutMs(config)),
     };
-    if (!isInternalApiBaseUrl(config.baseUrl)) return fetch(url, nextInit);
+    if (!isInternalApiBaseUrl(config.baseUrl)) return fetchSafeOutbound(url, nextInit);
     if (typeof FormData !== "undefined" && nextInit.body instanceof FormData) return fetch(url, nextInit);
     return fetchInternalApi(url, nextInit);
 }
@@ -509,7 +510,7 @@ export function isInternalGeneratedImageUrl(value: string) {
     }
 }
 
-export async function inlineRemoteImageResult(value: string, origin: string, cookie: string, remoteFallback?: string) {
+export async function inlineRemoteImageResult(value: string, origin: string, cookie: string, remoteFallback?: string, internalHeaders?: HeadersInit) {
     const url = (value || "").trim();
     if (!url || url.startsWith("data:")) return { dataUrl: url, remoteUrl: remoteFallback };
     const mediaSource = resolveProxiedMediaSource(url, origin);
@@ -522,8 +523,10 @@ export async function inlineRemoteImageResult(value: string, origin: string, coo
     const timer = setTimeout(() => controller.abort(), INLINE_IMAGE_TIMEOUT_MS);
     try {
         const workerHeaders = maintenanceWorkerContextHeaders(cookie);
-        const response = await fetch(fetchUrl, {
-            headers: url.startsWith("/") ? workerHeaders || (cookie ? { cookie } : undefined) : undefined,
+        const headers = new Headers(workerHeaders || (cookie ? { cookie } : undefined));
+        new Headers(internalHeaders).forEach((headerValue, key) => headers.set(key, headerValue));
+        const response = await (url.startsWith("/") ? fetch : fetchSafeOutbound)(fetchUrl, {
+            headers: url.startsWith("/") ? headers : undefined,
             cache: "no-store",
             signal: controller.signal,
         });
@@ -666,7 +669,7 @@ export async function imageReferenceToFile(reference: ImageTaskReference, name: 
             const fetchUrl = value.startsWith("/") ? `${origin}${value}` : value;
             if (!isRemoteMediaUrl(fetchUrl)) throw new Error("参考图地址无效，请重新上传参考图");
             const workerHeaders = maintenanceWorkerContextHeaders(cookie);
-            const response = await fetch(fetchUrl, {
+            const response = await (value.startsWith("/") ? fetch : fetchSafeOutbound)(fetchUrl, {
                 headers: value.startsWith("/") ? workerHeaders || (cookie ? { cookie } : undefined) : undefined,
                 cache: "no-store",
                 signal: AbortSignal.timeout(INLINE_IMAGE_TIMEOUT_MS),

@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("@/lib/server/safe-outbound-fetch", () => ({ fetchSafeOutbound: (url: string | URL, init?: RequestInit) => fetch(url, init) }));
+
 import { GenerationSubmissionSafeFailure } from "@/lib/server/generation-submission-error";
 import { maintenanceWorkerContext } from "@/lib/server/maintenance-auth";
 import {

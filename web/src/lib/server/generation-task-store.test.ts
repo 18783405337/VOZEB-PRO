@@ -10,6 +10,7 @@ vi.mock("@/lib/server/database", () => ({
 }));
 vi.mock("@/lib/server/data-adapter", () => ({
     readJsonDataFile: vi.fn(async () => structuredClone(mocks.records)),
+    withJsonDataFileLock: vi.fn(async (_fileName: string, callback: () => Promise<unknown>) => callback()),
     writeJsonDataFile: vi.fn(async (_fileName: string, value: Array<Record<string, unknown>>) => {
         mocks.records = structuredClone(value);
     }),
@@ -20,6 +21,7 @@ import {
     createStoredGenerationTask,
     getStoredGenerationTask,
     getStoredGenerationTaskByRequest,
+    getStoredGenerationTaskByUpstream,
     listStoredGenerationTaskRecords,
     mutateStoredGenerationTask,
     summarizeStoredGenerationTaskCosts,
@@ -108,6 +110,29 @@ describe("mutateStoredGenerationTask", () => {
         await expect(getStoredGenerationTaskByRequest<{ id: string }>("video", "user", "request-one", 1)).resolves.toMatchObject({ id: "video-one" });
         await expect(getStoredGenerationTaskByRequest<{ id: string }>("video", "user", "request-one", 2)).resolves.toMatchObject({ id: "video-retry" });
         await expect(getStoredGenerationTaskByRequest<{ id: string }>("video", "user", "request-one", 3)).resolves.toBeNull();
+    });
+
+    it("finds only the current user's exact channel task identity", async () => {
+        const now = Date.now();
+        mocks.records = [
+            { id: "video-one", userId: "user", type: "video", status: "running", channelId: "channel-one", upstreamTaskId: "upstream-one", payload: { config: { model: "vendor-video" } }, createdAt: now, updatedAt: now, expiresAt: now + 60_000 },
+        ];
+
+        await expect(getStoredGenerationTaskByUpstream("video", "user", "channel-one", "upstream-one")).resolves.toMatchObject({ id: "video-one" });
+        await expect(getStoredGenerationTaskByUpstream("video", "other", "channel-one", "upstream-one")).resolves.toBeNull();
+        await expect(getStoredGenerationTaskByUpstream("video", "user", "channel-two", "upstream-one")).resolves.toBeNull();
+    });
+
+    it("uses an entity-scoped PostgreSQL lookup for upstream ownership", async () => {
+        vi.mocked(getDatabaseProvider).mockReturnValue("postgres");
+        vi.mocked(postgresQuery).mockResolvedValueOnce({ rows: [], command: "SELECT", rowCount: 0, oid: 0, fields: [] });
+
+        await getStoredGenerationTaskByUpstream("audio", "user", "channel-one", "upstream-one");
+
+        expect(vi.mocked(postgresQuery).mock.calls[0][0]).toContain("user_id = $1 AND task_type = $2 AND channel_id = $3 AND upstream_task_id = $4");
+        expect(vi.mocked(postgresQuery).mock.calls[0][1]).toEqual(["user", "audio", "channel-one", "upstream-one"]);
+        vi.mocked(postgresQuery).mockClear();
+        vi.mocked(getDatabaseProvider).mockReturnValue("file");
     });
 });
 

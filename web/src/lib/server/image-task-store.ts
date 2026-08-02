@@ -53,6 +53,7 @@ export type ImageTask = GenerationTaskContext & {
     upstream?: { id: string; mediaBaseUrl: string; pollBaseUrl: string; explicitPollUrl?: string };
     billing?: { pointsCost: number; pointsRecordId?: string; refunded: boolean };
     error?: string;
+    retryable?: boolean;
     pointsRemaining?: number;
     candidateConfigs?: ImageTaskConfig[];
     attempts?: GenerationAttempt[];
@@ -80,14 +81,19 @@ export function countActiveImageTasksForUser(userId: string) {
     return countActiveStoredGenerationTasks(userId, "image", TASK_STALE_MS);
 }
 
-export function transitionImageTask(task: ImageTask, allowedStatuses: ImageTaskStatus[], patch: Partial<Pick<ImageTask, "result" | "error" | "pointsRemaining">> & { status: ImageTaskStatus }) {
-    return transitionStoredGenerationTask<ImageTask>("image", task.id, task.userId, allowedStatuses, patch, GENERATION_TASK_RETENTION_MS);
+export function transitionImageTask(
+    task: ImageTask,
+    allowedStatuses: ImageTaskStatus[],
+    patch: Partial<Pick<ImageTask, "result" | "error" | "pointsRemaining" | "retryable" | "config" | "billing">> & { status: ImageTaskStatus },
+    executionPatch?: import("@/lib/server/generation-task-scheduler").GenerationTaskSchedulePatch,
+) {
+    return transitionStoredGenerationTask<ImageTask>("image", task.id, task.userId, allowedStatuses, patch, GENERATION_TASK_RETENTION_MS, executionPatch);
 }
 
 export function touchImageTask(id: string) {
     return touchStoredGenerationTask("image", id, Date.now(), GENERATION_TASK_RETENTION_MS);
 }
 
-export async function updateImageTask(id: string, patch: Partial<Pick<ImageTask, "config" | "candidateConfigs" | "attempts" | "attemptNo" | "upstream" | "billing">>) {
+export async function updateImageTask(id: string, patch: Partial<Pick<ImageTask, "config" | "candidateConfigs" | "attempts" | "attemptNo" | "upstream" | "billing" | "result" | "retryable">>) {
     return mutateStoredGenerationTask<ImageTask>("image", id, GENERATION_TASK_RETENTION_MS, (task) => ({ ...task, ...patch }));
 }

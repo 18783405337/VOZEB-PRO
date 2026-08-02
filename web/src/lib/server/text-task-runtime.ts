@@ -1,5 +1,7 @@
 import { refundUserPoints } from "@/lib/auth/store";
 import { configureServerProxyDispatcher } from "@/lib/server/proxy-dispatcher";
+import { fetchSafeOutbound } from "@/lib/server/safe-outbound-fetch";
+import { scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
 import { fetchInternalApi, isInternalApiBaseUrl } from "@/lib/server/internal-origin";
 import { toSafeGenerationErrorMessage } from "@/lib/server/generation-errors";
 import { generationModelId } from "@/lib/server/generation-channel";
@@ -13,6 +15,7 @@ import { buildProviderRequest, isProviderBusinessError, providerQueryPaths, read
 import { maintenanceWorkerContextHeaders } from "@/lib/server/maintenance-auth";
 import { GenerationSubmissionSafeFailure, GenerationSubmissionUncertainError, generationSubmissionResponseError, generationSubmissionUncertainError } from "@/lib/server/generation-submission-error";
 import { resolveTextProtocol, type ResolvedTextProtocol } from "@/lib/server/text-protocol-resolver";
+import { refundTextTask, textTaskRefundIdempotencyKey } from "@/lib/server/text-task-refund";
 
 configureServerProxyDispatcher();
 
@@ -70,6 +73,14 @@ export async function runTextTaskStep(task: TextTask, origin: string, cookie: st
         attempts = started.attempts;
         const candidateTask = { ...running, config, candidateConfigs: candidates.slice(index + 1), attemptNo: started.attempt.attemptNo, attempts };
         await updateTextTask(task.id, { config, candidateConfigs: candidateTask.candidateConfigs, attemptNo: candidateTask.attemptNo, attempts });
+        await scheduleGenerationTask("text", task.id, {
+            executionPhase: "submitting",
+            channelId: config.channelId,
+            provider: config.advancedConfig?.protocol || config.apiFormat,
+            queryPath: config.advancedConfig?.queryPath,
+            nextPollAt: Date.now(),
+            lastUpstreamStatus: "submitting",
+        });
         try {
             const protocol = resolveTextProtocol({ model: config.model, apiFormat: config.apiFormat, advancedConfig: config.advancedConfig, throughSystemProxy: config.baseUrl.startsWith("/") });
             const result = await runResolvedTextTask(candidateTask, origin, cookie, protocol);
@@ -113,9 +124,7 @@ async function runOpenAiResponsesTask(task: TextTask, origin: string, cookie: st
     });
     if (!response.ok) {
         const errorMessage = await readFetchError(response, "文本生成失败");
-        const responseError = generationSubmissionResponseError(response.status, errorMessage);
-        if (responseError instanceof GenerationSubmissionUncertainError) await persistTextResponseBilling(task, response.headers);
-        throw responseError;
+        throw new GenerationSubmissionSafeFailure(errorMessage, response.status);
     }
     const payload = await parseTextSubmissionJson<ResponseApiPayload>(task, response);
     try {
@@ -193,6 +202,28 @@ async function queryCustomTextTaskStep(task: TextTask, origin: string, cookie: s
     throw new Error(lastError || "自定义文本任务查询失败");
 }
 
+export async function queryCancelledTextTaskUpstreamStep(task: TextTask, origin: string, cookie: string) {
+    const config = task.config;
+    const upstream = task.upstream;
+    if (!upstream?.id) return { state: "terminal" as const, status: "missing_upstream_id" };
+    let lastError = "";
+    for (const path of providerQueryPaths(config.advancedConfig, upstream.id, [])) {
+        const response = await taskFetch(config, taskUrl(config, path, origin), { headers: taskHeaders(config, cookie), cache: "no-store" });
+        if (!response.ok) {
+            lastError = await readFetchError(response, "自定义文本任务查询失败");
+            continue;
+        }
+        const data = (await response.json().catch(() => null)) as unknown;
+        if (!data || isProviderBusinessError(data)) return { state: "terminal" as const, status: "failed" };
+        if (readProviderString(data, config.advancedConfig?.resultField, TEXT_RESULT_KEYS)) return { state: "terminal" as const, status: "completed" };
+        const status = readProviderString(data, config.advancedConfig?.statusField, TASK_STATUS_KEYS).toLowerCase();
+        if (FAILED_TASK_STATUSES.has(status)) return { state: "terminal" as const, status };
+        if (PENDING_TASK_STATUSES.has(status)) return { state: "pending" as const, status: status || "processing" };
+        return { state: "terminal" as const, status: status || "completed" };
+    }
+    throw new Error(lastError || "自定义文本任务查询失败");
+}
+
 function readMessageText(content: AiTextMessage["content"]) {
     if (typeof content === "string") return content;
     return content.map((item) => (item.type === "text" ? item.text : item.image_url.url)).join("\n");
@@ -210,9 +241,7 @@ async function runOpenAiChatCompletionTask(task: TextTask, origin: string, cooki
     });
     if (!response.ok) {
         const message = await readFetchError(response, "文本生成失败");
-        const responseError = generationSubmissionResponseError(response.status, message);
-        if (responseError instanceof GenerationSubmissionUncertainError) await persistTextResponseBilling(task, response.headers);
-        throw responseError;
+        throw new GenerationSubmissionSafeFailure(message, response.status);
     }
     const payload = await parseTextSubmissionJson<ChatCompletionPayload>(task, response);
     try {
@@ -239,9 +268,7 @@ async function runGeminiTextTask(task: TextTask, origin: string, cookie: string,
     });
     if (!response.ok) {
         const message = await readFetchError(response, "文本生成失败");
-        const responseError = generationSubmissionResponseError(response.status, message);
-        if (responseError instanceof GenerationSubmissionUncertainError) await persistTextResponseBilling(task, response.headers);
-        throw responseError;
+        throw new GenerationSubmissionSafeFailure(message, response.status);
     }
     const payload = await parseTextSubmissionJson<GeminiPayload>(task, response);
     try {
@@ -280,9 +307,7 @@ async function runClaudeTextTask(task: TextTask, origin: string, cookie: string,
     });
     if (!response.ok) {
         const message = await readFetchError(response, "文本生成失败");
-        const responseError = generationSubmissionResponseError(response.status, message);
-        if (responseError instanceof GenerationSubmissionUncertainError) await persistTextResponseBilling(task, response.headers);
-        throw responseError;
+        throw new GenerationSubmissionSafeFailure(message, response.status);
     }
     const payload = await parseTextSubmissionJson<ClaudePayload>(task, response);
     const content = payload.content
@@ -304,7 +329,8 @@ async function completeTextTask(task: TextTask, content: string, billing: { poin
     });
     const current = await getTextTask(task.id);
     if (!current || current.status === "cancelled") {
-        if (hasSystemAiCharge(billing)) await refundUserPoints(task.userId, generationModelId(task.config), billing.pointsCost, "text", 1, undefined, billing.pointsRecordId);
+        if (current?.status === "cancelled" && current.billing?.pointsRecordId) await refundTextTask(current);
+        else if (hasSystemAiCharge(billing)) await refundUserPoints(task.userId, generationModelId(task.config), billing.pointsCost, "text", 1, textTaskRefundIdempotencyKey(task), billing.pointsRecordId);
         return { state: "failed", error: current?.error || "文本任务已取消" };
     }
     const completed = await transitionTextTask(current, ["running"], {
@@ -316,7 +342,7 @@ async function completeTextTask(task: TextTask, content: string, billing: { poin
         billing: hasSystemAiCharge(billing) ? { pointsCost: billing.pointsCost, pointsRecordId: billing.pointsRecordId, refunded: false } : current.billing,
     });
     await updateTextTask(task.id, { config: clearSecret(current.config), candidateConfigs: [], attempts: succeeded, attemptNo: task.attemptNo || succeeded.at(-1)?.attemptNo });
-    if (!completed && hasSystemAiCharge(billing)) await refundUserPoints(task.userId, generationModelId(task.config), billing.pointsCost, "text", 1, undefined, billing.pointsRecordId);
+    if (!completed && hasSystemAiCharge(billing)) await refundUserPoints(task.userId, generationModelId(task.config), billing.pointsCost, "text", 1, textTaskRefundIdempotencyKey(task), billing.pointsRecordId);
     return completed ? { state: "completed" } : { state: "failed", error: "文本任务状态已变化" };
 }
 
@@ -494,7 +520,7 @@ function taskFetch(config: TextTaskConfig, url: string, init: RequestInit) {
         ...init,
         signal: init.signal || AbortSignal.timeout(resolveModelRequestTimeoutMs(config, "text")),
     };
-    return isInternalApiBaseUrl(config.baseUrl) ? fetchInternalApi(url, nextInit) : fetch(url, nextInit);
+    return isInternalApiBaseUrl(config.baseUrl) ? fetchInternalApi(url, nextInit) : fetchSafeOutbound(url, nextInit);
 }
 
 async function submissionFetch(config: TextTaskConfig, url: string, init: RequestInit) {

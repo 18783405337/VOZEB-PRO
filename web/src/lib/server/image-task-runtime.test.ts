@@ -12,7 +12,11 @@ const mocks = vi.hoisted(() => ({
     schedule: vi.fn(),
     writeLog: vi.fn(),
     inlineResult: vi.fn(),
+    directResult: vi.fn(),
+    resolveMedia: vi.fn(() => ({})),
+    mediaHeaders: vi.fn(() => ({ "x-media-auth": "signed" })),
     getSettings: vi.fn(),
+    register: vi.fn(),
     refund: vi.fn(),
 }));
 
@@ -20,15 +24,16 @@ vi.mock("@/app/api/image-tasks/image-task-custom", () => ({ runCustomImageTask: 
 vi.mock("@/app/api/image-tasks/image-task-gemini", () => ({ runGeminiImageTask: mocks.runGemini }));
 vi.mock("@/app/api/image-tasks/image-task-openai", () => ({ runOpenAiImageTask: mocks.runOpenAi }));
 vi.mock("@/app/api/image-tasks/image-task-support", () => ({
-    directRemoteImageResult: vi.fn(),
+    directRemoteImageResult: mocks.directResult,
     imageUnits: vi.fn(() => 1),
     ImageUpstreamTerminalError: class extends Error {},
     inlineRemoteImageResult: mocks.inlineResult,
     pollOpenAiImageTask: mocks.pollOpenAi,
+    resolveProxiedMediaSource: mocks.resolveMedia,
 }));
 vi.mock("@/app/api/image-tasks/image-task-runner", () => ({ stableMediaUrl: vi.fn((value: string) => (value && !value.startsWith("data:") ? value : "")), writeImageGenerationLog: mocks.writeLog }));
 vi.mock("@/lib/auth/store", () => ({ getAuthSettings: mocks.getSettings, refundUserPoints: mocks.refund }));
-vi.mock("@/lib/server/creative-runtime-service", () => ({ registerGenerationTaskAssetsForUser: vi.fn() }));
+vi.mock("@/lib/server/creative-runtime-service", () => ({ registerGenerationTaskAssetsForUser: mocks.register }));
 vi.mock("@/lib/server/generation-task-scheduler", () => ({ scheduleGenerationTask: mocks.schedule }));
 vi.mock("@/lib/server/image-task-store", () => ({
     getImageTask: mocks.getTask,
@@ -36,10 +41,11 @@ vi.mock("@/lib/server/image-task-store", () => ({
     transitionImageTask: mocks.transitionTask,
 }));
 vi.mock("@/lib/server/maintenance-auth", () => ({ maintenanceWorkerContext: vi.fn(() => "worker-context") }));
+vi.mock("@/lib/server/generation-media-authorization", () => ({ generationMediaProxyHeaders: mocks.mediaHeaders }));
 
 import { GenerationSubmissionSafeFailure, GenerationSubmissionUncertainError } from "./generation-submission-error";
 import { emptyAdvancedConfig } from "@/lib/channel-protocol-registry";
-import { createImageTaskUpstreamStep } from "./image-task-runtime";
+import { createImageTaskUpstreamStep, persistImageTaskResult } from "./image-task-runtime";
 import type { ImageTask } from "./image-task-store";
 
 describe("image task runtime submission safety", () => {
@@ -60,6 +66,7 @@ describe("image task runtime submission safety", () => {
         });
         mocks.getSettings.mockResolvedValue({ generationPointMultipliers: { imageQuality: {} } });
         mocks.inlineResult.mockImplementation(async (dataUrl: string) => ({ dataUrl }));
+        mocks.register.mockResolvedValue(undefined);
     });
 
     it("switches candidates only after an explicit safe rejection", async () => {
@@ -95,12 +102,31 @@ describe("image task runtime submission safety", () => {
         mocks.runOpenAi.mockResolvedValueOnce({ dataUrl: "data:image/png;base64,broken", pointsCost: 1, pointsRecordId: "record-one" });
         mocks.writeLog.mockRejectedValueOnce(new Error("pngload_buffer: libspng read error"));
 
-        await expect(createImageTaskUpstreamStep(state, "http://internal", "https://public.example")).resolves.toMatchObject({
-            state: "failed",
-            error: "上游返回的图片文件无效或保存失败",
-        });
-        expect(mocks.refund).toHaveBeenCalledWith("user-one", "image-one", 1, "image", 1, "image-task:image-one:attempt:1:refund", "record-one");
-        expect(state.attempts?.map(({ status }) => status)).toEqual(["failed"]);
+        const step = await createImageTaskUpstreamStep(state, "http://internal", "https://public.example");
+        expect(step).toMatchObject({ state: "result_ready", resultUrl: "inline://image-task-result" });
+        if (step.state !== "result_ready") throw new Error("image result was not ready");
+        await expect(persistImageTaskResult(state, "http://internal", step.resultUrl)).rejects.toThrow("pngload_buffer");
+        expect(mocks.refund).not.toHaveBeenCalled();
+        expect(state.status).toBe("running");
+    });
+
+    it("downloads system-proxied image results with task-bound media authorization", async () => {
+        state.config = { ...state.config, baseUrl: "/api/ai/system/channel-one", advancedConfig: { ...emptyAdvancedConfig(), protocol: "openai" } };
+        state.candidateConfigs = [];
+        const remoteUrl = "https://provider.example/media/result.png";
+        const proxyUrl = `/api/ai/system/channel-one/_media?url=${encodeURIComponent(remoteUrl)}`;
+        mocks.resolveMedia.mockReturnValueOnce({ remoteUrl, proxyUrl });
+        mocks.runOpenAi.mockResolvedValueOnce({ dataUrl: proxyUrl, remoteUrl });
+        mocks.inlineResult.mockResolvedValueOnce({ dataUrl: "data:image/png;base64,c2FmZQ==", remoteUrl });
+        mocks.writeLog.mockResolvedValueOnce({ asset: { url: "/api/generation-log-assets/asset-one", remoteUrl } });
+
+        const step = await createImageTaskUpstreamStep(state, "http://internal", "https://public.example");
+        if (step.state !== "result_ready") throw new Error("image result was not ready");
+        await expect(persistImageTaskResult(state, "http://internal", step.resultUrl)).resolves.toMatchObject({ status: "success" });
+
+        expect(mocks.mediaHeaders).toHaveBeenCalledWith({ userId: "user-one", taskType: "image", taskId: "image-one", channelId: "channel-one", upstreamModel: "image-one", url: remoteUrl });
+        expect(mocks.inlineResult).toHaveBeenCalledWith(proxyUrl, "http://internal", "worker-context", remoteUrl, { "x-media-auth": "signed" });
+        expect(mocks.directResult).not.toHaveBeenCalled();
     });
 });
 

@@ -26,7 +26,7 @@ export async function writeImageGenerationLog(task: ImageTask, status: "success"
         durationMs,
         asset: resultUrl ? { type: "image", url: resultUrl, remoteUrl: typeof result === "string" ? undefined : result.remoteUrl, targetSize: task.config.size } : undefined,
         error,
-        canRetry: status === "failed",
+        canRetry: status === "failed" && task.retryable === true,
         taskKind: task.kind,
         createdAt: task.createdAt,
     });

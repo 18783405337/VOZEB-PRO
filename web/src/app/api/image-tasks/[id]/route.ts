@@ -7,6 +7,9 @@ import { runGenerationTaskRecoveryBatch } from "@/lib/server/generation-task-rec
 import { resolveInternalOrigin } from "@/lib/server/internal-origin";
 import { pointsResponseHeaders } from "@/lib/server/points-response";
 import { generationModelId } from "@/lib/server/generation-channel";
+import { cancellationExecutionPatch, type GenerationCancellationTarget } from "@/lib/server/generation-task-cancellation-service";
+import { refundImageTask } from "@/lib/server/image-task-refund";
+import { getStoredGenerationTaskRecord } from "@/lib/server/generation-task-store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,40 +25,63 @@ export async function GET(request: Request, context: RouteContext) {
     const { id } = await context.params;
     const task = await getImageTask(id);
     if (!task || (task.userId !== currentUser.id && currentUser.role !== "admin")) return NextResponse.json({ error: "任务不存在或已过期" }, { status: 404 });
-    if (isRecoverableImageTask(task)) {
+    const schedule = await getStoredGenerationTaskRecord("image", task.id);
+    const executionPhase = schedule?.executionPhase || settledExecutionPhase(task.status);
+    if (isRecoverableImageTask(task, executionPhase)) {
         const origin = resolveInternalOrigin(new URL(request.url).origin);
         after(() => runGenerationTaskRecoveryBatch({ origin, publicOrigin: requestPublicOrigin(request), cookie: request.headers.get("cookie") || "", limit: 1, taskIds: [task.id] }));
     }
+    const shouldRefund = Boolean(task.billing?.pointsRecordId && !task.billing.refunded && task.status === "error");
+    const settledTask = shouldRefund ? await refundImageTask(task) : task;
+    const refreshedUser = shouldRefund ? await getCurrentUser(request) : currentUser;
 
     return NextResponse.json(
         {
             task: {
-                id: task.id,
-                kind: task.kind,
-                status: task.status,
-                model: generationModelId(task.config),
-                result: task.result,
-                error: task.error,
-                canRetry: task.status === "error",
-                needsReview: task.executionPhase === "needs_review",
-                executionPhase: task.executionPhase,
+                id: settledTask.id,
+                kind: settledTask.kind,
+                status: settledTask.status,
+                model: generationModelId(settledTask.config),
+                result: settledTask.result,
+                error: settledTask.error,
+                canRetry: settledTask.retryable === true,
+                needsReview: executionPhase === "needs_review",
+                executionPhase,
             },
         },
-        { headers: pointsResponseHeaders(currentUser) },
+        { headers: pointsResponseHeaders(refreshedUser) },
     );
 }
 
-function isRecoverableImageTask(task: NonNullable<Awaited<ReturnType<typeof getImageTask>>>) {
-    return (task.status === "pending" || task.status === "running") && task.executionPhase !== "needs_review";
+function isRecoverableImageTask(task: NonNullable<Awaited<ReturnType<typeof getImageTask>>>, executionPhase: string) {
+    return ((task.status === "pending" || task.status === "running") && executionPhase !== "needs_review") || (task.status === "cancelled" && (executionPhase === "cancel_requested" || executionPhase === "cancel_polling"));
+}
+
+function settledExecutionPhase(status: string) {
+    return status === "pending" || status === "running" ? "created" : "completed";
 }
 
 export async function PATCH(request: Request, context: RouteContext) {
     const user = await getCurrentUser(request);
     const task = user ? await getImageTask((await context.params).id) : null;
     if (!user || !task || (task.userId !== user.id && user.role !== "admin")) return NextResponse.json({ error: "任务不存在或已过期" }, { status: user ? 404 : 401 });
+    const schedule = await getStoredGenerationTaskRecord("image", task.id);
+    const executionPhase = schedule?.executionPhase || settledExecutionPhase(task.status);
     const body = (await request.json().catch(() => ({}))) as { status?: string };
     if (body.status !== "cancelled" || !["pending", "running"].includes(task.status)) return NextResponse.json({ error: "当前任务无法取消" }, { status: 409 });
-    const cancelled = await transitionImageTask(task, ["pending", "running"], { status: "cancelled", error: "任务已取消" });
+    const target: GenerationCancellationTarget = {
+        type: "image",
+        taskId: task.id,
+        userId: task.userId,
+        executionPhase,
+        upstreamTaskId: task.upstream?.id,
+        queryPath: task.config.advancedConfig?.queryPath,
+        config: task.config,
+    };
+    const cancelled = await transitionImageTask(task, ["pending", "running"], { status: "cancelled", error: "任务已取消", retryable: false }, cancellationExecutionPatch(target));
     if (!cancelled) return NextResponse.json({ error: "当前任务无法取消" }, { status: 409 });
-    return NextResponse.json({ task: { id: cancelled.id, kind: cancelled.kind, status: cancelled.status, model: generationModelId(cancelled.config), result: cancelled.result, error: cancelled.error } }, { headers: pointsResponseHeaders(user) });
+    const origin = resolveInternalOrigin(new URL(request.url).origin);
+    after(() => runGenerationTaskRecoveryBatch({ origin, publicOrigin: requestPublicOrigin(request), limit: 1, taskIds: [task.id] }));
+    const refreshedUser = await getCurrentUser(request);
+    return NextResponse.json({ task: { id: cancelled.id, kind: cancelled.kind, status: cancelled.status, model: generationModelId(cancelled.config), result: cancelled.result, error: cancelled.error } }, { headers: pointsResponseHeaders(refreshedUser) });
 }

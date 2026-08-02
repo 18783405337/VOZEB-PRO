@@ -29,12 +29,13 @@ describe("audio task refunds", () => {
         vi.clearAllMocks();
         mocks.refundUserPoints.mockResolvedValue({ pointsBalance: 100 });
         mocks.transitionAudioTask.mockImplementation(async (_task, _statuses, patch) => ({ ...task, ...patch }));
+        mocks.getAudioTask.mockResolvedValue({ ...task, billing: { ...task.billing, refunded: true } });
     });
 
     it("marks the task refunded only after the idempotent points refund succeeds", async () => {
         const result = await refundAudioTask(task);
 
-        expect(mocks.refundUserPoints).toHaveBeenCalledWith("user", "voice", 8, "audio", 1, "audio-task:audio-one", "points-audio-one");
+        expect(mocks.refundUserPoints).toHaveBeenCalledWith("user", "voice", 8, "audio", 1, "audio-task:audio-one:refund", "points-audio-one");
         expect(mocks.refundUserPoints.mock.invocationCallOrder[0]).toBeLessThan(mocks.transitionAudioTask.mock.invocationCallOrder[0]);
         expect(result.billing?.refunded).toBe(true);
     });
