@@ -56,7 +56,16 @@ async function handleFixtureRequest({ request, response, url, body, tasks, reque
     if (request.method === "GET" && path === "/health") return sendJson(response, 200, { ok: true });
     if (request.method === "GET" && path === "/__state") {
         return sendJson(response, 200, {
-            requests: requests.filter((item) => !item.path.endsWith("/__state")).map((item) => ({ method: item.method, path: item.path, authorization: item.headers.authorization || "", model: requestedModel(item.body, item.contentType) })),
+            requests: requests
+                .filter((item) => !item.path.endsWith("/__state"))
+                .map((item) => ({
+                    method: item.method,
+                    path: item.path,
+                    authorization: item.headers.authorization || "",
+                    contentType: item.contentType,
+                    bodyBytes: item.body.byteLength,
+                    model: requestedModel(item.body, item.contentType),
+                })),
             tasks: Array.from(tasks.entries()).map(([id, task]) => ({ id, ...task })),
         });
     }

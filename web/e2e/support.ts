@@ -128,5 +128,8 @@ export async function resetProtocolFixture(request: APIRequestContext) {
 export async function protocolFixtureState(request: APIRequestContext) {
     const response = await request.get(`${E2E_PROTOCOL_ORIGIN}/__state`);
     if (!response.ok()) throw new Error(`Unable to inspect protocol fixture: ${response.status()}`);
-    return (await response.json()) as { requests: Array<{ method: string; path: string; authorization: string; model: string }>; tasks: Array<{ id: string; status: string }> };
+    return (await response.json()) as {
+        requests: Array<{ method: string; path: string; authorization: string; contentType: string; bodyBytes: number; model: string }>;
+        tasks: Array<{ id: string; status: string }>;
+    };
 }

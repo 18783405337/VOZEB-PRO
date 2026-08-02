@@ -2,6 +2,7 @@ import { Agent, ProxyAgent, fetch as undiciFetch, type Dispatcher } from "undici
 
 import { resolveServerProxyUrl } from "@/lib/server/proxy-dispatcher";
 import { isPublicIpAddress, resolveSafeOutboundTarget } from "@/lib/server/outbound-url-security";
+import { toUndiciRequestBody } from "@/lib/server/undici-request-body";
 
 type CachedDispatcher = { dispatcher: Dispatcher; lastUsedAt: number };
 
@@ -55,7 +56,8 @@ async function fetchPinned(input: URL, init: RequestInit, options?: { allowCrede
 
     const headers = new Headers(init.headers);
     const dispatcher = dispatcherFor(target.url, target.address, target.family);
-    return (await undiciFetch(target.url, { ...init, headers, dispatcher } as import("undici").RequestInit & { dispatcher: Dispatcher })) as unknown as Response;
+    const body = await toUndiciRequestBody(init.body);
+    return (await undiciFetch(target.url, { ...init, body, headers, dispatcher } as import("undici").RequestInit & { dispatcher: Dispatcher })) as unknown as Response;
 }
 
 function redirectedRequestInit(currentUrl: URL, nextUrl: URL, status: number, init: RequestInit): RequestInit {
