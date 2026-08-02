@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { App, Button, Checkbox, DatePicker, Form, Input, InputNumber, Modal, Pagination, Popconfirm, Segmented, Select, Space, Switch, Table, Tag } from "antd";
 import type { TableColumnsType } from "antd";
 import Link from "next/link";
@@ -27,7 +27,7 @@ import { AdminOverview } from "@/components/admin/admin-overview";
 import { AdminLogicalModelManager } from "@/components/admin/admin-logical-model-manager";
 import { Metric, Panel, PanelHeader } from "@/components/admin/admin-panel";
 import { AdminSectionNav, adminSections } from "@/components/admin/admin-section-nav";
-import type { AdminSectionKey } from "@/components/admin/admin-sections";
+import { adminSectionHref, type AdminSectionKey } from "@/components/admin/admin-sections";
 import { UpdateCenterPanel } from "@/components/admin/admin-update-center";
 import { LabeledControl, SectionTitle, SettingInlineToggle, SettingToggle } from "@/components/admin/admin-settings-controls";
 import { SiteLogoPreview, SiteSettingStatus, SiteShowcasePreview, siteSocialItems } from "@/components/admin/admin-site-preview";
@@ -234,7 +234,11 @@ export function useAdminDashboardState({ initialUsers, initialUserSummary, initi
     const [announcementDraft, setAnnouncementDraft] = useState<Partial<PublicAnnouncement>>({ title: "", content: "", enabled: true, popupHome: false, popupAfterLogin: false });
     const [editingUser, setEditingUser] = useState<PublicUser | null>(null);
     const [creatingUser, setCreatingUser] = useState(false);
-    const [activeSection, setActiveSection] = useState<AdminSectionKey>(initialSection);
+    const [activeSection, setActiveSectionState] = useState<AdminSectionKey>(initialSection);
+    const setActiveSection = useCallback((section: AdminSectionKey) => {
+        setActiveSectionState(section);
+        window.history.replaceState(window.history.state, "", adminSectionHref(section, window.location.href));
+    }, []);
     const [agentReadiness, setAgentReadiness] = useState<AgentReadiness | null>(null);
     const [mobileNavOpen, setMobileNavOpen] = useState(false);
     const [desktopNavCollapsed, setDesktopNavCollapsed] = useState(false);
