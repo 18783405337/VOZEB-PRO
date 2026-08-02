@@ -25,6 +25,7 @@ import { AdminLocalMediaStorage } from "@/components/admin/admin-local-media-sto
 import { QuotaRuleTable } from "@/components/admin/admin-quota-rules";
 import { AdminOverview, buildOperationsSummary } from "@/components/admin/admin-overview";
 import { AdminChannelWorkspace } from "@/components/admin/channels/admin-channel-workspace";
+import { AgentSkillCreateModal } from "@/components/admin/agent-skill-create-modal";
 import { Metric, Panel, PanelHeader } from "@/components/admin/admin-panel";
 import { AdminSectionNav, adminSections } from "@/components/admin/admin-section-nav";
 import type { AdminSectionKey } from "@/components/admin/admin-sections";
@@ -65,8 +66,6 @@ import {
     WalletCards,
 } from "lucide-react";
 import dayjs from "dayjs";
-import { nanoid } from "nanoid";
-
 import { formatCreditAmount } from "@/constant/credits";
 import { normalizeDefaultModelsConfig } from "@/lib/model-routing-config";
 import type { AgentSkill, AuthSettings, CreatedCdkCode, PublicAnnouncement, PublicCdkCode, PublicUser, SiteFriendLink, SiteShowcaseItem, SiteSocialKey, SystemChannelAdvancedConfig, SystemModelChannel, UserRole, UserStatus } from "@/lib/auth/store";
@@ -143,6 +142,7 @@ export function AdminChannelsSection({ controller }: { controller: AdminDashboar
 
 export function AdminSkillsSection({ controller }: { controller: AdminDashboardController }) {
     const { message, settings, setSettings, settingsLoading, activeSection, agentReadiness, saveSettings } = controller;
+    const [createModalOpen, setCreateModalOpen] = useState(false);
     if (activeSection !== "skills") return null;
     return (
         <Panel>
@@ -151,10 +151,7 @@ export function AdminSkillsSection({ controller }: { controller: AdminDashboardC
                 description="管理 Agent 的专业能力、触发关键词、来源版本和执行规则。"
                 actions={
                     <>
-                        <Button
-                            icon={<Plus className="size-4" />}
-                            onClick={() => setSettings((current) => ({ ...current, agentSkills: [...current.agentSkills, { id: nanoid(), name: "新 Skill", description: "", instructions: "", enabled: true, keywords: [] }] }))}
-                        >
+                        <Button icon={<Plus className="size-4" />} onClick={() => setCreateModalOpen(true)}>
                             新增 Skill
                         </Button>
                         <Button type="primary" loading={settingsLoading} icon={<Save className="size-4" />} onClick={() => saveSettings({ agentSkills: settings.agentSkills }, "Agent Skills 已保存")}>
@@ -344,6 +341,16 @@ export function AdminSkillsSection({ controller }: { controller: AdminDashboardC
                     </section>
                 ))}
             </div>
+            <AgentSkillCreateModal
+                open={createModalOpen}
+                existingSkills={settings.agentSkills}
+                onClose={() => setCreateModalOpen(false)}
+                onCreate={(skill) => {
+                    setSettings((current) => ({ ...current, agentSkills: [...current.agentSkills, skill] }));
+                    setCreateModalOpen(false);
+                    message.success("Skill 已加入列表，请点击保存");
+                }}
+            />
         </Panel>
     );
 }
