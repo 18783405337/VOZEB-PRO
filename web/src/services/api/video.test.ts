@@ -11,7 +11,7 @@ vi.mock("@/stores/use-config-store", () => ({
 
 import type { AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
-import { createServerVideoGenerationTask, createVideoGenerationTask, pollVideoGenerationTask } from "./video";
+import { cancelServerVideoGenerationTask, createServerVideoGenerationTask, createVideoGenerationTask, pollVideoGenerationTask } from "./video";
 
 const config = {
     model: "video-v1",
@@ -86,6 +86,21 @@ describe("video API service", () => {
             error: "上游生成失败",
             canRetry: true,
         });
+    });
+
+    it("cancels a server-owned video task without accepting a result URL", async () => {
+        const fetchMock = vi.fn().mockResolvedValue(json({ task: { id: "video-running", status: "cancelled" } }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        await cancelServerVideoGenerationTask({ id: "video-running", provider: "generation", model: "video-v1", pollPath: "server" });
+
+        expect(fetchMock).toHaveBeenCalledWith("/api/video-tasks/video-running", expect.objectContaining({ method: "PATCH", body: JSON.stringify({ action: "cancel" }) }));
+    });
+
+    it("reports a cancellation conflict without creating another task", async () => {
+        vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: "当前任务无法取消" }), { status: 409, headers: { "content-type": "application/json" } })));
+
+        await expect(cancelServerVideoGenerationTask({ id: "video-finished", provider: "generation", model: "video-v1", pollPath: "server" })).rejects.toThrow("当前任务无法取消");
     });
 });
 

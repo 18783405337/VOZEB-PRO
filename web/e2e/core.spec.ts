@@ -63,6 +63,61 @@ test("video request replay and cancellation keep one upstream task", async ({ re
     expect(state.requests.filter((item) => item.method === "POST" && item.path.endsWith("/videos"))).toHaveLength(1);
 });
 
+test("video workbench prevents rapid duplicate submissions and restores cancellation after refresh", async ({ page, request }) => {
+    let planningRequests = 0;
+    await page.route("**/api/agent/workbench", async (route) => {
+        planningRequests += 1;
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+                code: 0,
+                data: {
+                    intent: "generation",
+                    parameterPatch: { model: "e2e-video-slow", size: "16:9", vquality: "720", videoSeconds: 5 },
+                    resolvedPrompt: "slow video",
+                    shouldGenerate: true,
+                    reply: "开始生成。",
+                    choices: [],
+                    deliverables: [],
+                },
+                msg: "OK",
+            }),
+        });
+    });
+
+    await page.goto("/video", { waitUntil: "domcontentloaded" });
+    const prompt = page.getByPlaceholder("今天我们要创作什么，可直接粘贴文字或素材");
+    const generate = page.getByRole("button", { name: /开始生成/ });
+    await prompt.fill("生成一段慢速测试视频");
+    await expect(generate).toBeEnabled();
+    await generate.evaluate((button) => {
+        button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+        button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    await expect.poll(() => planningRequests).toBe(1);
+    await expect.poll(async () => (await protocolFixtureState(request)).requests.filter((item) => item.method === "POST" && item.path.endsWith("/videos")).length).toBe(1);
+    const createdRequest = (await protocolFixtureState(request)).requests.find((item) => item.method === "POST" && item.path.endsWith("/videos"));
+    expect(createdRequest?.contentType).toMatch(/^multipart\/form-data; boundary=/);
+    expect(createdRequest?.model).toBe("e2e-video-slow");
+    await expect(page.getByRole("button", { name: "取消任务" }).first()).toBeVisible();
+
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page.getByRole("button", { name: "取消任务" }).first()).toBeVisible();
+    await page.getByRole("button", { name: "取消任务" }).first().click();
+    await expect(page.getByText("任务已取消").first()).toBeVisible();
+    await expect.poll(async () => (await protocolFixtureState(request)).requests.filter((item) => item.method === "POST" && item.path.endsWith("/videos")).length).toBe(1);
+
+    await prompt.fill("取消后再次生成慢速测试视频");
+    await expect(generate).toBeEnabled();
+    await generate.click();
+    await expect.poll(() => planningRequests).toBe(2);
+    await expect.poll(async () => (await protocolFixtureState(request)).requests.filter((item) => item.method === "POST" && item.path.endsWith("/videos")).length).toBe(2);
+    await expect(page.getByRole("button", { name: "取消任务" }).first()).toBeVisible();
+    await page.getByRole("button", { name: "取消任务" }).first().click();
+});
+
 test("audio task stores a valid audio result", async ({ request }) => {
     const created = await request.post("/api/audio-tasks", { data: { config: { model: "e2e-audio", voice: "alloy", format: "wav" }, prompt: "audio fixture", source: "agent", context: { clientRequestId: `e2e-audio:${randomUUID()}` } } });
     expect(created.ok(), await created.text()).toBe(true);

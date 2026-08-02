@@ -9,6 +9,7 @@ import { runGenerationTaskRecoveryBatch } from "@/lib/server/generation-task-rec
 import { cancellationExecutionPatch, type GenerationCancellationTarget } from "@/lib/server/generation-task-cancellation-service";
 import { refundVideoTask } from "@/lib/server/video-task-refund";
 import { getStoredGenerationTaskRecord } from "@/lib/server/generation-task-store";
+import { writeVideoGenerationLog } from "@/lib/server/video-task-log";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -54,6 +55,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     };
     const next = await transitionVideoTask(task, { status: "cancelled", error: "任务已取消", retryable: false }, cancellationExecutionPatch(target));
     if (!next) return NextResponse.json({ error: "当前任务状态无法修改" }, { status: 409 });
+    await writeVideoGenerationLog(next, "failed", "任务已取消", false).catch((error) => console.warn("Cancelled video generation log update failed", { taskId: task.id, error }));
     const origin = resolveInternalOrigin(new URL(request.url).origin);
     after(() => runGenerationTaskRecoveryBatch({ origin, limit: 1, taskIds: [task.id] }));
     const refreshedUser = await getCurrentUser();

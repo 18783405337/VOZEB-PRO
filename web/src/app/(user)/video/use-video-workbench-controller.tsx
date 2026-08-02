@@ -25,7 +25,7 @@ import { SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
 import { referenceImageFromAsset, referenceVideoFromAsset, videoAssetData } from "@/lib/workbench-asset-reference";
 import { deleteGenerationLogResults as deleteServerGenerationLogResults, deleteGenerationLogs as deleteServerGenerationLogs, renameGenerationLog as renameServerGenerationLog } from "@/services/api/generation-logs";
 import type { AgentSkillSummary } from "@/services/api/agent-skills";
-import { createServerVideoGenerationTask, pollVideoGenerationTask, storeGeneratedVideo } from "@/services/api/video";
+import { cancelServerVideoGenerationTask, createServerVideoGenerationTask, pollVideoGenerationTask, storeGeneratedVideo } from "@/services/api/video";
 import { GenerationTaskRequestError, isDefinitiveGenerationTaskRequestFailure } from "@/services/api/generation-task-request-error";
 import { VIDEO_GENERATION_WAIT_TIMEOUT_MS } from "@/services/api/video-types";
 import { deleteStoredMedia } from "@/services/file-storage";
@@ -57,21 +57,32 @@ import {
 import { selectVideoModel } from "./video-workbench-model";
 import { buildVideoWorkbenchRequest } from "./video-workbench-request";
 import { useVideoReferenceInputs } from "./use-video-reference-inputs";
+import { useVideoTaskQueue } from "./use-video-task-queue";
 
 export function useVideoWorkbenchController() {
     const searchParams = useSearchParams();
     const { message } = App.useApp();
     const fileInputRef = useRef<HTMLInputElement>(null);
     const mountedRef = useRef(true);
-    const activeLogIdsRef = useRef<Set<string>>(new Set());
-    const startingVideoTasksRef = useRef(0);
-    const queuedVideoLogsRef = useRef<Array<{ log: GenerationLog; configOverride?: AiConfig }>>([]);
-    const queuedVideoLogIdsRef = useRef<Set<string>>(new Set());
     const recoveringVideoRequestsRef = useRef<Set<string>>(new Set());
-    const videoConcurrencyLimitRef = useRef(1);
     const activeLogIdRef = useRef<string | null>(null);
     const logsRef = useRef<GenerationLog[]>([]);
     const deletedResultLogIdsRef = useRef(new Set<string>());
+    const blockedVideoLogIdsRef = useRef(new Set<string>());
+    const pollGenerationLogRef = useRef<(log: GenerationLog, configOverride?: AiConfig) => Promise<void>>(async () => undefined);
+    const {
+        activeVideoCount,
+        beginSubmission: beginStartingVideoTask,
+        claim: claimVideoLog,
+        discard: discardVideoLog,
+        drain: startQueuedVideoLogs,
+        finish: finishActiveVideoLog,
+        finishSubmission: finishStartingVideoTask,
+        removeQueued: removeQueuedVideoLog,
+        reset: resetVideoTaskQueue,
+        schedule: scheduleVideoLog,
+        setConcurrencyLimit: setVideoQueueConcurrencyLimit,
+    } = useVideoTaskQueue({ blockedLogIdsRef: blockedVideoLogIdsRef, runLog: (log, configOverride) => pollGenerationLogRef.current(log, configOverride) });
     const effectiveConfig = useEffectiveConfig();
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
@@ -136,7 +147,6 @@ export function useVideoWorkbenchController() {
     const [audioReferences, setAudioReferences] = useState<ReferenceAudio[]>([]);
     const [results, setResults] = useState<GenerationResult[]>([]);
     const [logs, setLogs] = useState<GenerationLog[]>([]);
-    const [activeVideoCount, setActiveVideoCount] = useState(0);
     const [logsOpen, setLogsOpen] = useState(false);
     const [promptDialogOpen, setPromptDialogOpen] = useState(false);
     const [assetPickerOpen, setAssetPickerOpen] = useState(false);
@@ -145,6 +155,7 @@ export function useVideoWorkbenchController() {
     const [selectedResultIds, setSelectedResultIds] = useState<string[]>([]);
     const [previewLog, setPreviewLog] = useState<GenerationLog | null>(null);
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+    const [cancellingLogIds, setCancellingLogIds] = useState<string[]>([]);
     const userIdRef = useRef("");
 
     const videoModelOptions = selectableModelsByCapability(effectiveConfig, "video");
@@ -158,7 +169,7 @@ export function useVideoWorkbenchController() {
         videoQuality: effectiveConfig.vquality,
         videoSeconds: effectiveConfig.videoSeconds,
     });
-    const canGenerate = Boolean(prompt.trim());
+    const canGenerate = publicSessionReady && Boolean(prompt.trim());
     const videoConcurrencyLimit = Math.max(1, Math.min(5, Math.floor(Number(effectiveConfig.generationConcurrency?.video) || 1)));
     const previewPendingCount = results.filter((result) => result.status === "pending").length;
 
@@ -171,20 +182,19 @@ export function useVideoWorkbenchController() {
 
     useEffect(() => {
         userIdRef.current = userId;
-        activeLogIdsRef.current.clear();
-        queuedVideoLogsRef.current = [];
-        queuedVideoLogIdsRef.current.clear();
+        resetVideoTaskQueue();
         recoveringVideoRequestsRef.current.clear();
         deletedResultLogIdsRef.current.clear();
+        blockedVideoLogIdsRef.current.clear();
         activeLogIdRef.current = null;
         setPreviewLog(null);
         setResults([]);
         setSelectedLogIds([]);
         setSelectedResultIds([]);
+        setCancellingLogIds([]);
         setSelectedSkill(undefined);
         setSelectedModelIds([]);
         setSmartPlanning(true);
-        syncActiveVideoCount();
         if (userId) void refreshLogs(userId);
         else {
             logsRef.current = [];
@@ -207,9 +217,8 @@ export function useVideoWorkbenchController() {
     }, []);
 
     useEffect(() => {
-        videoConcurrencyLimitRef.current = videoConcurrencyLimit;
-        startQueuedVideoLogs();
-    }, [videoConcurrencyLimit]);
+        setVideoQueueConcurrencyLimit(videoConcurrencyLimit);
+    }, [setVideoQueueConcurrencyLimit, videoConcurrencyLimit]);
     const { addReferences, addReferencesFromClipboard, handleReferenceDragOver, handleReferenceDragLeave, handleReferenceDrop, referenceDropZoneClass } = useVideoReferenceInputs({
         references,
         videoReferences,
@@ -221,57 +230,6 @@ export function useVideoWorkbenchController() {
         setReferenceDragTarget,
         notice: message,
     });
-
-    function currentVideoTaskCount() {
-        return activeLogIdsRef.current.size + startingVideoTasksRef.current;
-    }
-
-    function syncActiveVideoCount() {
-        const count = currentVideoTaskCount();
-        setActiveVideoCount(count);
-    }
-
-    function beginStartingVideoTask() {
-        startingVideoTasksRef.current += 1;
-        syncActiveVideoCount();
-    }
-
-    function finishStartingVideoTask() {
-        startingVideoTasksRef.current = Math.max(0, startingVideoTasksRef.current - 1);
-        syncActiveVideoCount();
-    }
-
-    function enqueueVideoLog(log: GenerationLog, configOverride?: AiConfig) {
-        if (!log.task || activeLogIdsRef.current.has(log.id) || queuedVideoLogIdsRef.current.has(log.id) || deletedResultLogIdsRef.current.has(log.id)) return;
-        queuedVideoLogIdsRef.current.add(log.id);
-        queuedVideoLogsRef.current.push({ log, configOverride });
-    }
-
-    function removeQueuedVideoLog(logId: string) {
-        queuedVideoLogIdsRef.current.delete(logId);
-        queuedVideoLogsRef.current = queuedVideoLogsRef.current.filter((item) => item.log.id !== logId);
-    }
-
-    function startQueuedVideoLogs() {
-        while (currentVideoTaskCount() < videoConcurrencyLimitRef.current && queuedVideoLogsRef.current.length) {
-            const item = queuedVideoLogsRef.current.shift();
-            if (!item) return;
-            queuedVideoLogIdsRef.current.delete(item.log.id);
-            if (deletedResultLogIdsRef.current.has(item.log.id)) continue;
-            void pollGenerationLog(item.log, item.configOverride);
-        }
-        syncActiveVideoCount();
-    }
-
-    function scheduleVideoLog(log: GenerationLog, configOverride?: AiConfig) {
-        if (!log.task || activeLogIdsRef.current.has(log.id) || deletedResultLogIdsRef.current.has(log.id)) return;
-        if (currentVideoTaskCount() >= videoConcurrencyLimitRef.current) {
-            enqueueVideoLog(log, configOverride);
-            syncActiveVideoCount();
-            return;
-        }
-        void pollGenerationLog(log, configOverride);
-    }
 
     function schedulePendingVideoRecovery(logId: string, delayMs = 15_000) {
         globalThis.setTimeout(() => {
@@ -301,16 +259,18 @@ export function useVideoWorkbenchController() {
     } = {}) => {
         const snapshot = buildRequestSnapshot(promptOverride, parameterPatch, userPrompt);
         if (!snapshot) return;
+        if (!beginStartingVideoTask()) {
+            message.warning("当前用户视频生成已达到并发上限，请先等待或取消运行中的任务");
+            return;
+        }
         let sharedConversationId = conversationId || activeCreativeConversationId;
         try {
             sharedConversationId ||= await ensureCreativeConversation();
         } catch (error) {
+            finishStartingVideoTask();
+            startQueuedVideoLogs();
             if (signal) throw error;
             message.error(error instanceof Error ? error.message : "创作会话创建失败");
-            return;
-        }
-        if (currentVideoTaskCount() >= videoConcurrencyLimitRef.current) {
-            message.warning("当前用户视频生成已达到并发上限，请稍后再试");
             return;
         }
         const baseResults: GenerationResult[] = [];
@@ -323,7 +283,6 @@ export function useVideoWorkbenchController() {
             startedAt: taskStartedAt,
         };
         const pendingLog = { ...buildLogFromVideoResults(null, snapshot, startedResults, 0, undefined, pendingRequest), creativeConversationId: sharedConversationId };
-        beginStartingVideoTask();
         setSelectedResultIds([]);
         setResults(startedResults);
         setActiveAgentRecordId(pendingLog.id);
@@ -472,10 +431,6 @@ export function useVideoWorkbenchController() {
             if (currentLog.status === "生成中" && currentLog.task) scheduleVideoLog(currentLog);
             return;
         }
-        if (currentVideoTaskCount() >= videoConcurrencyLimitRef.current) {
-            message.warning("当前用户视频生成已达到并发上限，请稍后再试");
-            return;
-        }
         const retryResultId = failedResult.id;
         const retrySnapshot = snapshotFromLog(currentLog, effectiveConfig, retryResultId);
         const retryModel = retrySnapshot.config.videoModel || retrySnapshot.config.model;
@@ -484,14 +439,18 @@ export function useVideoWorkbenchController() {
             openConfigDialog(true);
             return;
         }
+        if (!beginStartingVideoTask()) {
+            message.warning("当前用户视频生成已达到并发上限，请先等待或取消运行中的任务");
+            return;
+        }
         const retryStartedAt = Date.now();
         const pendingResults = replaceResult(currentResults, retryResultId, { id: retryResultId, status: "pending" });
         const retryContext = createFreshGenerationTaskContext("video-workbench-retry", [currentLog.id, retryResultId]);
         const pendingRequest: PendingVideoRequest = { taskResultId: retryResultId, clientRequestId: retryContext.clientRequestId, startedAt: retryStartedAt };
         const pendingLog = buildLogFromVideoResults(currentLog, retrySnapshot, pendingResults, currentLog.durationMs || 0, undefined, pendingRequest);
 
-        beginStartingVideoTask();
         deletedResultLogIdsRef.current.delete(currentLog.id);
+        blockedVideoLogIdsRef.current.delete(currentLog.id);
         removeQueuedVideoLog(currentLog.id);
         activeLogIdRef.current = currentLog.id;
         setPreviewLog(pendingLog);
@@ -540,6 +499,38 @@ export function useVideoWorkbenchController() {
             await saveLog(failedLog);
             message.error(errorMessage);
             startQueuedVideoLogs();
+        }
+    };
+
+    const cancelGenerationLog = async (log: GenerationLog) => {
+        const currentLog = getLatestLog(log.id) || log;
+        if (currentLog.status !== "生成中" || !currentLog.task) {
+            message.info(currentLog.status === "生成中" ? "视频任务仍在提交，登记完成后即可取消" : "当前视频任务已经结束");
+            return;
+        }
+        setCancellingLogIds((ids) => (ids.includes(currentLog.id) ? ids : [...ids, currentLog.id]));
+        try {
+            await cancelServerVideoGenerationTask(currentLog.task);
+            blockedVideoLogIdsRef.current.add(currentLog.id);
+            discardVideoLog(currentLog.id);
+            const resultId = currentLog.taskResultId || currentLog.id;
+            const snapshot = snapshotFromLog(currentLog, effectiveConfig, resultId);
+            const cancelledResults = replaceResult(resultsFromLog(currentLog), resultId, { id: resultId, status: "failed", error: "任务已取消" });
+            const cancelledLog = buildLogFromVideoResults(currentLog, snapshot, cancelledResults, currentLog.durationMs || 0, "任务已取消");
+            logsRef.current = logsRef.current.map((item) => (item.id === currentLog.id ? cancelledLog : item));
+            setLogs(logsRef.current);
+            if (activeLogIdRef.current === currentLog.id) {
+                setPreviewLog(cancelledLog);
+                setResults(cancelledResults);
+            }
+            await refreshLogs();
+            message.success("视频任务已取消");
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : "视频任务取消失败";
+            message.error(errorMessage);
+            if (currentLog.task) scheduleVideoLog(currentLog);
+        } finally {
+            setCancellingLogIds((ids) => ids.filter((id) => id !== currentLog.id));
         }
     };
 
@@ -628,10 +619,9 @@ export function useVideoWorkbenchController() {
             .filter((key): key is string => Boolean(key));
         deleteIds.forEach((id) => {
             deletedResultLogIdsRef.current.add(id);
-            removeQueuedVideoLog(id);
-            activeLogIdsRef.current.delete(id);
+            blockedVideoLogIdsRef.current.add(id);
+            discardVideoLog(id, false);
         });
-        syncActiveVideoCount();
         startQueuedVideoLogs();
         logsRef.current = logsRef.current.filter((log) => !deleteIdSet.has(log.id));
         setLogs(logsRef.current);
@@ -732,39 +722,35 @@ export function useVideoWorkbenchController() {
     };
 
     const pollGenerationLog = async (log: GenerationLog, configOverride?: AiConfig) => {
-        if (!log.task || activeLogIdsRef.current.has(log.id)) return;
-        if (currentVideoTaskCount() >= videoConcurrencyLimitRef.current) {
-            enqueueVideoLog(log, configOverride);
-            syncActiveVideoCount();
-            return;
-        }
-        activeLogIdsRef.current.add(log.id);
-        syncActiveVideoCount();
+        if (!claimVideoLog(log, configOverride)) return;
+        const task = log.task;
+        if (!task) return;
         if (!activeLogIdRef.current) activeLogIdRef.current = log.id;
         if (activeLogIdRef.current === log.id) {
             setPreviewLog(log);
             setResults((value) => (value.length ? value : resultsFromLog(log)));
         }
         const taskConfigSource = { ...effectiveConfig, ...log.config };
-        const taskConfig = buildVideoConfig(taskConfigSource, selectVideoModel(taskConfigSource, selectableModelsByCapability(taskConfigSource, "video"), log.task.model || log.model));
+        const taskConfig = buildVideoConfig(taskConfigSource, selectVideoModel(taskConfigSource, selectableModelsByCapability(taskConfigSource, "video"), task.model || log.model));
         const resultId = log.taskResultId || log.id;
         const snapshot = snapshotFromLog(log, taskConfig, resultId);
         let continueInBackground = false;
         try {
             const deadline = Date.now() + VIDEO_GENERATION_WAIT_TIMEOUT_MS;
             while (Date.now() < deadline) {
-                if (deletedResultLogIdsRef.current.has(log.id)) return;
+                if (blockedVideoLogIdsRef.current.has(log.id)) return;
                 let state;
                 try {
-                    state = await pollVideoGenerationTask(configOverride || taskConfig, log.task);
+                    state = await pollVideoGenerationTask(configOverride || taskConfig, task);
                 } catch {
                     await delay(10_000);
                     continue;
                 }
+                if (blockedVideoLogIdsRef.current.has(log.id)) return;
                 if (state.status === "completed") {
-                    if (deletedResultLogIdsRef.current.has(log.id)) return;
+                    if (blockedVideoLogIdsRef.current.has(log.id)) return;
                     const stored = await storeGeneratedVideo(state.result);
-                    if (deletedResultLogIdsRef.current.has(log.id)) {
+                    if (blockedVideoLogIdsRef.current.has(log.id)) {
                         await deleteStoredMedia([stored.storageKey]);
                         return;
                     }
@@ -775,7 +761,7 @@ export function useVideoWorkbenchController() {
                         remoteUrl: stored.remoteUrl,
                         serverUrl: stored.serverUrl,
                         storageKey: stored.storageKey,
-                        durationMs: state.result.durationMs || (log.task.durationSeconds ? log.task.durationSeconds * 1000 : 0),
+                        durationMs: state.result.durationMs || (task.durationSeconds ? task.durationSeconds * 1000 : 0),
                         width: stored.width || 1280,
                         height: stored.height || 720,
                         bytes: stored.bytes,
@@ -798,25 +784,23 @@ export function useVideoWorkbenchController() {
                     message.error(state.error);
                     return;
                 }
-                await delay(log.task.provider === "seedance" ? 5000 : 2500);
+                await delay(task.provider === "seedance" ? 5000 : 2500);
             }
             continueInBackground = true;
             message.info("视频仍在后台生成，系统会继续查询原任务");
         } catch (error) {
-            if (deletedResultLogIdsRef.current.has(log.id)) return;
+            if (blockedVideoLogIdsRef.current.has(log.id)) return;
             const errorMessage = error instanceof Error ? error.message : "生成失败";
             const latestLog = getLatestLog(log.id) || log;
             const pendingResults = replaceResult(resultsFromLog(latestLog), resultId, { id: resultId, status: "pending" });
-            const nextLog = buildLogFromVideoResults(latestLog, snapshot, pendingResults, latestLog.durationMs || 0, undefined, { task: log.task, taskResultId: resultId });
+            const nextLog = buildLogFromVideoResults(latestLog, snapshot, pendingResults, latestLog.durationMs || 0, undefined, { task, taskResultId: resultId });
             if (activeLogIdRef.current === log.id) setResults(pendingResults);
             await saveLog(nextLog, { refresh: false });
             continueInBackground = true;
             message.warning(`${errorMessage}，后台将继续查询原视频任务`);
         } finally {
-            activeLogIdsRef.current.delete(log.id);
-            syncActiveVideoCount();
-            startQueuedVideoLogs();
-            if (continueInBackground && !deletedResultLogIdsRef.current.has(log.id)) {
+            finishActiveVideoLog(log.id);
+            if (continueInBackground && !blockedVideoLogIdsRef.current.has(log.id)) {
                 globalThis.setTimeout(() => {
                     const latestLog = getLatestLog(log.id);
                     if (latestLog?.status === "生成中" && latestLog.task) scheduleVideoLog(latestLog, configOverride);
@@ -824,6 +808,7 @@ export function useVideoWorkbenchController() {
             }
         }
     };
+    pollGenerationLogRef.current = pollGenerationLog;
 
     const previewGenerationLog = (log: GenerationLog) => {
         activeLogIdRef.current = log.id;
@@ -874,9 +859,9 @@ export function useVideoWorkbenchController() {
                 });
     };
 
-    const currentResultIds = results.map((result) => result.id);
+    const currentResultIds = results.filter((result) => result.status !== "pending").map((result) => result.id);
     const selectedVisibleResultIds = selectedResultIds.filter((id) => currentResultIds.includes(id));
-    const allResultsSelected = Boolean(results.length) && selectedVisibleResultIds.length === results.length;
+    const allResultsSelected = Boolean(currentResultIds.length) && selectedVisibleResultIds.length === currentResultIds.length;
 
     const toggleAllResults = () => {
         setSelectedResultIds(allResultsSelected ? [] : currentResultIds);
@@ -894,8 +879,8 @@ export function useVideoWorkbenchController() {
         const nextResults = results.filter((result) => !selectedIds.has(result.id));
         const mediaKeys = removedResults.flatMap((result) => (result.video?.storageKey ? [result.video.storageKey] : []));
         deletedResultLogIdsRef.current.add(currentLog.id);
-        removeQueuedVideoLog(currentLog.id);
-        activeLogIdsRef.current.delete(currentLog.id);
+        blockedVideoLogIdsRef.current.add(currentLog.id);
+        discardVideoLog(currentLog.id);
         const keptVideos = nextResults.flatMap((result) => (result.status === "success" && result.video ? [result.video] : []));
         const keptVideo = keptVideos[keptVideos.length - 1];
         const failedResult = nextResults.find((result) => result.status === "failed");
@@ -914,8 +899,6 @@ export function useVideoWorkbenchController() {
         setResults(nextResults);
         setSelectedResultIds([]);
         setPreviewLog(nextLog);
-        syncActiveVideoCount();
-        startQueuedVideoLogs();
         await Promise.all([deleteStoredMedia(mediaKeys), deleteServerGenerationLogResults(`video-workbench:${currentLog.id}`, selectedVisibleResultIds)]);
         await saveLog(nextLog, { refresh: false });
         message.success(`已删除 ${removedResults.length} 个结果`);
@@ -974,6 +957,7 @@ export function useVideoWorkbenchController() {
         setSelectedLogIds,
         selectedResultIds,
         previewLog,
+        cancellingLogIds,
         deleteConfirmOpen,
         setDeleteConfirmOpen,
         videoModelOptions,
@@ -994,6 +978,7 @@ export function useVideoWorkbenchController() {
         retryAgentMessage,
         cancelAgentRun,
         retryResult,
+        cancelGenerationLog,
         downloadVideo,
         saveResultToAssets,
         insertPickedAsset,

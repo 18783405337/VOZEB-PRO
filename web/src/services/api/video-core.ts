@@ -258,6 +258,20 @@ export async function pollServerVideoTask(task: VideoGenerationTask, options?: R
     return { status: "pending" };
 }
 
+export async function cancelServerVideoGenerationTask(task: VideoGenerationTask) {
+    const taskId = task.serverTaskId || task.id;
+    const response = await fetch(`/api/video-tasks/${encodeURIComponent(taskId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "cancel" }),
+    });
+    throwIfClientSessionExpired(response);
+    syncUserPointsFromHeaders(response.headers, "system");
+    const payload = (await response.json().catch(() => ({}))) as { task?: { id?: string; status?: string }; error?: string };
+    if (!response.ok) throw new Error(payload.error || "视频任务取消失败");
+    if (payload.task?.status !== "cancelled") throw new Error(payload.error || "视频任务尚未取消");
+}
+
 export async function pollUpstreamVideoGenerationTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
     const requestConfig = resolveModelRequestConfig(config, task.model);
     assertVideoConfig(requestConfig, requestConfig.model);

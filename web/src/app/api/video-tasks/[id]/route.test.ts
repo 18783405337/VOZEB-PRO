@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
     recover: vi.fn(),
     refund: vi.fn(),
     transition: vi.fn(),
+    writeLog: vi.fn(),
 }));
 
 vi.mock("next/server", async (importOriginal) => {
@@ -19,6 +20,7 @@ vi.mock("@/lib/server/internal-origin", () => ({ fetchInternalApi: vi.fn(), reso
 vi.mock("@/lib/server/points-response", () => ({ pointsResponseHeaders: vi.fn(() => new Headers()) }));
 vi.mock("@/lib/server/generation-task-recovery-service", () => ({ runGenerationTaskRecoveryBatch: mocks.recover }));
 vi.mock("@/lib/server/generation-task-store", () => ({ getStoredGenerationTaskRecord: mocks.getSchedule }));
+vi.mock("@/lib/server/video-task-log", () => ({ writeVideoGenerationLog: mocks.writeLog }));
 vi.mock("@/lib/server/video-task-store", () => ({
     canReconcileVideoTask: (task: { status: string; error?: string }) => task.status === "running" || (task.status === "error" && /视频生成超时|视频任务长时间未更新/.test(task.error || "")),
     getVideoTask: mocks.getVideoTask,
@@ -34,6 +36,7 @@ describe("GET /api/video-tasks/[id]", () => {
         vi.clearAllMocks();
         mocks.currentUser.mockResolvedValue({ id: "user", role: "user", pointsBalance: 100 });
         mocks.getSchedule.mockResolvedValue({ executionPhase: "polling" });
+        mocks.writeLog.mockResolvedValue(undefined);
     });
 
     it("returns a running task immediately and schedules a low-cost Worker wakeup", async () => {
@@ -110,6 +113,7 @@ describe("GET /api/video-tasks/[id]", () => {
 
         expect(response.status).toBe(200);
         expect(mocks.transition).toHaveBeenCalledWith(task, { status: "cancelled", error: "任务已取消", retryable: false }, expect.objectContaining({ executionPhase: "cancel_requested", upstreamTaskId: "upstream-video" }));
+        expect(mocks.writeLog).toHaveBeenCalledWith(expect.objectContaining({ status: "cancelled" }), "failed", "任务已取消", false);
         expect(mocks.refund).not.toHaveBeenCalled();
     });
 });

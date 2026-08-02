@@ -1,108 +1,40 @@
 "use client";
 
-import { CheckSquare, ClipboardPaste, Download, FolderPlus, Music2, Sparkles, Square, Trash2, Upload, VideoIcon } from "lucide-react";
-import { useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState, type DragEvent as ReactDragEvent } from "react";
-import { App, Button, Drawer, Modal, Tag, Typography } from "antd";
-import { nanoid } from "nanoid";
-import { saveAs } from "file-saver";
+import { CheckSquare, CircleStop, ClipboardPaste, Music2, Sparkles, Square, Trash2, Upload, VideoIcon } from "lucide-react";
+import { Button, Drawer, Modal, Tag } from "antd";
 
-import type { InsertAssetPayload } from "@/app/(user)/canvas/components/asset-picker-modal";
-import { AudioSettingsPanel } from "@/components/audio-settings-panel";
-import { ModelPicker } from "@/components/model-picker";
-import { formatCreditAmount, requestCreditCost } from "@/constant/credits";
-import { VideoSettingsPanel, videoSizeLabel } from "@/components/video-settings-panel";
-import { canvasThemes } from "@/lib/canvas-theme";
-import { preloadOnIdle } from "@/lib/preload-on-idle";
-import { droppedFiles, leftDropTarget, preventFileDragEvent } from "@/lib/file-drop";
+import { formatCreditAmount } from "@/constant/credits";
+import { videoSizeLabel } from "@/components/video-settings-panel";
 import { generationLogPublicPrompt } from "@/lib/generation-log-snapshot";
-import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { imagePreviewUrl } from "@/lib/media-image-url";
-import { seedanceReferenceLabel, seedanceVideoReferenceError, seedanceVideoReferenceHint, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
-import { deleteStoredMedia, uploadMediaFile } from "@/services/file-storage";
-import { uploadImage } from "@/services/image-storage";
-import { deleteGenerationLogs as deleteServerGenerationLogs } from "@/services/api/generation-logs";
-import { createServerVideoGenerationTask, pollVideoGenerationTask, storeGeneratedVideo } from "@/services/api/video";
-import { useAssetStore } from "@/stores/use-asset-store";
-import { modelOptionLabel, selectableModelsByCapability, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
-import { useThemeStore } from "@/stores/use-theme-store";
-import { WorkbenchAgentConversation, WorkbenchAgentHeader, WorkbenchBackgroundTaskNotice, WorkbenchComposerFrame, WorkbenchSkillEmptyState, type WorkbenchAgentMessage } from "@/components/agent/workbench-agent-panel";
+import { seedanceReferenceLabel } from "@/lib/seedance-video";
+import { modelOptionLabel } from "@/stores/use-config-store";
+import { WorkbenchAgentConversation, WorkbenchAgentHeader, WorkbenchBackgroundTaskNotice, WorkbenchComposerFrame, WorkbenchSkillEmptyState } from "@/components/agent/workbench-agent-panel";
 import { workbenchReferencesFromAttachments } from "@/components/agent/workbench-agent-references";
 import { CompactEmptyState } from "@/components/compact-empty-state";
-import { WorkbenchGenerationActivity, WorkbenchGenerationPlaceholder } from "@/components/agent/workbench-generation-placeholder";
-import { WorkbenchHistoryPanel } from "@/components/agent/workbench-history-panel";
+import { WorkbenchGenerationActivity } from "@/components/agent/workbench-generation-placeholder";
 import { moveListItem, ReferenceOrderButtons, WorkbenchPromptEditor } from "@/components/agent/workbench-composer-controls";
-import { preloadWorkbenchResourceDialogs, WorkbenchResourceDialogs } from "@/components/agent/workbench-resource-dialogs";
-import { ResultSelectCheckbox, WorkbenchFileInput } from "@/components/agent/workbench-result-controls";
-import { findWorkbenchAgentSessionForRecord, matchesWorkbenchHistoryQuery, removeWorkbenchAgentSessionsForRecords } from "@/components/agent/workbench-agent-session-store";
-import { mergeWorkbenchAgentPatch, useWorkbenchAgentRun, type WorkbenchAgentParameterPatch } from "@/hooks/use-workbench-agent-run";
-import { useWorkbenchAgentSessions } from "@/hooks/use-workbench-agent-sessions";
-import { useWorkbenchCreativeReview } from "@/hooks/use-workbench-creative-review";
-import { useUserStore } from "@/stores/use-user-store";
+import { WorkbenchResourceDialogs } from "@/components/agent/workbench-resource-dialogs";
+import { WorkbenchFileInput } from "@/components/agent/workbench-result-controls";
+import { matchesWorkbenchHistoryQuery } from "@/components/agent/workbench-agent-session-store";
 import { cn } from "@/lib/utils";
-import { referenceImageFromAsset, referenceVideoFromAsset, videoAssetData } from "@/lib/workbench-asset-reference";
-import type { ReferenceImage } from "@/types/image";
-import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
-import {
-    buildLogFromVideoResults,
-    buildVideoConfig,
-    delay,
-    filterAudioReferencesByDuration,
-    isSupportedAudioFile,
-    normalizeLogConfig,
-    normalizeVideoSeconds,
-    readStoredLogs,
-    removeStoredVideoLogs,
-    replaceResult,
-    resultsFromLog,
-    saveStoredVideoLog,
-    snapshotFromLog,
-    withLogOwner,
-    type GeneratedVideo,
-    type GenerationLog,
-    type GenerationResult,
-    type ReferenceDropTarget,
-} from "./video-workbench-records";
+import { normalizeVideoSeconds } from "./video-workbench-records";
 
-import { UpdateAiConfig, selectVideoModel, GenerationSettings, ResultVideoCard, PendingVideoCard, FailedVideoCard, videoFailureDisplay, LogPanel } from "./video-workbench-panels";
+import { GenerationSettings, ResultVideoCard, PendingVideoCard, FailedVideoCard, LogPanel } from "./video-workbench-panels";
 
 import { useVideoWorkbenchController } from "./use-video-workbench-controller";
 
 export default function VideoPage() {
     const controller = useVideoWorkbenchController();
     const {
-        searchParams,
         message,
         fileInputRef,
-        activeLogIdsRef,
-        startingVideoTasksRef,
-        queuedVideoLogsRef,
-        queuedVideoLogIdsRef,
-        videoConcurrencyLimitRef,
-        activeLogIdRef,
-        logsRef,
-        deletedResultLogIdsRef,
         effectiveConfig,
         updateConfig,
-        isAiConfigReady,
         openConfigDialog,
-        addAsset,
-        userId,
         prompt,
         setPrompt,
         agentMessages,
-        setAgentMessages,
-        agentSessions,
-        setAgentSessions,
-        agentSessionsHydrated,
-        activeAgentSessionId,
-        setActiveAgentSessionId,
-        setActiveAgentRecordId,
-        activeCreativeConversationId,
-        setActiveCreativeConversationId,
-        ensureCreativeConversation,
-        lastAgentPrompt,
-        setLastAgentPrompt,
         availableSkills,
         selectedSkill,
         setSelectedSkill,
@@ -117,7 +49,6 @@ export default function VideoPage() {
         hasOlderAgentMessages,
         olderAgentMessagesLoading,
         loadOlderAgentMessages,
-        importedPromptRef,
         references,
         setReferences,
         videoReferences,
@@ -125,28 +56,21 @@ export default function VideoPage() {
         audioReferences,
         setAudioReferences,
         results,
-        setResults,
         logs,
-        setLogs,
         activeVideoCount,
-        setActiveVideoCount,
         logsOpen,
         setLogsOpen,
         promptDialogOpen,
         setPromptDialogOpen,
         assetPickerOpen,
         setAssetPickerOpen,
-        referenceDragTarget,
-        setReferenceDragTarget,
         selectedLogIds,
         setSelectedLogIds,
         selectedResultIds,
-        setSelectedResultIds,
         previewLog,
-        setPreviewLog,
+        cancellingLogIds,
         deleteConfirmOpen,
         setDeleteConfirmOpen,
-        userIdRef,
         videoModelOptions,
         model,
         pointsCost,
@@ -155,38 +79,23 @@ export default function VideoPage() {
         previewPendingCount,
         addReferences,
         referenceDropZoneClass,
-        referenceFileAccepted,
         handleReferenceDragOver,
         handleReferenceDragLeave,
         handleReferenceDrop,
         addReferencesFromClipboard,
-        currentVideoTaskCount,
-        syncActiveVideoCount,
-        beginStartingVideoTask,
-        finishStartingVideoTask,
-        enqueueVideoLog,
-        removeQueuedVideoLog,
-        startQueuedVideoLogs,
-        scheduleVideoLog,
         generate,
         agentRunning,
         runAgentGenerate,
         retryAgentMessage,
         cancelAgentRun,
-        buildRequestSnapshot,
         retryResult,
+        cancelGenerationLog,
         downloadVideo,
         saveResultToAssets,
         insertPickedAsset,
         createSession,
         deleteSelectedLogs,
-        saveLog,
-        refreshLogs,
-        getLatestLog,
-        resumePendingLogs,
-        pollGenerationLog,
         previewGenerationLog,
-        currentResultIds,
         selectedVisibleResultIds,
         allResultsSelected,
         toggleAllResults,
@@ -222,6 +131,8 @@ export default function VideoPage() {
                                             previewGenerationLog(log);
                                         }}
                                         onRenameLog={(log, title) => void renameGenerationLog(log, title)}
+                                        onCancelLog={(log) => void cancelGenerationLog(log)}
+                                        cancellingLogIds={cancellingLogIds}
                                         compact
                                     />
                                 );
@@ -297,7 +208,9 @@ export default function VideoPage() {
                                 value={prompt}
                                 placeholder="今天我们要创作什么，可直接粘贴文字或素材"
                                 onChange={setPrompt}
-                                onSubmit={() => void runAgentGenerate()}
+                                onSubmit={() => {
+                                    if (canGenerate) void runAgentGenerate();
+                                }}
                                 onPasteFiles={(files) => void addReferences(files)}
                                 onOpenPrompts={() => setPromptDialogOpen(true)}
                                 onOpenAssets={() => setAssetPickerOpen(true)}
@@ -440,6 +353,11 @@ export default function VideoPage() {
                                 <Button size="small" danger icon={<Trash2 className="size-3.5" />} disabled={!selectedVisibleResultIds.length} onClick={() => void deleteSelectedResults()}>
                                     删除{selectedVisibleResultIds.length ? ` ${selectedVisibleResultIds.length}` : ""}
                                 </Button>
+                                {previewLog?.status === "生成中" && previewLog.task ? (
+                                    <Button danger size="small" icon={<CircleStop className="size-3.5" />} loading={cancellingLogIds.includes(previewLog.id)} onClick={() => void cancelGenerationLog(previewLog)}>
+                                        取消任务
+                                    </Button>
+                                ) : null}
                                 {previewPendingCount ? <WorkbenchGenerationActivity kind="video" count={previewPendingCount} /> : null}
                                 {activeVideoCount ? (
                                     <Tag className="m-0 px-2 py-1">
@@ -493,6 +411,8 @@ export default function VideoPage() {
                         onDeleteSelected={() => setDeleteConfirmOpen(true)}
                         onPreviewLog={previewGenerationLog}
                         onRenameLog={(log, title) => void renameGenerationLog(log, title)}
+                        onCancelLog={(log) => void cancelGenerationLog(log)}
+                        cancellingLogIds={cancellingLogIds}
                     />
                 </div>
             </Drawer>

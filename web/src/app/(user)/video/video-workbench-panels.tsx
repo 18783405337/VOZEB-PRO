@@ -1,72 +1,23 @@
 "use client";
 
-import { CheckSquare, ChevronDown, ClipboardPaste, Download, FolderPlus, Music2, SlidersHorizontal, Sparkles, Square, Trash2, Upload, VideoIcon } from "lucide-react";
-import { useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState, type DragEvent as ReactDragEvent } from "react";
-import { App, Button, Drawer, Empty, Modal, Tag, Typography } from "antd";
-import { nanoid } from "nanoid";
-import { saveAs } from "file-saver";
+import { ChevronDown, CircleStop, Download, FolderPlus, Music2 } from "lucide-react";
+import { useState } from "react";
+import { Button, Tag, Typography } from "antd";
 
-import type { InsertAssetPayload } from "@/app/(user)/canvas/components/asset-picker-modal";
 import { AudioSettingsPanel } from "@/components/audio-settings-panel";
 import { ModelPicker } from "@/components/model-picker";
-import { formatCreditAmount, requestCreditCost } from "@/constant/credits";
-import { VideoSettingsPanel, videoSizeLabel } from "@/components/video-settings-panel";
+import { VideoSettingsPanel } from "@/components/video-settings-panel";
 import { canvasThemes } from "@/lib/canvas-theme";
-import { preloadOnIdle } from "@/lib/preload-on-idle";
-import { droppedFiles, leftDropTarget, preventFileDragEvent } from "@/lib/file-drop";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
-import { seedanceReferenceLabel, seedanceVideoReferenceError, seedanceVideoReferenceHint, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
-import { deleteStoredMedia, uploadMediaFile } from "@/services/file-storage";
-import { uploadImage } from "@/services/image-storage";
-import { deleteGenerationLogs as deleteServerGenerationLogs } from "@/services/api/generation-logs";
-import { createServerVideoGenerationTask, pollVideoGenerationTask, storeGeneratedVideo } from "@/services/api/video";
-import { useAssetStore } from "@/stores/use-asset-store";
-import { modelOptionLabel, selectableModelsByCapability, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import type { AiConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
-import { WorkbenchAgentConversation, WorkbenchAgentHeader, WorkbenchBackgroundTaskNotice, WorkbenchComposerFrame, WorkbenchSkillEmptyState, type WorkbenchAgentMessage } from "@/components/agent/workbench-agent-panel";
-import { WorkbenchGenerationActivity, WorkbenchGenerationPlaceholder } from "@/components/agent/workbench-generation-placeholder";
+import { WorkbenchGenerationPlaceholder } from "@/components/agent/workbench-generation-placeholder";
 import { WorkbenchHistoryPanel } from "@/components/agent/workbench-history-panel";
-import { moveListItem, ReferenceOrderButtons, WorkbenchPromptEditor } from "@/components/agent/workbench-composer-controls";
-import { preloadWorkbenchResourceDialogs, WorkbenchResourceDialogs } from "@/components/agent/workbench-resource-dialogs";
-import { ResultSelectCheckbox, WorkbenchFileInput } from "@/components/agent/workbench-result-controls";
-import { findWorkbenchAgentSessionForRecord, matchesWorkbenchHistoryQuery, removeWorkbenchAgentSessionsForRecords } from "@/components/agent/workbench-agent-session-store";
-import { mergeWorkbenchAgentPatch, useWorkbenchAgentRun, type WorkbenchAgentParameterPatch } from "@/hooks/use-workbench-agent-run";
-import { useWorkbenchAgentSessions } from "@/hooks/use-workbench-agent-sessions";
-import { useWorkbenchCreativeReview } from "@/hooks/use-workbench-creative-review";
-import { useUserStore } from "@/stores/use-user-store";
+import { ResultSelectCheckbox } from "@/components/agent/workbench-result-controls";
 import { cn } from "@/lib/utils";
-import { referenceImageFromAsset, referenceVideoFromAsset, videoAssetData } from "@/lib/workbench-asset-reference";
-import type { ReferenceImage } from "@/types/image";
-import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
-import {
-    buildLogFromVideoResults,
-    buildVideoConfig,
-    delay,
-    filterAudioReferencesByDuration,
-    isSupportedAudioFile,
-    normalizeLogConfig,
-    normalizeResolution,
-    normalizeVideoSeconds,
-    readStoredLogs,
-    removeStoredVideoLogs,
-    replaceResult,
-    resultsFromLog,
-    saveStoredVideoLog,
-    snapshotFromLog,
-    withLogOwner,
-    type GeneratedVideo,
-    type GenerationLog,
-    type GenerationResult,
-    type ReferenceDropTarget,
-} from "./video-workbench-records";
+import type { GeneratedVideo, GenerationLog } from "./video-workbench-records";
 
 export type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
-
-export function selectVideoModel(config: AiConfig, options = selectableModelsByCapability(config, "video"), preferred?: unknown) {
-    const candidates = [preferred, config.videoModel, config.model, options[0]].map((value) => (typeof value === "string" || typeof value === "number" ? String(value).trim() : "")).filter(Boolean);
-    return candidates.find((candidate) => options.includes(candidate)) || "";
-}
 
 export function GenerationSettings({ config, model, updateConfig, openConfigDialog, hideModel = false }: { config: AiConfig; model: string; updateConfig: UpdateAiConfig; openConfigDialog: (shouldPromptContinue?: boolean) => void; hideModel?: boolean }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
@@ -181,6 +132,8 @@ export function LogPanel({
     onDeleteSelected,
     onPreviewLog,
     onRenameLog,
+    onCancelLog,
+    cancellingLogIds = [],
     compact = false,
 }: {
     logs: GenerationLog[];
@@ -191,6 +144,8 @@ export function LogPanel({
     onDeleteSelected: () => void;
     onPreviewLog: (log: GenerationLog) => void;
     onRenameLog: (log: GenerationLog, title: string) => void;
+    onCancelLog?: (log: GenerationLog) => void;
+    cancellingLogIds?: string[];
     compact?: boolean;
 }) {
     return (
@@ -227,6 +182,21 @@ export function LogPanel({
                             {formatDuration(log.durationMs)}
                         </Tag>
                     </div>
+                    {log.status === "生成中" && log.task && onCancelLog ? (
+                        <Button
+                            danger
+                            size="small"
+                            className="w-fit"
+                            icon={<CircleStop className="size-3.5" />}
+                            loading={cancellingLogIds.includes(log.id)}
+                            onClick={(event) => {
+                                event.stopPropagation();
+                                onCancelLog(log);
+                            }}
+                        >
+                            取消任务
+                        </Button>
+                    ) : null}
                 </div>
             )}
         />
