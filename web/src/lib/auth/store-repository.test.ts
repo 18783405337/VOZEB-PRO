@@ -3,13 +3,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { QueryExecutor } from "@/lib/server/database";
 import { POSTGRESQL_SCHEMA_SQL } from "@/lib/server/database/schema";
 import { encryptSecretValue } from "@/lib/server/secret-crypto";
-import { mapPostgresSettings, readPostgresAnnouncementsPage, readPostgresAuthSettings, readPostgresCdkListData, readPostgresPublicUserData, upsertPostgresSystemChannels } from "./store-repository";
+import { mapPostgresSettings, mutateAuthDb, readPostgresAnnouncementsPage, readPostgresAuthSettings, readPostgresCdkListData, readPostgresPublicUserData, upsertPostgresSystemChannels } from "./store-repository";
 
 const originalEncryptionKey = process.env.VOZEB_PRO_ENCRYPTION_KEY;
+const originalDatabaseProvider = process.env.VOZEB_PRO_DATABASE_PROVIDER;
 
 afterEach(() => {
     if (originalEncryptionKey === undefined) delete process.env.VOZEB_PRO_ENCRYPTION_KEY;
     else process.env.VOZEB_PRO_ENCRYPTION_KEY = originalEncryptionKey;
+    if (originalDatabaseProvider === undefined) delete process.env.VOZEB_PRO_DATABASE_PROVIDER;
+    else process.env.VOZEB_PRO_DATABASE_PROVIDER = originalDatabaseProvider;
 });
 
 function mockExecutor(rows: Record<string, unknown>[][]) {
@@ -18,6 +21,12 @@ function mockExecutor(rows: Record<string, unknown>[][]) {
 }
 
 describe("PostgreSQL auth read paths", () => {
+    it("rejects full-database auth mutations for PostgreSQL", async () => {
+        process.env.VOZEB_PRO_DATABASE_PROVIDER = "postgres";
+
+        await expect(mutateAuthDb(() => undefined)).rejects.toThrow("PostgreSQL auth mutations must use entity repositories");
+    });
+
     it("normalizes newly added generation defaults for existing database rows", () => {
         const settings = mapPostgresSettings({ generation_defaults: { imageCount: 2 } }, [], []);
 

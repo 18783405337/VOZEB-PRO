@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createFirstAdmin, createSession, createUser, isAuthInputError } from "@/lib/auth/store";
 import { readJsonBody } from "@/lib/auth/request";
 import { serializeCurrentUser, setSessionCookie } from "@/lib/auth/session";
-import { checkRateLimit, getClientIp } from "@/lib/server/security";
+import { checkAuthRateLimit, getClientIp } from "@/lib/server/security";
 import { getInstallStatus, invalidateInstallStatusCache } from "@/lib/server/install-status";
 import { REFERRAL_COOKIE_NAME } from "@/lib/server/referral-service";
 
@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
             .trim()
             .toLowerCase()
             .slice(0, 160);
-        const limit = await checkRateLimit(`register:${getClientIp(request)}:${registrationIdentity}`, { maxRequests: 10, windowMs: 60 * 60 * 1000 });
+        const limit = await checkAuthRateLimit("register", request, registrationIdentity, { maxRequests: 10, windowMs: 60 * 60 * 1000 });
         if (!limit.allowed) return NextResponse.json({ error: "注册请求过于频繁，请稍后重试", retryAfter: Math.ceil((limit.resetAt - Date.now()) / 1000) }, { status: 429 });
         const user = install.firstAdminRequired
             ? await createFirstAdmin({ username: body.username || "", email: body.email, displayName: body.displayName, password: body.password || "", installToken: body.installToken })

@@ -7,15 +7,29 @@ const mocks = vi.hoisted(() => ({
     withdraw: vi.fn(),
     list: vi.fn(),
     review: vi.fn(),
+    revert: vi.fn(),
+    updateUserByAdmin: vi.fn(),
 }));
 
-vi.mock("@/lib/auth/store", () => ({ verifyUserPasswordForSensitiveAction: mocks.verifyPassword }));
+vi.mock("@/lib/auth/store", () => ({
+    isAuthInputError: vi.fn(() => false),
+    updateUserByAdmin: mocks.updateUserByAdmin,
+    verifyUserPasswordForSensitiveAction: mocks.verifyPassword,
+}));
+vi.mock("@/lib/server/auth-mutation-lock", () => ({ lockAuthMutation: vi.fn() }));
+vi.mock("@/lib/server/database", () => ({
+    createPostgresRepositories: vi.fn(),
+    ensurePostgresSchema: vi.fn(),
+    isPostgresDatabaseEnabled: vi.fn(() => false),
+    withPostgresTransaction: vi.fn(),
+}));
 vi.mock("@/lib/server/database/account-deletion-request-repository", () => ({
     readLatestAccountDeletionRequestForUser: mocks.readLatest,
     createAccountDeletionRequest: mocks.create,
     withdrawPendingAccountDeletionRequest: mocks.withdraw,
     listAccountDeletionRequests: mocks.list,
     reviewPendingAccountDeletionRequest: mocks.review,
+    revertAcceptedAccountDeletionRequest: mocks.revert,
 }));
 
 import { reviewAccountDeletionRequest, submitAccountDeletionRequest, withdrawOwnAccountDeletionRequest } from "./account-deletion-request-service";
@@ -42,6 +56,8 @@ describe("account deletion request service", () => {
         mocks.create.mockResolvedValue(stored);
         mocks.withdraw.mockResolvedValue({ ...stored, status: "withdrawn", handledAt: stored.updatedAt });
         mocks.review.mockResolvedValue({ ...stored, status: "accepted", reviewNote: "进入人工核验", reviewedByUserId: "admin-one", reviewedByUsername: "admin", handledAt: stored.updatedAt });
+        mocks.revert.mockResolvedValue(true);
+        mocks.updateUserByAdmin.mockResolvedValue({ id: user.id, status: "disabled" });
     });
 
     it("verifies the current password and creates one pending request", async () => {
@@ -72,5 +88,19 @@ describe("account deletion request service", () => {
 
         mocks.review.mockResolvedValueOnce(null);
         await expect(reviewAccountDeletionRequest({ id: stored.id, status: "rejected", reviewNote: "身份信息不足", reviewer: { id: "admin-one", username: "admin" } })).rejects.toMatchObject({ status: 409 });
+    });
+
+    it("disables login and revokes sessions when an administrator accepts deletion", async () => {
+        await expect(reviewAccountDeletionRequest({ id: stored.id, status: "accepted", reviewNote: "已核验并停止账号访问", reviewer: { id: "admin-one", username: "admin" } })).resolves.toMatchObject({ status: "accepted" });
+
+        expect(mocks.updateUserByAdmin).toHaveBeenCalledWith("admin-one", user.id, { status: "disabled" });
+        expect(mocks.revert).not.toHaveBeenCalled();
+    });
+
+    it("reopens the request if the file-provider access update cannot complete", async () => {
+        mocks.updateUserByAdmin.mockRejectedValueOnce(new Error("disk full"));
+
+        await expect(reviewAccountDeletionRequest({ id: stored.id, status: "accepted", reviewNote: "已核验", reviewer: { id: "admin-one", username: "admin" } })).rejects.toThrow("disk full");
+        expect(mocks.revert).toHaveBeenCalledWith(expect.objectContaining({ id: stored.id, reviewedByUserId: "admin-one" }));
     });
 });

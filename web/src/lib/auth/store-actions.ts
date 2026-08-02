@@ -1,9 +1,10 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 
 import { inferModelCapability } from "@/lib/model-capability";
+import { lockAuthMutation } from "@/lib/server/auth-mutation-lock";
 import { createPostgresRepositories, ensurePostgresSchema, isPostgresDatabaseEnabled, withPostgresTransaction } from "@/lib/server/database";
-import { adjustPermanentPointsInAuthDb, consumePoints, creditPermanentPointsInAuthDb, refundPoints, walletClock } from "@/lib/server/points-wallet-service";
-import { hashPassword, verifyPassword } from "./password";
+import { adjustPermanentPointsInPostgresTransaction, consumePoints, creditPermanentPointsInAuthDb, refundPoints, walletClock } from "@/lib/server/points-wallet-service";
+import { decryptSecretValue, encryptSecretValue } from "@/lib/server/secret-crypto";
 import {
     type UserRole,
     type UserStatus,
@@ -14,7 +15,6 @@ import {
     type ModelPointCosts,
     type PointUsageKind,
     type SystemModelChannel,
-    type SystemChannelHealthSnapshot,
     type LogicalModelCapability,
     type LogicalModelCapabilityProfile,
     type LogicalModelBinding,
@@ -52,7 +52,6 @@ import {
     type StoredPointRecord,
     type StoredQuotaUsage,
     type StoredEmailCode,
-    type AuthSettings,
     type AuthDatabase,
 } from "./store-types";
 import {
@@ -72,51 +71,8 @@ import {
     AUTH_DATA_FILE,
     USERNAME_PATTERN,
 } from "./store-foundation";
-import {
-    mutationQueue,
-    readAuthDb,
-    mutateAuthDb,
-    writeAuthDb,
-    readPostgresAuthDb,
-    readPostgresAnnouncementsPage,
-    readPostgresAuthSettings,
-    readPostgresCdkListData,
-    readPostgresPublicUserData,
-    writePostgresAuthDb,
-    writePostgresAuthDbWithExecutor,
-    mapPostgresSettings,
-    mapPostgresUser,
-    mapPostgresSession,
-    mapPostgresQuotaUsage,
-    mapPostgresPointRecord,
-    mapPostgresEmailCode,
-    mapPostgresCdkCode,
-    mapPostgresAnnouncement,
-    upsertPostgresEntitlementPlans,
-    upsertPostgresSettings,
-    upsertPostgresSystemChannels,
-    insertPostgresUsers,
-    insertPostgresSessions,
-    insertPostgresEmailCodes,
-    insertPostgresQuotaUsage,
-    insertPostgresPointRecords,
-    insertPostgresCdkCodes,
-    insertPostgresAnnouncements,
-    dbText,
-    dbOptionalText,
-    dbNumber,
-    dbBool,
-    dbIso,
-    dbOptionalIso,
-    dbDate,
-    dbJson,
-    dbJsonParam,
-} from "./store-repository";
+import { readAuthDb, mutateAuthDb, readPostgresAnnouncementsPage, readPostgresCdkListData, readPostgresPublicUserData } from "./store-repository";
 
-const AUTH_SETTINGS_CACHE_TTL_MS = 1000;
-let postgresAuthSettingsCache: { value: AuthSettings; expiresAt: number } | null = null;
-let postgresAuthSettingsRequest: Promise<AuthSettings> | null = null;
-let postgresAuthSettingsVersion = 0;
 import {
     normalizeDb,
     emptyDb,
@@ -126,18 +82,12 @@ import {
     pruneExpiredSessions,
     resolveDefaultPlan,
     resolveUserPlan,
-    resolvePlanById,
     assertEntitlementUsageAllowed,
     recordQuotaUsage,
     findQuotaUsage,
     assertDailyLimit,
     resolveDailyUsageLimit,
     dailyUsageLimitLabel,
-    countActiveAdmins,
-    normalizeEmail,
-    normalizeDisplayName,
-    normalizeUserBio,
-    normalizeSettings,
     normalizeLogicalModels,
     deriveLogicalModels,
     normalizeAgentSkill,
@@ -194,12 +144,10 @@ import {
     addPointRecord,
     normalizeEmailCode,
     consumeEmailCode,
-    validateEmail,
-    validatePassword,
-    parseSessionCookie,
     hashToken,
 } from "./store-normalizers";
 import { matchesPublicUser, publicUserFromAuthenticatedRecord, summarizePublicUsers, toPublicUser } from "./store-user-projection";
+import { getAuthSettings } from "./store-settings-actions";
 
 export { authenticateUser, createEmailVerificationCode, createFirstAdmin, createUser, createUserByAdmin } from "./store-user-access";
 export { toPublicUser };
@@ -208,63 +156,7 @@ export function sessionMaxAgeSeconds() {
     return SESSION_MAX_AGE_SECONDS;
 }
 
-export async function getAuthSettings() {
-    if (isPostgresDatabaseEnabled()) {
-        const now = Date.now();
-        if (postgresAuthSettingsCache && postgresAuthSettingsCache.expiresAt > now) return postgresAuthSettingsCache.value;
-        if (postgresAuthSettingsRequest) return postgresAuthSettingsRequest;
-        const requestVersion = postgresAuthSettingsVersion;
-        const request = readPostgresAuthSettings().then((settings) => {
-            if (requestVersion === postgresAuthSettingsVersion) postgresAuthSettingsCache = { value: settings, expiresAt: Date.now() + AUTH_SETTINGS_CACHE_TTL_MS };
-            return settings;
-        });
-        postgresAuthSettingsRequest = request;
-        void request.then(
-            () => {
-                if (postgresAuthSettingsRequest === request) postgresAuthSettingsRequest = null;
-            },
-            () => {
-                if (postgresAuthSettingsRequest === request) postgresAuthSettingsRequest = null;
-            },
-        );
-        return request;
-    }
-    return (await readAuthDb()).settings;
-}
-
-export async function setAuthSettings(patch: Partial<AuthSettings>) {
-    const settings = await mutateAuthDb((db) => {
-        db.settings = normalizeSettings({ ...db.settings, ...patch });
-        return db.settings;
-    });
-    if (isPostgresDatabaseEnabled()) {
-        postgresAuthSettingsVersion += 1;
-        postgresAuthSettingsCache = { value: settings, expiresAt: Date.now() + AUTH_SETTINGS_CACHE_TTL_MS };
-    }
-    return settings;
-}
-
-export async function setSystemChannelHealthResult(channelId: string, result: SystemChannelHealthSnapshot) {
-    const settings = await mutateAuthDb((db) => {
-        db.settings = normalizeSettings({
-            ...db.settings,
-            systemChannels: db.settings.systemChannels.map((channel) =>
-                channel.id === channelId
-                    ? {
-                          ...channel,
-                          healthResults: { ...(channel.healthResults || {}), [result.kind]: result },
-                      }
-                    : channel,
-            ),
-        });
-        return db.settings;
-    });
-    if (isPostgresDatabaseEnabled()) {
-        postgresAuthSettingsVersion += 1;
-        postgresAuthSettingsCache = { value: settings, expiresAt: Date.now() + AUTH_SETTINGS_CACHE_TTL_MS };
-    }
-    return settings;
-}
+export { getAuthSettings, setAuthSettings, setSystemChannelHealthResult } from "./store-settings-actions";
 
 export async function listPublicUsers() {
     if (isPostgresDatabaseEnabled()) {
@@ -415,6 +307,9 @@ export type CdkListResult = {
     };
 };
 
+type PostgresRepositories = ReturnType<typeof createPostgresRepositories>;
+type PostgresCdkDetails = NonNullable<Awaited<ReturnType<PostgresRepositories["cdk"]["getDetailsById"]>>>;
+
 export async function listCdkCodes(input?: { page?: number; pageSize?: number; keyword?: string; filter?: CdkListFilter }): Promise<CdkListResult> {
     const keyword = normalizeText(input?.keyword, "", 120).toLowerCase();
     const filter = input?.filter === "redeemed" || input?.filter === "unused" || input?.filter === "expired" ? input.filter : "all";
@@ -460,13 +355,81 @@ export async function listCdkCodes(input?: { page?: number; pageSize?: number; k
     };
 }
 
+function publicPostgresCdkCode(item: PostgresCdkDetails, includePlain = false) {
+    const stored: StoredCdkCode = {
+        id: item.id,
+        codeHash: item.codeHash,
+        code: decryptSecretValue(item.codeCiphertext) || undefined,
+        codePreview: item.codePreview,
+        points: item.points,
+        maxRedemptions: item.maxRedemptions,
+        redeemedCount: item.redeemedCount,
+        redemptions: item.redemptions.map((redemption) => ({ userId: redemption.userId, redeemedAt: redemption.redeemedAt })),
+        status: item.status,
+        note: item.note,
+        expiresAt: item.expiresAt,
+        createdAt: item.createdAt,
+        updatedAt: item.updatedAt,
+    };
+    return toPublicCdkCode(
+        stored,
+        {
+            users: item.redemptions.map((redemption) => ({
+                id: redemption.userId,
+                accountId: redemption.accountId,
+                username: redemption.username || "已删除用户",
+                displayName: redemption.displayName || redemption.username || "已删除用户",
+            })),
+        },
+        { includePlain },
+    );
+}
+
 export async function createCdkCodes(input: { count?: number; points?: number; maxRedemptions?: number; expiresAt?: string; expiresInDays?: number; note?: string }) {
+    const count = Math.max(1, Math.min(100, Math.floor(Number(input.count) || 1)));
+    const points = normalizePoints(input.points, 10);
+    const maxRedemptions = Math.max(1, Math.min(10000, Math.floor(Number(input.maxRedemptions) || 1)));
+    const expiresAt = resolveCdkExpiresAt(input.expiresAt, input.expiresInDays);
+    const note = normalizeText(input.note, "", 120);
+    if (isPostgresDatabaseEnabled()) {
+        await ensurePostgresSchema();
+        return withPostgresTransaction(async (client) => {
+            await lockAuthMutation(client);
+            const cdk = createPostgresRepositories(client).cdk;
+            const now = new Date().toISOString();
+            const created: CreatedCdkCode[] = [];
+            for (let index = 0; index < count; index += 1) {
+                let code = generateCdkPlainCode();
+                let attempts = 0;
+                while ((await cdk.getByCodeHash(hashToken(normalizeCdkCode(code)))) && attempts < 8) {
+                    code = generateCdkPlainCode();
+                    attempts += 1;
+                }
+                const publicCode: CreatedCdkCode = {
+                    id: randomUUID(),
+                    codePreview: previewCdkCode(code),
+                    code,
+                    points,
+                    maxRedemptions,
+                    redeemedCount: 0,
+                    redemptions: [],
+                    status: "active",
+                    note,
+                    ...(expiresAt ? { expiresAt } : {}),
+                    createdAt: now,
+                    updatedAt: now,
+                };
+                await cdk.create({
+                    ...publicCode,
+                    codeHash: hashToken(normalizeCdkCode(code)),
+                    codeCiphertext: encryptSecretValue(code),
+                });
+                created.push(publicCode);
+            }
+            return created;
+        });
+    }
     return mutateAuthDb((db) => {
-        const count = Math.max(1, Math.min(100, Math.floor(Number(input.count) || 1)));
-        const points = normalizePoints(input.points, 10);
-        const maxRedemptions = Math.max(1, Math.min(10000, Math.floor(Number(input.maxRedemptions) || 1)));
-        const expiresAt = resolveCdkExpiresAt(input.expiresAt, input.expiresInDays);
-        const note = normalizeText(input.note, "", 120);
         const now = new Date().toISOString();
         const created: CreatedCdkCode[] = [];
         for (let index = 0; index < count; index += 1) {
@@ -502,6 +465,26 @@ export async function createCdkCodes(input: { count?: number; points?: number; m
 }
 
 export async function updateCdkCode(id: string, patch: Partial<Pick<PublicCdkCode, "status" | "note" | "expiresAt" | "points" | "maxRedemptions">>) {
+    if (isPostgresDatabaseEnabled()) {
+        await ensurePostgresSchema();
+        return withPostgresTransaction(async (client) => {
+            const cdk = createPostgresRepositories(client).cdk;
+            const item = await cdk.getDetailsById(id, true);
+            if (!item) throw new AuthInputError("CDK 不存在");
+            const expiresAt = patch.expiresAt === undefined ? item.expiresAt : normalizeOptionalIsoDate(patch.expiresAt);
+            const updated = await cdk.update({
+                ...item,
+                status: patch.status ? (patch.status === "active" ? "active" : "disabled") : item.status,
+                note: patch.note === undefined ? item.note : normalizeText(patch.note, "", 120),
+                points: patch.points === undefined ? item.points : normalizePoints(patch.points, item.points),
+                maxRedemptions: patch.maxRedemptions === undefined ? item.maxRedemptions : Math.max(item.redeemedCount, Math.min(10000, Math.max(1, Math.floor(Number(patch.maxRedemptions) || item.maxRedemptions)))),
+                ...(expiresAt ? { expiresAt } : { expiresAt: undefined }),
+                updatedAt: new Date().toISOString(),
+            });
+            if (!updated) throw new AuthInputError("CDK 不存在");
+            return publicPostgresCdkCode({ ...item, ...updated }, true);
+        });
+    }
     return mutateAuthDb((db) => {
         const item = db.cdkCodes.find((code) => code.id === id);
         if (!item) throw new AuthInputError("CDK 不存在");
@@ -520,6 +503,12 @@ export async function updateCdkCode(id: string, patch: Partial<Pick<PublicCdkCod
 }
 
 export async function deleteCdkCode(id: string) {
+    if (isPostgresDatabaseEnabled()) {
+        await ensurePostgresSchema();
+        const deleted = await createPostgresRepositories().cdk.delete([id]);
+        if (!deleted) throw new AuthInputError("CDK 不存在");
+        return { ok: true, deleted };
+    }
     return mutateAuthDb((db) => {
         const index = db.cdkCodes.findIndex((code) => code.id === id);
         if (index < 0) throw new AuthInputError("CDK 不存在");
@@ -529,9 +518,13 @@ export async function deleteCdkCode(id: string) {
 }
 
 export async function deleteCdkCodes(ids: string[]) {
+    const deletingIds = Array.from(new Set(ids.map((id) => normalizeText(id, "", 80)).filter(Boolean)));
+    if (!deletingIds.length) throw new AuthInputError("请选择要删除的 CDK");
+    if (isPostgresDatabaseEnabled()) {
+        await ensurePostgresSchema();
+        return { ok: true, deleted: await createPostgresRepositories().cdk.delete(deletingIds) };
+    }
     return mutateAuthDb((db) => {
-        const deletingIds = Array.from(new Set(ids.map((id) => normalizeText(id, "", 80)).filter(Boolean)));
-        if (!deletingIds.length) throw new AuthInputError("请选择要删除的 CDK");
         const before = db.cdkCodes.length;
         db.cdkCodes = db.cdkCodes.filter((code) => !deletingIds.includes(code.id));
         return { ok: true, deleted: before - db.cdkCodes.length };
@@ -539,9 +532,44 @@ export async function deleteCdkCodes(ids: string[]) {
 }
 
 export async function redeemCdkCode(userId: string, rawCode: string) {
+    const code = normalizeCdkCode(rawCode);
+    if (!code) throw new AuthInputError("请输入 CDK 密钥");
+    if (isPostgresDatabaseEnabled()) {
+        await ensurePostgresSchema();
+        const clock = walletClock();
+        return withPostgresTransaction(async (client) => {
+            const repos = createPostgresRepositories(client);
+            const item = await repos.cdk.getByCodeHash(hashToken(code), true);
+            if (!item || item.status !== "active") throw new AuthInputError("CDK 无效或已停用");
+            if (item.expiresAt && Date.parse(item.expiresAt) <= clock.now.getTime()) throw new AuthInputError("CDK 已过期");
+            if (item.redeemedCount >= item.maxRedemptions) throw new AuthInputError("CDK 已兑换完");
+            const user = await repos.users.getById(userId, true);
+            if (!user || user.status !== "active") throw new AuthInputError("用户不可用");
+
+            const redemption = await repos.cdk.addRedemption({ cdkCodeId: item.id, userId, redeemedAt: clock.now.toISOString() });
+            if (!redemption) throw new AuthInputError("该 CDK 已被当前账号兑换");
+            const points = Math.max(0, normalizePoints(item.points, 0));
+            if (!points) throw new AuthInputError("积分数量必须大于零");
+            const wallet = await adjustPermanentPointsInPostgresTransaction(client, {
+                userId,
+                amount: points,
+                description: `CDK 兑换：${item.codePreview}`,
+                idempotencyKey: `cdk:${item.id}:user:${userId}`,
+                type: "credit",
+                now: clock.now,
+            });
+            if (!wallet) throw new AuthInputError("CDK 兑换失败");
+            await repos.cdk.incrementRedemptionCount(item.id, clock.now.toISOString());
+            const [userRecord, cdkRecord] = await Promise.all([repos.users.getPublicDetails([userId], { now: clock.now.toISOString(), date: clock.date }), repos.cdk.getDetailsById(item.id)]);
+            if (!userRecord[0] || !cdkRecord) throw new AuthInputError("CDK 兑换结果读取失败");
+            return {
+                user: { ...publicUserFromAuthenticatedRecord(userRecord[0], clock.expiresAt), pointsBalance: wallet.snapshot.totalPoints },
+                points,
+                cdk: publicPostgresCdkCode(cdkRecord),
+            };
+        });
+    }
     return mutateAuthDb((db) => {
-        const code = normalizeCdkCode(rawCode);
-        if (!code) throw new AuthInputError("请输入 CDK 密钥");
         const user = db.users.find((item) => item.id === userId);
         if (!user || user.status !== "active") throw new AuthInputError("用户不可用");
         const item = db.cdkCodes.find((entry) => entry.codeHash === hashToken(code));
@@ -588,27 +616,42 @@ export async function listAnnouncementsPage(includeDisabled = false, input: Anno
 }
 
 export async function createAnnouncement(input: Partial<PublicAnnouncement>) {
+    const now = new Date().toISOString();
+    const announcement = normalizeAnnouncement({
+        id: randomUUID(),
+        title: input.title || "",
+        content: input.content || "",
+        enabled: input.enabled !== false,
+        popupHome: input.popupHome === true,
+        popupAfterLogin: input.popupAfterLogin === true,
+        startsAt: input.startsAt,
+        endsAt: input.endsAt,
+        createdAt: now,
+        updatedAt: now,
+    });
+    if (!announcement.title || !announcement.content) throw new AuthInputError("请填写公告标题和内容");
+    if (isPostgresDatabaseEnabled()) {
+        await ensurePostgresSchema();
+        return createPostgresRepositories().announcements.upsert(announcement);
+    }
     return mutateAuthDb((db) => {
-        const now = new Date().toISOString();
-        const announcement = normalizeAnnouncement({
-            id: randomUUID(),
-            title: input.title || "",
-            content: input.content || "",
-            enabled: input.enabled !== false,
-            popupHome: input.popupHome === true,
-            popupAfterLogin: input.popupAfterLogin === true,
-            startsAt: input.startsAt,
-            endsAt: input.endsAt,
-            createdAt: now,
-            updatedAt: now,
-        });
-        if (!announcement.title || !announcement.content) throw new AuthInputError("请填写公告标题和内容");
         db.announcements.push(announcement);
         return announcement;
     });
 }
 
 export async function updateAnnouncement(id: string, patch: Partial<PublicAnnouncement>) {
+    if (isPostgresDatabaseEnabled()) {
+        await ensurePostgresSchema();
+        return withPostgresTransaction(async (client) => {
+            const announcements = createPostgresRepositories(client).announcements;
+            const current = await announcements.getById(id, true);
+            if (!current) throw new AuthInputError("公告不存在");
+            const next = normalizeAnnouncement({ ...current, ...patch, id, updatedAt: new Date().toISOString() });
+            if (!next.title || !next.content) throw new AuthInputError("请填写公告标题和内容");
+            return announcements.upsert(next);
+        });
+    }
     return mutateAuthDb((db) => {
         const index = db.announcements.findIndex((announcement) => announcement.id === id);
         if (index < 0) throw new AuthInputError("公告不存在");
@@ -625,6 +668,11 @@ export async function updateAnnouncement(id: string, patch: Partial<PublicAnnoun
 }
 
 export async function deleteAnnouncement(id: string) {
+    if (isPostgresDatabaseEnabled()) {
+        await ensurePostgresSchema();
+        if (!(await createPostgresRepositories().announcements.delete(id))) throw new AuthInputError("公告不存在");
+        return { ok: true };
+    }
     return mutateAuthDb((db) => {
         const before = db.announcements.length;
         db.announcements = db.announcements.filter((announcement) => announcement.id !== id);
@@ -738,219 +786,4 @@ export async function refundUserPoints(userId: string, model: string, amount: nu
     return nextUser ? { ...toPublicUser(nextUser, nextDb), pointsBalance: result.snapshot.totalPoints } : null;
 }
 
-export async function updateOwnProfile(userId: string, input: { displayName?: string; bio?: string; email?: string; emailCode?: string }) {
-    if (isPostgresDatabaseEnabled() && input.email === undefined) {
-        await ensurePostgresSchema();
-        const clock = walletClock();
-        const record = await withPostgresTransaction(async (client) => {
-            const users = createPostgresRepositories(client).users;
-            const current = await users.getById(userId, true);
-            if (!current || current.status !== "active") throw new AuthInputError("用户不可用");
-            await users.update(userId, {
-                displayName: input.displayName === undefined ? undefined : normalizeDisplayName(input.displayName || current.username),
-                bio: input.bio === undefined ? undefined : normalizeUserBio(input.bio),
-            });
-            return (await users.getPublicDetails([userId], { now: clock.now.toISOString(), date: clock.date }))[0];
-        });
-        if (!record) throw new AuthInputError("用户不可用");
-        return publicUserFromAuthenticatedRecord(record, clock.expiresAt);
-    }
-    return mutateAuthDb((db) => {
-        const user = db.users.find((item) => item.id === userId);
-        if (!user || user.status !== "active") throw new AuthInputError("用户不可用");
-
-        if (input.displayName !== undefined) user.displayName = normalizeDisplayName(input.displayName || user.username);
-        if (input.bio !== undefined) user.bio = normalizeUserBio(input.bio);
-
-        if (input.email !== undefined) {
-            const email = normalizeEmail(input.email);
-            if (!email) throw new AuthInputError("请填写邮箱地址");
-            validateEmail(email);
-            if (email !== (user.email || "").toLowerCase()) {
-                if (db.users.some((item) => item.id !== user.id && item.email?.toLowerCase() === email)) throw new AuthInputError("邮箱已被注册");
-                consumeEmailCode(db, { purpose: "email-change", email, code: input.emailCode, userId });
-                user.email = email;
-            }
-        }
-
-        user.updatedAt = new Date().toISOString();
-        return toPublicUser(user, db);
-    });
-}
-
-export async function updateOwnPassword(userId: string, input: { currentPassword: string; newPassword: string }) {
-    return mutateAuthDb((db) => {
-        const user = db.users.find((item) => item.id === userId);
-        if (!user || user.status !== "active") throw new AuthInputError("用户不可用");
-        if (!verifyPassword(input.currentPassword, user.passwordHash)) throw new AuthInputError("当前密码不正确");
-        validatePassword(input.newPassword);
-        user.passwordHash = hashPassword(input.newPassword);
-        user.updatedAt = new Date().toISOString();
-        db.sessions = db.sessions.filter((session) => session.userId !== user.id);
-        return toPublicUser(user, db);
-    });
-}
-
-export async function verifyUserPasswordForSensitiveAction(userId: string, password: string) {
-    if (isPostgresDatabaseEnabled()) {
-        await ensurePostgresSchema();
-        const user = await createPostgresRepositories().users.getById(userId);
-        if (!user || user.status !== "active") throw new AuthInputError("用户不可用");
-        if (!verifyPassword(password, user.passwordHash)) throw new AuthInputError("当前密码不正确");
-        return;
-    }
-    const db = await readAuthDb();
-    const user = db.users.find((item) => item.id === userId);
-    if (!user || user.status !== "active") throw new AuthInputError("用户不可用");
-    if (!verifyPassword(password, user.passwordHash)) throw new AuthInputError("当前密码不正确");
-}
-
-export async function resetPasswordByEmail(input: { email: string; code?: string; newPassword: string }) {
-    return mutateAuthDb((db) => {
-        const email = normalizeEmail(input.email);
-        validateEmail(email);
-        const user = db.users.find((item) => item.email?.toLowerCase() === email);
-        if (!user || user.status !== "active") throw new AuthInputError("没有找到可用账号");
-        consumeEmailCode(db, { purpose: "password-reset", email, code: input.code });
-        validatePassword(input.newPassword);
-        user.passwordHash = hashPassword(input.newPassword);
-        user.updatedAt = new Date().toISOString();
-        db.sessions = db.sessions.filter((session) => session.userId !== user.id);
-        return toPublicUser(user, db);
-    });
-}
-
-export async function createSession(userId: string) {
-    if (isPostgresDatabaseEnabled()) {
-        await ensurePostgresSchema();
-        const now = new Date();
-        const sessionId = randomUUID();
-        const token = randomBytes(32).toString("base64url");
-        await withPostgresTransaction(async (client) => {
-            const repos = createPostgresRepositories(client);
-            const user = await repos.users.getById(userId, true);
-            if (!user || user.status !== "active") throw new AuthInputError("用户不可用");
-            await repos.sessions.pruneExpired(now);
-            await repos.sessions.create({
-                id: sessionId,
-                userId,
-                tokenHash: hashToken(token),
-                createdAt: now.toISOString(),
-                expiresAt: new Date(now.getTime() + SESSION_MAX_AGE_SECONDS * 1000).toISOString(),
-            });
-        });
-        return `${sessionId}.${token}`;
-    }
-    return mutateAuthDb((db) => {
-        const user = db.users.find((item) => item.id === userId);
-        if (!user || user.status !== "active") throw new AuthInputError("用户不可用");
-
-        const now = new Date();
-        const sessionId = randomUUID();
-        const token = randomBytes(32).toString("base64url");
-        db.sessions.push({
-            id: sessionId,
-            userId,
-            tokenHash: hashToken(token),
-            createdAt: now.toISOString(),
-            expiresAt: new Date(now.getTime() + SESSION_MAX_AGE_SECONDS * 1000).toISOString(),
-        });
-        return `${sessionId}.${token}`;
-    });
-}
-
-export async function getUserBySession(cookieValue: string | undefined) {
-    const sessionParts = parseSessionCookie(cookieValue);
-    if (!sessionParts) return null;
-
-    if (isPostgresDatabaseEnabled()) {
-        await ensurePostgresSchema();
-        const clock = walletClock();
-        const snapshot = await createPostgresRepositories().sessions.getAuthenticatedUser({
-            sessionId: sessionParts.id,
-            tokenHash: hashToken(sessionParts.token),
-            now: clock.now.toISOString(),
-            date: clock.date,
-        });
-        if (!snapshot) return null;
-        return publicUserFromAuthenticatedRecord(snapshot, clock.expiresAt);
-    }
-
-    const db = await readAuthDb();
-    const session = db.sessions.find((item) => item.id === sessionParts.id);
-    if (!session || session.tokenHash !== hashToken(sessionParts.token) || Date.parse(session.expiresAt) <= Date.now()) return null;
-    const user = db.users.find((item) => item.id === session.userId);
-    if (!user || user.status !== "active") return null;
-    return toPublicUser(user, db);
-}
-
-export async function deleteSession(cookieValue: string | undefined) {
-    const sessionParts = parseSessionCookie(cookieValue);
-    if (!sessionParts) return;
-    await mutateAuthDb((db) => {
-        db.sessions = db.sessions.filter((item) => item.id !== sessionParts.id);
-    });
-}
-
-export async function updateUserByAdmin(actorId: string, userId: string, patch: Partial<Pick<PublicUser, "displayName" | "email" | "role" | "status" | "pointsBalance" | "planId">> & { password?: string }) {
-    return mutateAuthDb((db) => {
-        const user = db.users.find((item) => item.id === userId);
-        if (!user) throw new AuthInputError("用户不存在");
-        if (user.id === actorId && patch.status === "disabled") throw new AuthInputError("不能禁用当前登录的管理员账号");
-
-        const nextRole = patch.role || user.role;
-        const nextStatus = patch.status || user.status;
-        if (user.role === "admin" && nextRole !== "admin" && countActiveAdmins(db, user.id) === 0) throw new AuthInputError("至少需要保留一个管理员");
-        if (user.role === "admin" && nextStatus !== "active" && countActiveAdmins(db, user.id) === 0) throw new AuthInputError("至少需要保留一个可用管理员");
-
-        if (patch.displayName !== undefined) user.displayName = normalizeDisplayName(patch.displayName || user.username);
-        if (patch.email !== undefined) {
-            const email = normalizeEmail(patch.email);
-            if (email) {
-                validateEmail(email);
-                if (db.users.some((item) => item.id !== user.id && item.email?.toLowerCase() === email)) throw new AuthInputError("邮箱已被注册");
-                user.email = email;
-            } else {
-                user.email = undefined;
-            }
-        }
-        if (patch.password) {
-            validatePassword(patch.password);
-            user.passwordHash = hashPassword(patch.password);
-            db.sessions = db.sessions.filter((session) => session.userId !== user.id);
-        }
-        user.role = nextRole;
-        if (patch.planId !== undefined) user.planId = resolvePlanById(db.settings.entitlements, patch.planId).id;
-        let walletPointsBalance: number | undefined;
-        if (patch.pointsBalance !== undefined) {
-            const previousBalance = normalizePoints(user.pointsBalance, 0);
-            const delta = normalizePoints(patch.pointsBalance, user.pointsBalance) - previousBalance;
-            if (nextStatus === "active") user.status = "active";
-            const wallet = adjustPermanentPointsInAuthDb(db, {
-                userId: user.id,
-                amount: delta,
-                description: "管理员后台调整",
-                idempotencyKey: `admin-adjust:${user.id}:${randomUUID()}`,
-            });
-            walletPointsBalance = wallet?.snapshot.totalPoints;
-        }
-        user.status = nextStatus;
-        user.updatedAt = new Date().toISOString();
-        if (user.status !== "active") db.sessions = db.sessions.filter((session) => session.userId !== user.id);
-        return { ...toPublicUser(user, db), ...(walletPointsBalance === undefined ? {} : { pointsBalance: walletPointsBalance }) };
-    });
-}
-
-export async function deleteUserByAdmin(actorId: string, userId: string) {
-    return mutateAuthDb((db) => {
-        const user = db.users.find((item) => item.id === userId);
-        if (!user) throw new AuthInputError("用户不存在");
-        if (user.id === actorId) throw new AuthInputError("不能删除当前登录的管理员账号");
-        if (user.role === "admin" && countActiveAdmins(db, user.id) === 0) throw new AuthInputError("至少需要保留一个管理员");
-        db.users = db.users.filter((item) => item.id !== user.id);
-        db.sessions = db.sessions.filter((session) => session.userId !== user.id);
-        db.quotaUsage = db.quotaUsage.filter((usage) => !usage || typeof usage !== "object" || (usage as { userId?: unknown }).userId !== user.id);
-        db.emailCodes = db.emailCodes.filter((code) => code.userId !== user.id);
-        return { ok: true };
-    });
-}
+export { createSession, deleteSession, deleteUserByAdmin, getUserBySession, resetPasswordByEmail, updateOwnPassword, updateOwnProfile, updateUserByAdmin, verifyUserPasswordForSensitiveAction } from "./store-account-actions";

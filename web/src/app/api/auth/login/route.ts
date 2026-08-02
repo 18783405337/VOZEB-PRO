@@ -4,7 +4,7 @@ import { authenticateUser, createSession, isAuthInputError } from "@/lib/auth/st
 import { readJsonBody } from "@/lib/auth/request";
 import { serializeCurrentUser, setSessionCookie } from "@/lib/auth/session";
 import { auditActorFromRequest, safeRecordAuditLog } from "@/lib/server/audit-log-store";
-import { checkRateLimit, getClientIp } from "@/lib/server/security";
+import { checkAuthRateLimit } from "@/lib/server/security";
 
 export const runtime = "nodejs";
 
@@ -14,7 +14,7 @@ export async function POST(request: Request) {
     try {
         const body = await readJsonBody<{ username?: string; password?: string }>(request);
         username = body.username || "";
-        const limit = await checkRateLimit(`login:${getClientIp(request)}:${username.toLowerCase()}`, { maxRequests: 8, windowMs: 15 * 60 * 1000 });
+        const limit = await checkAuthRateLimit("login", request, username, { maxRequests: 8, windowMs: 15 * 60 * 1000 });
         if (!limit.allowed) {
             const retryAfter = Math.ceil((limit.resetAt - Date.now()) / 1000);
             await safeRecordAuditLog({

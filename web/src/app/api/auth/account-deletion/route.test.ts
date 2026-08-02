@@ -48,6 +48,7 @@ describe("account deletion user API", () => {
         const response = await POST(new Request("http://localhost/api/auth/account-deletion", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ currentPassword: "secret", note: "reason" }) }));
 
         expect(response.status).toBe(200);
+        await expect(response.json()).resolves.toEqual({ code: 0, data: { id: "request-one", status: "pending" }, msg: "注销申请已提交" });
         expect(mocks.submit).toHaveBeenCalledWith(expect.objectContaining({ id: "user-one" }), { currentPassword: "secret", note: "reason" });
     });
 });

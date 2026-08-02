@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => ({
-    checkRateLimit: vi.fn(),
+    checkAuthRateLimit: vi.fn(),
     createFirstAdmin: vi.fn(),
     createSession: vi.fn(),
     createUser: vi.fn(),
@@ -23,7 +23,7 @@ vi.mock("@/lib/auth/session", () => ({
 }));
 vi.mock("@/lib/server/install-status", () => ({ getInstallStatus: mocks.getInstallStatus, invalidateInstallStatusCache: vi.fn() }));
 vi.mock("@/lib/server/security", () => ({
-    checkRateLimit: mocks.checkRateLimit,
+    checkAuthRateLimit: mocks.checkAuthRateLimit,
     getClientIp: vi.fn(() => "203.0.113.8"),
 }));
 vi.mock("@/lib/server/referral-service", () => ({ REFERRAL_COOKIE_NAME: "vozeb_referral" }));
@@ -41,9 +41,9 @@ describe("POST /api/auth/register referral attribution", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.getInstallStatus.mockResolvedValue({ ready: true, firstAdminRequired: false });
-        mocks.checkRateLimit.mockResolvedValue({ allowed: true });
-        mocks.createFirstAdmin.mockResolvedValue({ id: "admin-one", role: "admin" });
+        mocks.checkAuthRateLimit.mockResolvedValue({ allowed: true });
         mocks.createUser.mockResolvedValue({ id: "user-one", role: "user" });
+        mocks.createFirstAdmin.mockResolvedValue({ id: "admin-one", role: "admin" });
         mocks.createSession.mockResolvedValue("session-token");
     });
 

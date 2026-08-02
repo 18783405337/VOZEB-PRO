@@ -162,7 +162,11 @@ export type AgentSkill = {
     requiresReference?: boolean;
     defaultConfig?: Record<string, string | number | boolean>;
     sourceUrl?: string;
+    sourceRepository?: string;
+    sourcePath?: string;
     sourceVersion?: string;
+    sourceCommit?: string;
+    sourceContentHash?: string;
     license?: string;
 };
 

@@ -1,7 +1,6 @@
-import { createPostgresRepositories, ensurePostgresSchema, isPostgresDatabaseEnabled, postgresQuery, withPostgresTransaction, type QueryExecutor } from "@/lib/server/database";
+import { createPostgresRepositories, ensurePostgresSchema, isPostgresDatabaseEnabled, postgresQuery, type QueryExecutor } from "@/lib/server/database";
 import { formatAccountId } from "@/lib/account-id";
 import { readJsonDataFile, writeJsonDataFile } from "@/lib/server/data-adapter";
-import { lockAuthMutation } from "@/lib/server/auth-mutation-lock";
 import { decryptSecretValue, encryptSecretValue } from "@/lib/server/secret-crypto";
 import {
     type UserRole,
@@ -168,27 +167,9 @@ export async function readAuthDb(): Promise<AuthDatabase> {
     return normalizeDb(await readJsonDataFile<Partial<AuthDatabase>>(AUTH_DATA_FILE, emptyDb()));
 }
 
-export async function mutateAuthDb<T>(mutator: (db: AuthDatabase) => T | Promise<T>, options?: { afterPostgresPersist?: (result: T, client: QueryExecutor) => Promise<void> }) {
+export async function mutateAuthDb<T>(mutator: (db: AuthDatabase) => T | Promise<T>) {
+    if (isPostgresDatabaseEnabled()) throw new Error("PostgreSQL auth mutations must use entity repositories");
     const run = mutationQueue.then(async () => {
-        if (isPostgresDatabaseEnabled()) {
-            await ensurePostgresSchema();
-            const outcome = await withPostgresTransaction(async (client) => {
-                await lockAuthMutation(client);
-                const db = pruneExpiredSessions(await readPostgresAuthDb(client));
-                try {
-                    const result = await mutator(db);
-                    await writePostgresAuthDbWithExecutor(db, client);
-                    if (options?.afterPostgresPersist) await options.afterPostgresPersist(result, client);
-                    return { ok: true as const, result };
-                } catch (error) {
-                    if (!(error instanceof EmailCodeAttemptError)) throw error;
-                    await writePostgresAuthDbWithExecutor(db, client);
-                    return { ok: false as const, error };
-                }
-            });
-            if (!outcome.ok) throw outcome.error;
-            return outcome.result;
-        }
         const db = pruneExpiredSessions(await readAuthDb());
         try {
             const result = await mutator(db);
@@ -207,10 +188,7 @@ export async function mutateAuthDb<T>(mutator: (db: AuthDatabase) => T | Promise
 }
 
 export async function writeAuthDb(db: AuthDatabase) {
-    if (isPostgresDatabaseEnabled()) {
-        await writePostgresAuthDb(db);
-        return;
-    }
+    if (isPostgresDatabaseEnabled()) throw new Error("Full PostgreSQL auth writes are reserved for explicit backup restore");
     await writeJsonDataFile(AUTH_DATA_FILE, encryptAuthDbSecretsForStorage(db));
 }
 
@@ -346,56 +324,6 @@ export async function readPostgresAuthSettings(executor?: QueryExecutor): Promis
         query("SELECT * FROM system_model_channels ORDER BY sort_order ASC, created_at ASC"),
     ]);
     return decryptAuthSettingsSecrets(mapPostgresSettings(settingsResult.rows[0], planResult.rows, channelResult.rows));
-}
-
-export async function writePostgresAuthDb(db: AuthDatabase) {
-    await ensurePostgresSchema();
-    await withPostgresTransaction(async (client) => writePostgresAuthDbWithExecutor(db, client));
-}
-
-export async function writePostgresAuthDbWithExecutor(db: AuthDatabase, client: QueryExecutor) {
-    const normalized = encryptAuthDbSecretsForStorage(db);
-    const userIds = new Set(normalized.users.map((user) => user.id));
-    const cdkCodes = normalized.cdkCodes.map((code) => ({ ...code, redemptions: code.redemptions.filter((redemption) => userIds.has(redemption.userId)) }));
-    await upsertPostgresEntitlementPlans(client, normalized.settings.entitlements.plans);
-    await upsertPostgresSettings(client, normalized.settings);
-    await client.query("DELETE FROM sessions");
-    await client.query("DELETE FROM email_codes");
-    await client.query("DELETE FROM quota_usage");
-    await client.query("DELETE FROM point_records");
-    await client.query("DELETE FROM daily_plan_point_wallets");
-    await client.query("DELETE FROM cdk_redemptions");
-    await client.query("DELETE FROM cdk_codes");
-    await client.query("DELETE FROM announcements");
-    await client.query("DELETE FROM system_model_channels");
-    await client.query("DELETE FROM entitlement_plans WHERE id <> ALL($1::text[])", [normalized.settings.entitlements.plans.map((plan) => plan.id)]);
-
-    await upsertPostgresSystemChannels(client, normalized.settings.systemChannels);
-    await insertPostgresUsers(client, normalized.users);
-    await client.query("DELETE FROM users WHERE id <> ALL($1::text[])", [normalized.users.map((user) => user.id)]);
-    await syncPostgresUserAccountIdSequence(client);
-    await insertPostgresSessions(
-        client,
-        normalized.sessions.filter((session) => userIds.has(session.userId)),
-    );
-    await insertPostgresEmailCodes(
-        client,
-        normalized.emailCodes.filter((code) => !code.userId || userIds.has(code.userId)),
-    );
-    await insertPostgresQuotaUsage(
-        client,
-        normalized.quotaUsage.filter((usage) => userIds.has(usage.userId)),
-    );
-    await insertPostgresPointRecords(
-        client,
-        normalized.pointRecords.filter((record) => userIds.has(record.userId)),
-    );
-    await insertPostgresDailyPlanPointWallets(
-        client,
-        normalized.dailyPlanPointWallets.filter((wallet) => userIds.has(wallet.userId)),
-    );
-    await insertPostgresCdkCodes(client, cdkCodes);
-    await insertPostgresAnnouncements(client, normalized.announcements);
 }
 
 export function mapPostgresSettings(settingsRow: Record<string, unknown> | undefined, planRows: Record<string, unknown>[], channelRows: Record<string, unknown>[]): AuthSettings {
@@ -703,16 +631,6 @@ export async function insertPostgresUsers(db: QueryExecutor, users: StoredUser[]
             ],
         );
     }
-}
-
-async function syncPostgresUserAccountIdSequence(db: QueryExecutor) {
-    await db.query(`
-        SELECT setval(
-            'user_account_id_seq',
-            greatest((SELECT last_value FROM user_account_id_seq), coalesce((SELECT max(account_id) FROM users), 1)),
-            (SELECT is_called FROM user_account_id_seq) OR EXISTS (SELECT 1 FROM users)
-        )
-    `);
 }
 
 export async function insertPostgresSessions(db: QueryExecutor, sessions: StoredSession[]) {

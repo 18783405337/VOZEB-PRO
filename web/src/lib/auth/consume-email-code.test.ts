@@ -60,6 +60,14 @@ describe("consumeEmailCode attempt tracking", () => {
         await expect(resetPasswordByEmail({ email: "test@example.com", code: "000000", newPassword: "newpass12345" })).rejects.toThrow("邮箱验证码不正确或已过期");
     });
 
+    it("does not disclose whether a password-reset email exists", async () => {
+        const issued = await createEmailVerificationCode({ purpose: "password-reset", email: "missing@example.com" });
+
+        expect(issued).toMatchObject({ email: "missing@example.com", deliverEmail: false });
+        expect((memory.value as StoredDb).emailCodes).toHaveLength(0);
+        await expect(resetPasswordByEmail({ email: "missing@example.com", code: issued.code, newPassword: "newpass12345" })).rejects.toThrow("邮箱验证码不正确或已过期");
+    });
+
     it("persists failed attempts and invalidates the code after five failures", async () => {
         await createFirstAdmin({ username: "admin", email: "test@example.com", password: "password123", installToken: INSTALL_TOKEN });
         const { code } = await createEmailVerificationCode({ purpose: "password-reset", email: "test@example.com" });

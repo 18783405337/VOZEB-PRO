@@ -301,14 +301,30 @@ export function normalizeAgentSkill(skill: AgentSkill): AgentSkill {
             String(skill.sourceUrl || "")
                 .trim()
                 .slice(0, 500) || undefined,
+        sourceRepository:
+            String(skill.sourceRepository || "")
+                .trim()
+                .slice(0, 160) || undefined,
+        sourcePath:
+            String(skill.sourcePath || "")
+                .trim()
+                .slice(0, 500) || undefined,
         sourceVersion:
             String(skill.sourceVersion || "")
                 .trim()
                 .slice(0, 40) || undefined,
+        sourceCommit:
+            String(skill.sourceCommit || "")
+                .trim()
+                .slice(0, 40) || undefined,
+        sourceContentHash:
+            String(skill.sourceContentHash || "")
+                .trim()
+                .slice(0, 64) || undefined,
         license:
             String(skill.license || "")
                 .trim()
-                .slice(0, 40) || undefined,
+                .slice(0, 120) || undefined,
     };
 }
 

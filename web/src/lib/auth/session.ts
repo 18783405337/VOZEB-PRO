@@ -3,6 +3,7 @@ import type { NextResponse } from "next/server";
 
 import { deleteSession, getPublicUsersByIds, getUserBySession, sessionMaxAgeSeconds, type AuthSettings, type PublicUser } from "./store";
 import { authorizedMaintenanceUserId } from "@/lib/server/maintenance-auth";
+import { getTrustedProxyHops } from "@/lib/server/security";
 
 const SESSION_COOKIE_NAME = "vozeb_pro_session";
 
@@ -52,12 +53,14 @@ function shouldUseSecureSessionCookie(request?: Request) {
     if (["1", "true", "yes", "on"].includes(override || "")) return true;
     if (["0", "false", "no", "off"].includes(override || "")) return false;
 
-    const forwardedProto = request?.headers.get("x-forwarded-proto")?.split(",")[0]?.trim().toLowerCase();
-    if (forwardedProto) return forwardedProto === "https";
+    if (getTrustedProxyHops() > 0) {
+        const forwardedProto = request?.headers.get("x-forwarded-proto")?.split(",")[0]?.trim().toLowerCase();
+        if (forwardedProto) return forwardedProto === "https";
 
-    const forwarded = request?.headers.get("forwarded") || "";
-    const forwardedProtoMatch = forwarded.match(/(?:^|;|,)\s*proto=([^;,]+)/i);
-    if (forwardedProtoMatch?.[1]) return forwardedProtoMatch[1].replace(/^"|"$/g, "").toLowerCase() === "https";
+        const forwarded = request?.headers.get("forwarded") || "";
+        const forwardedProtoMatch = forwarded.match(/(?:^|;|,)\s*proto=([^;,]+)/i);
+        if (forwardedProtoMatch?.[1]) return forwardedProtoMatch[1].replace(/^"|"$/g, "").toLowerCase() === "https";
+    }
 
     if (request?.url) {
         try {
@@ -96,20 +99,64 @@ export function serializeCurrentUser(user: CurrentUser) {
 
 export function serializePublicSettings(settings: AuthSettings) {
     return {
-        site: settings.site,
+        site: {
+            title: settings.site.title,
+            logoUrl: settings.site.logoUrl,
+            iconUrl: settings.site.iconUrl,
+            seoDescription: settings.site.seoDescription,
+            footerCopyright: settings.site.footerCopyright,
+            termsUrl: settings.site.termsUrl,
+            privacyUrl: settings.site.privacyUrl,
+            homeShowcaseMode: settings.site.homeShowcaseMode,
+            homeShowcaseItems: settings.site.homeShowcaseItems.map((item) => ({
+                id: item.id,
+                title: item.title,
+                coverUrl: item.coverUrl,
+                prompt: item.prompt,
+                tags: [...item.tags],
+                category: item.category,
+            })),
+            friendLinks: settings.site.friendLinks.map((item) => ({ id: item.id, label: item.label, url: item.url, enabled: item.enabled })),
+            socials: Object.fromEntries(Object.entries(settings.site.socials).map(([key, item]) => [key, { enabled: item.enabled, label: item.label, url: item.url }])),
+        },
         registrationEnabled: settings.registrationEnabled,
         emailRegistrationEnabled: settings.emailRegistrationEnabled,
-        modelPointCosts: settings.modelPointCosts,
-        generationPointMultipliers: settings.generationPointMultipliers,
-        entitlements: {
-            enabled: settings.entitlements.enabled,
-            defaultPlanId: settings.entitlements.defaultPlanId,
-            plans: settings.entitlements.plans.filter((plan) => plan.enabled).map((plan) => ({ id: plan.id, name: plan.name, features: plan.features })),
+        modelPointCosts: { ...settings.modelPointCosts },
+        generationPointMultipliers: {
+            imageQuality: { ...settings.generationPointMultipliers.imageQuality },
+            videoQuality: { ...settings.generationPointMultipliers.videoQuality },
+            videoSeconds: { ...settings.generationPointMultipliers.videoSeconds },
         },
-        generationConcurrency: settings.generationConcurrency,
-        generationDefaults: settings.generationDefaults,
-        defaultModels: settings.defaultModels,
-        logicalModels: settings.logicalModels,
+        generationConcurrency: { ...settings.generationConcurrency },
+        generationDefaults: {
+            canvasImageCount: settings.generationDefaults.canvasImageCount,
+            imageSize: settings.generationDefaults.imageSize,
+            imageQuality: settings.generationDefaults.imageQuality,
+            imageCount: settings.generationDefaults.imageCount,
+            videoQuality: settings.generationDefaults.videoQuality,
+            videoSeconds: settings.generationDefaults.videoSeconds,
+            audioVoice: settings.generationDefaults.audioVoice,
+            audioFormat: settings.generationDefaults.audioFormat,
+            workbenchSmartPlanning: { ...settings.generationDefaults.workbenchSmartPlanning },
+        },
+        defaultModels: { ...settings.defaultModels },
+        logicalModels: settings.logicalModels
+            .filter((model) => model.enabled)
+            .map((model) => ({
+                id: model.id,
+                name: model.name,
+                capability: model.capability,
+                enabled: true,
+                bindings: model.bindings
+                    .filter((binding) => binding.enabled)
+                    .map((binding) => ({
+                        id: binding.id,
+                        channelId: binding.channelId,
+                        upstreamModel: binding.upstreamModel,
+                        enabled: true,
+                        priority: binding.priority,
+                    })),
+            })),
         systemChannels: settings.systemChannels
             .filter((channel) => channel.enabled)
             .map((channel) => ({
@@ -121,7 +168,6 @@ export function serializePublicSettings(settings: AuthSettings) {
                 models: channel.models,
                 enabled: channel.enabled,
                 hasApiKey: Boolean(channel.apiKey),
-                advancedConfig: channel.advancedConfig,
             })),
     };
 }
