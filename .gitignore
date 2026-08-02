@@ -1,11 +1,15 @@
 .next/
 .next-production/
+.next-*/
 out/
 node_modules/
 .pnpm-store/
 .env*
 !.env.example
 .data/
+.e2e-data/
+.e2e-artifacts/
+playwright-report/
 data/
 *.log
 *.tsbuildinfo

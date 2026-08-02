@@ -21,10 +21,19 @@ describe("low-memory release type-check contract", () => {
         const dockerfile = readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
 
         expect(releaseCheck.indexOf('["run", "typecheck"]')).toBeLessThan(releaseCheck.indexOf('["run", "build"]'));
+        expect(releaseCheck.indexOf('["test"]')).toBeLessThan(releaseCheck.indexOf('["run", "build"]'));
+        expect(releaseCheck).toContain('["run", "lint"]');
         expect(releaseCheck).toContain('NEXT_SKIP_BUILD_TYPECHECK: "1"');
+        expect(releaseCheck).toContain(".next-release-");
+        expect(releaseCheck).toContain('"web/.next-release-*"');
+        expect(releaseCheck).not.toContain(":(glob)");
+        expect(releaseCheck).not.toContain('const buildDistDir = ".next-production"');
+        expect(releaseCheck).toContain("await rm(path.join(webRoot, buildDistDir)");
         expect(packageJson.scripts.build).toBe("node scripts/production-build.mjs");
         expect(productionBuild.indexOf("node_modules/typescript/bin/tsc")).toBeLessThan(productionBuild.indexOf("node_modules/next/dist/bin/next"));
         expect(productionBuild).toContain('NEXT_SKIP_BUILD_TYPECHECK: "1"');
+        expect(productionBuild).toContain("restoreBuildFiles");
+        expect(productionBuild).toContain('"tsconfig.json", "next-env.d.ts"');
         expect(releaseCheck).toContain("prepareStandaloneAssets");
         expect(nextConfig).toContain("typescript: { ignoreBuildErrors: skipBuildTypeCheck }");
         expect(standaloneStart).toContain('process.env.NEXT_DIST_DIR?.trim() || ".next"');
