@@ -5,6 +5,7 @@ import type {
     CdkCodeRecord,
     CdkRedemptionRecord,
     DailyPlanPointWalletRecord,
+    EmailCodeRecord,
     GenerationLogAssetRecord,
     GenerationLogRecord,
     JsonValue,
@@ -98,6 +99,20 @@ export function mapSession(row: Record<string, unknown>): SessionRecord {
         tokenHash: stringValue(row.token_hash),
         createdAt: isoValue(row.created_at),
         expiresAt: isoValue(row.expires_at),
+    };
+}
+
+export function mapEmailCode(row: Record<string, unknown>): EmailCodeRecord {
+    return {
+        id: stringValue(row.id),
+        purpose: row.purpose === "email-change" || row.purpose === "password-reset" ? row.purpose : "register",
+        email: stringValue(row.email),
+        userId: optionalString(row.user_id),
+        codeHash: stringValue(row.code_hash),
+        createdAt: isoValue(row.created_at),
+        expiresAt: isoValue(row.expires_at),
+        consumedAt: optionalIso(row.consumed_at),
+        attempts: numberValue(row.attempts),
     };
 }
 

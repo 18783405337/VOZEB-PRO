@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 
 import type { BillingReconciliationIssue, BillingReconciliationIssueCode, BillingReconciliationResult, BillingReconciliationRow, BillingStatementStatus } from "@/lib/admin-billing-types";
 import { BillingInputError } from "@/lib/server/billing-errors";
@@ -69,15 +69,24 @@ export async function getBillingReconciliationRun(id: string): Promise<BillingRe
 }
 
 export async function importBillingStatement(input: ReconcileBillingStatementInput, actor: BillingReconciliationActor = {}): Promise<BillingReconciliationResult> {
-    const result = await reconcileBillingStatement(input);
+    if (!isPostgresDatabaseEnabled()) throw new BillingInputError("支付对账需要启用 PostgreSQL", 501);
+    await ensurePostgresSchema();
+    const provider = normalizeProvider(input.provider);
+    const csvText = normalizeText(input.csvText, "", 200_000);
+    const fileHash = createHash("sha256").update(csvText, "utf8").digest("hex");
+    const repos = createPostgresRepositories();
+    if (await repos.billing.getReconciliationRunByFileHash(provider, fileHash)) throw new BillingInputError("该支付渠道的同一账单文件已经导入", 409);
+    const result = await reconcileBillingStatement({ ...input, provider, csvText });
     const { run, rows } = createBillingReconciliationPersistenceRecords(result, {
         actor,
         fileName: input.fileName,
+        fileHash,
         note: input.note,
     });
-    await withPostgresTransaction(async (client) => {
-        await createPostgresRepositories(client).billing.createReconciliationRun(run, rows);
+    const created = await withPostgresTransaction(async (client) => {
+        return createPostgresRepositories(client).billing.createReconciliationRun(run, rows);
     });
+    if (!created) throw new BillingInputError("该支付渠道的同一账单文件已经导入", 409);
     return { ...result, runId: run.id, source: run.source, fileName: run.fileName, importedByUsername: run.importedByUsername };
 }
 
@@ -107,13 +116,13 @@ export async function reconcileBillingStatement(input: ReconcileBillingStatement
     async function findLocalOrder(row: PaymentStatementRow) {
         if (row.orderNo) {
             const exact = await repos.billing.getOrderByOrderNo(row.orderNo);
-            if (exact) return exact;
+            if (exact && localOrderMatchesStatement(exact, row)) return exact;
         }
         for (const identifier of statementIdentifiers(row)) {
             const result = await repos.billing.listOrders({ keyword: identifier, page: 1, pageSize: 10 });
             const exact = result.items.find((order) => localOrderMatchesStatement(order, row));
             if (exact) return exact;
-            const payment = await repos.billing.getPaymentByProviderIdentifier(identifier);
+            const payment = await repos.billing.getPaymentByProviderIdentifier(row.provider, identifier);
             if (payment) return repos.billing.getOrderById(payment.orderId);
         }
         return undefined;

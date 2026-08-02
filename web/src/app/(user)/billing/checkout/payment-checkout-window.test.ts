@@ -14,16 +14,19 @@ describe("payment checkout window", () => {
         expect(popup.location.replace).toHaveBeenCalledWith("https://pay.example/checkout");
     });
 
-    it("writes form checkouts into the popup when no safe redirect url exists", () => {
+    it("submits structured form checkouts without writing upstream HTML", () => {
         const popup = popupWindow();
 
         expect(
             openPaymentCheckoutWindow(
-                checkout({ kind: "form", formHtml: "<form>pay</form>" }),
+                checkout({ kind: "form", form: { action: "https://pay.example/submit", method: "POST", fields: [{ name: "token", value: "safe" }] } }),
                 vi.fn(() => popup),
             ),
         ).toEqual({ status: "opened" });
-        expect(popup.document.write).toHaveBeenLastCalledWith("<form>pay</form>");
+        expect(popup.testForm).toMatchObject({ action: "https://pay.example/submit", method: "POST" });
+        expect(popup.testForm.append).toHaveBeenCalledWith(expect.objectContaining({ type: "hidden", name: "token", value: "safe" }));
+        expect(popup.testForm.submit).toHaveBeenCalledOnce();
+        expect("write" in popup.document).toBe(false);
     });
 
     it("reports blocked popups with copyable fallback payment information", () => {
@@ -54,10 +57,17 @@ function checkout(patch: Partial<PaymentCheckout>): PaymentCheckout {
 }
 
 function popupWindow() {
+    const testForm = { action: "", method: "", append: vi.fn(), submit: vi.fn() };
+    const document = {
+        title: "",
+        body: { textContent: "", replaceChildren: vi.fn() },
+        createElement: vi.fn((tagName: string) => (tagName === "form" ? testForm : { type: "", name: "", value: "" })),
+    };
     return {
         opener: {} as Window | null,
         close: vi.fn(),
         location: { replace: vi.fn() },
-        document: { open: vi.fn(), write: vi.fn(), close: vi.fn() },
-    } as unknown as Window;
+        document,
+        testForm,
+    } as unknown as Window & { document: typeof document; testForm: typeof testForm };
 }

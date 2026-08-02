@@ -12,13 +12,24 @@ export function openPaymentCheckoutWindow(checkout: PaymentCheckout, openWindow:
     const redirectUrl = safePaymentUrl(checkout.url || checkout.qrContent);
     if (redirectUrl) return openPaymentRedirect(redirectUrl, fallbackValue, openWindow);
 
-    if (checkout.kind === "form" && checkout.formHtml) {
+    if (checkout.kind === "form" && checkout.form) {
+        const action = safePaymentUrl(checkout.form.action);
+        if (!action) return { status: "invalid", fallbackValue };
         const popup = openCheckoutWindow(openWindow);
         if (!popup) return { status: "blocked", fallbackValue };
         try {
-            popup.document.open();
-            popup.document.write(checkout.formHtml);
-            popup.document.close();
+            const form = popup.document.createElement("form");
+            form.action = action;
+            form.method = checkout.form.method;
+            for (const field of checkout.form.fields) {
+                const input = popup.document.createElement("input");
+                input.type = "hidden";
+                input.name = field.name;
+                input.value = field.value;
+                form.append(input);
+            }
+            popup.document.body.replaceChildren(form);
+            form.submit();
             return { status: "opened" };
         } catch {
             closePopup(popup);
@@ -34,7 +45,7 @@ export function safePaymentUrl(value?: string) {
     if (!text) return "";
     try {
         const url = new URL(text);
-        return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : "";
+        return (url.protocol === "http:" || url.protocol === "https:") && !url.username && !url.password ? url.toString() : "";
     } catch {
         return "";
     }
@@ -58,11 +69,8 @@ function openCheckoutWindow(openWindow: WindowOpen): CheckoutWindow | null {
     const checkoutWindow = popup as CheckoutWindow;
     checkoutWindow.opener = null;
     try {
-        checkoutWindow.document.open();
-        checkoutWindow.document.write(
-            '<!doctype html><html><head><meta charset="utf-8" /><title>正在打开支付</title></head><body style="font-family:system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;margin:32px;color:#111827">正在打开支付页面，请稍候...</body></html>',
-        );
-        checkoutWindow.document.close();
+        checkoutWindow.document.title = "正在打开支付";
+        checkoutWindow.document.body.textContent = "正在打开支付页面，请稍候...";
     } catch {
         // Some browser payment windows restrict document access; navigation can still continue.
     }

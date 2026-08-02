@@ -41,7 +41,7 @@ const HEADER_ALIASES = {
 
 export { MAX_STATEMENT_ROWS };
 
-export function createBillingReconciliationPersistenceRecords(result: BillingReconciliationResult, input: { actor?: BillingReconciliationActor; fileName?: unknown; note?: unknown } = {}) {
+export function createBillingReconciliationPersistenceRecords(result: BillingReconciliationResult, input: { actor?: BillingReconciliationActor; fileName?: unknown; fileHash?: string; note?: unknown } = {}) {
     const runId = randomUUID();
     const nowIso = new Date().toISOString();
     const fileName = normalizeText(input.fileName, "", 180);
@@ -62,6 +62,7 @@ export function createBillingReconciliationPersistenceRecords(result: BillingRec
         importedByUserId: normalizeText(input.actor?.userId, "", 120) || undefined,
         importedByUsername: normalizeText(input.actor?.username, "", 120) || undefined,
         fileName: fileName || undefined,
+        fileHash: normalizeText(input.fileHash, "", 64) || undefined,
         note: note || undefined,
         metadata: {
             generatedAt: result.generatedAt,
@@ -128,6 +129,8 @@ function reconcileStatementRow(row: PaymentStatementRow, local: LocalBillingReco
     if (duplicate) issues.push(issue("duplicate_statement_record", "账单中存在重复记录", "warning"));
     if (!statementIdentifiers(row).length) issues.push(issue("invalid_statement_row", "账单行缺少订单号或支付流水号", "error"));
     if (row.status === "unknown") issues.push(issue("invalid_statement_row", "账单行状态无法识别", "warning", undefined, "unknown"));
+    if (row.amountCents === undefined) issues.push(issue("invalid_statement_row", "账单行缺少有效金额", "error"));
+    if (!row.currency) issues.push(issue("invalid_statement_row", "账单行缺少币种", "error"));
     if (!local) {
         issues.push(issue("missing_local_order", "本地没有匹配的订单", "error"));
         return buildResultRow(row, undefined, issues);
@@ -349,27 +352,30 @@ function buildLocalRecordIndex(localRecords: LocalBillingReconciliationRecord[])
 
 export function findLocalRecordInIndex(row: PaymentStatementRow, localIndex: Map<string, LocalBillingReconciliationRecord>) {
     for (const identifier of statementIdentifiers(row)) {
-        const record = localIndex.get(keyValue(identifier));
+        const record = localIndex.get(providerIdentifierKey(row.provider, identifier));
         if (record) return record;
     }
     return undefined;
 }
 
 function localRecordKeys(record: LocalBillingReconciliationRecord) {
-    const values = [record.order.orderNo, record.order.providerOrderId, record.order.providerPaymentId, ...record.payments.flatMap((payment) => [payment.providerTradeId, payment.providerPaymentId])];
-    return values
-        .map((value) => normalizeOptionalId(value))
-        .filter(Boolean)
-        .map((value) => keyValue(value));
+    const entries = [
+        ...[record.order.orderNo, record.order.providerOrderId, record.order.providerPaymentId].map((value) => [record.order.provider, value] as const),
+        ...record.payments.flatMap((payment) => [[payment.provider, payment.providerTradeId] as const, [payment.provider, payment.providerPaymentId] as const]),
+    ];
+    return entries.flatMap(([provider, value]) => {
+        const normalized = normalizeOptionalId(value);
+        return normalized ? [providerIdentifierKey(provider, normalized)] : [];
+    });
 }
 
 function reconciliationLookupKey(row: PaymentStatementRow) {
-    return keyValue(statementIdentifiers(row)[0] || `row-${row.rowNumber}`);
+    return providerIdentifierKey(row.provider, statementIdentifiers(row)[0] || `row-${row.rowNumber}`);
 }
 
 export function reconciliationLookupCacheKey(row: PaymentStatementRow) {
     const identifiers = statementIdentifiers(row);
-    return identifiers.length ? identifiers.map(keyValue).join("|") : `row-${row.rowNumber}`;
+    return identifiers.length ? identifiers.map((identifier) => providerIdentifierKey(row.provider, identifier)).join("|") : `${normalizeProvider(row.provider)}:row-${row.rowNumber}`;
 }
 
 function statementDuplicateKey(row: PaymentStatementRow) {
@@ -383,6 +389,7 @@ export function statementIdentifiers(row: PaymentStatementRow) {
 }
 
 export function localOrderMatchesStatement(order: BillingOrderRecord, row: PaymentStatementRow) {
+    if (normalizeProvider(order.provider) !== normalizeProvider(row.provider)) return false;
     const keys = new Set(
         [order.orderNo, order.providerOrderId, order.providerPaymentId]
             .map((value) => normalizeOptionalId(value))
@@ -390,6 +397,10 @@ export function localOrderMatchesStatement(order: BillingOrderRecord, row: Payme
             .map((value) => keyValue(value)),
     );
     return statementIdentifiers(row).some((identifier) => keys.has(keyValue(identifier)));
+}
+
+function providerIdentifierKey(provider: string, identifier: string) {
+    return `${normalizeProvider(provider)}:${keyValue(identifier)}`;
 }
 
 function readAliased(source: Record<string, string>, aliases: string[]) {

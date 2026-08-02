@@ -256,7 +256,7 @@ ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS worker_id text;
 ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS lease_until timestamptz;
 ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS last_heartbeat_at timestamptz;
 ALTER TABLE generation_tasks DROP CONSTRAINT IF EXISTS generation_tasks_execution_phase;
-ALTER TABLE generation_tasks ADD CONSTRAINT generation_tasks_execution_phase CHECK (execution_phase IN ('created', 'submitting', 'submitted', 'polling', 'result_ready', 'persisting', 'needs_review', 'review_pending', 'reviewing', 'review_unavailable', 'completed'));
+ALTER TABLE generation_tasks ADD CONSTRAINT generation_tasks_execution_phase CHECK (execution_phase IN ('created', 'submitting', 'submitted', 'polling', 'result_ready', 'persisting', 'cancel_requested', 'cancel_polling', 'needs_review', 'review_pending', 'reviewing', 'review_unavailable', 'completed'));
 
 DROP INDEX IF EXISTS generation_tasks_user_client_request_idx;
 CREATE UNIQUE INDEX generation_tasks_user_client_request_idx ON generation_tasks (user_id, task_type, client_request_id, COALESCE(attempt_no, 0)) WHERE client_request_id IS NOT NULL AND client_request_id <> '';
@@ -264,7 +264,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS generation_tasks_channel_upstream_idx ON gener
 CREATE INDEX IF NOT EXISTS generation_tasks_conversation_idx ON generation_tasks (conversation_id, updated_at DESC) WHERE conversation_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS generation_tasks_run_idx ON generation_tasks (run_id, updated_at DESC) WHERE run_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS generation_tasks_user_project_idx ON generation_tasks (user_id, project_id, task_type, status) WHERE project_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS generation_tasks_recovery_due_idx ON generation_tasks (next_poll_at, lease_until, id) WHERE (status IN ('pending', 'running') AND execution_phase IN ('created', 'submitting', 'submitted', 'polling', 'result_ready', 'persisting')) OR (task_type = 'agent' AND status = 'success' AND execution_phase IN ('review_pending', 'reviewing'));
+DROP INDEX IF EXISTS generation_tasks_recovery_due_idx;
+CREATE INDEX generation_tasks_recovery_due_idx ON generation_tasks (next_poll_at, lease_until, id) WHERE (status IN ('pending', 'running') AND execution_phase IN ('created', 'submitting', 'submitted', 'polling', 'result_ready', 'persisting')) OR (status = 'cancelled' AND execution_phase IN ('cancel_requested', 'cancel_polling')) OR (task_type = 'agent' AND status = 'success' AND execution_phase IN ('review_pending', 'reviewing'));
 
 CREATE TABLE IF NOT EXISTS generation_worker_heartbeats (
     worker_id text PRIMARY KEY,
@@ -686,6 +687,7 @@ CREATE TABLE IF NOT EXISTS billing_reconciliation_runs (
     imported_by_user_id text REFERENCES users(id) ON DELETE SET NULL,
     imported_by_username text,
     file_name text,
+    file_hash text,
     note text,
     metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
     created_at timestamptz NOT NULL DEFAULT now(),
@@ -696,6 +698,7 @@ CREATE TABLE IF NOT EXISTS billing_reconciliation_runs (
 
 CREATE INDEX IF NOT EXISTS billing_reconciliation_runs_created_idx ON billing_reconciliation_runs (created_at DESC);
 CREATE INDEX IF NOT EXISTS billing_reconciliation_runs_provider_created_idx ON billing_reconciliation_runs (provider, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS billing_reconciliation_runs_provider_file_hash_idx ON billing_reconciliation_runs (provider, file_hash) WHERE file_hash IS NOT NULL AND file_hash <> '';
 
 CREATE TABLE IF NOT EXISTS billing_reconciliation_rows (
     id text PRIMARY KEY,
@@ -953,6 +956,8 @@ CREATE TRIGGER coupon_redemptions_set_updated_at BEFORE UPDATE ON coupon_redempt
 
 DROP TRIGGER IF EXISTS payment_transactions_set_updated_at ON payment_transactions;
 CREATE TRIGGER payment_transactions_set_updated_at BEFORE UPDATE ON payment_transactions FOR EACH ROW EXECUTE FUNCTION vozeb_pro_set_updated_at();
+DROP TRIGGER IF EXISTS billing_refund_jobs_set_updated_at ON billing_refund_jobs;
+CREATE TRIGGER billing_refund_jobs_set_updated_at BEFORE UPDATE ON billing_refund_jobs FOR EACH ROW EXECUTE FUNCTION vozeb_pro_set_updated_at();
 DROP TRIGGER IF EXISTS referral_programs_set_updated_at ON referral_programs;
 CREATE TRIGGER referral_programs_set_updated_at BEFORE UPDATE ON referral_programs FOR EACH ROW EXECUTE FUNCTION vozeb_pro_set_updated_at();
 DROP TRIGGER IF EXISTS referral_codes_set_updated_at ON referral_codes;

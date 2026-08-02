@@ -236,7 +236,7 @@ export function mergeJson(current: JsonValue | undefined, patch: Record<string, 
     return { ...source, ...patch };
 }
 
-export function paymentRefundMetadata(refund: PaymentRefundResult, includeRawPayload: boolean): JsonValue {
+export function paymentRefundMetadata(refund: PaymentRefundResult, includeRawPayload: boolean): Record<string, JsonValue> {
     const metadata: Record<string, JsonValue> = {
         provider: refund.provider,
         status: refund.status,

@@ -7,7 +7,9 @@ import { BillingInputError } from "@/lib/server/billing-errors";
 import { getPaymentRuntimeEnv, getPaymentRuntimeValue, type PaymentRuntimeConfig } from "@/lib/server/payment-config-store";
 import type { BillingOrderRecord, JsonValue } from "@/lib/server/database";
 import { loadPaymentPublicKey, verifyRsaSha256 } from "@/lib/server/payment-signature-utils";
+import { fetchSafeOutbound } from "@/lib/server/safe-outbound-fetch";
 import type { CreatePaymentCheckoutOptions, PaymentCheckoutKind, PaymentCheckoutResult } from "./payment-checkout-types";
+import { normalizePaymentForm, type PaymentForm } from "./payment-form";
 
 export async function createProviderCheckout(provider: string, order: BillingOrderRecord, options: CreatePaymentCheckoutOptions, paymentConfig: PaymentRuntimeConfig): Promise<PaymentCheckoutResult> {
     if (provider === "stripe") return createStripeCheckout(order, options, paymentConfig);
@@ -53,7 +55,7 @@ async function createStripeCheckout(order: BillingOrderRecord, options: CreatePa
     params.set("payment_intent_data[metadata][vozebProOrderNo]", order.orderNo);
     for (const method of stripePaymentMethods(paymentConfig)) params.append("payment_method_types[]", method);
 
-    const response = await fetch(`${stripeApiBase(paymentConfig)}/v1/checkout/sessions`, {
+    const response = await fetchSafeOutbound(`${stripeApiBase(paymentConfig)}/v1/checkout/sessions`, {
         method: "POST",
         headers: {
             authorization: `Bearer ${secretKey}`,
@@ -61,6 +63,7 @@ async function createStripeCheckout(order: BillingOrderRecord, options: CreatePa
             "Idempotency-Key": `vozeb-pro-checkout-${order.id}`,
         },
         body: params,
+        signal: AbortSignal.timeout(20_000),
     });
     const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
     if (!response.ok) throw new BillingInputError(readStripeError(payload), response.status >= 500 ? 502 : 400);
@@ -113,17 +116,18 @@ async function createAlipayCheckout(order: BillingOrderRecord, options: CreatePa
         orderNo: order.orderNo,
         kind: "form",
         url: `${gateway}?${new URLSearchParams(params).toString()}`,
-        formHtml: buildAutoSubmitForm(gateway, params),
+        form: buildPaymentForm(gateway, params),
         providerOrderId: order.orderNo,
         expiresAt: order.expiresAt,
     };
 }
 
 async function createAlipayFaceToFaceCheckout(gateway: string, params: Record<string, string>, order: BillingOrderRecord, paymentConfig: PaymentRuntimeConfig): Promise<PaymentCheckoutResult> {
-    const response = await fetch(gateway, {
+    const response = await fetchSafeOutbound(gateway, {
         method: "POST",
         headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams(params),
+        signal: AbortSignal.timeout(20_000),
     });
     const rawBody = await response.text();
     const payload = parseJsonObject(rawBody);
@@ -215,7 +219,7 @@ async function createWechatNativeCheckout(order: BillingOrderRecord, options: Cr
     const timestamp = Math.floor(Date.now() / 1000).toString();
     const nonce = randomBytes(16).toString("hex");
     const signature = signWechatRequest("POST", path, timestamp, nonce, body, privateKey);
-    const response = await fetch(`${apiBase}${path}`, {
+    const response = await fetchSafeOutbound(`${apiBase}${path}`, {
         method: "POST",
         headers: {
             authorization: `WECHATPAY2-SHA256-RSA2048 mchid="${mchid}",nonce_str="${nonce}",timestamp="${timestamp}",serial_no="${serialNo}",signature="${signature}"`,
@@ -223,6 +227,7 @@ async function createWechatNativeCheckout(order: BillingOrderRecord, options: Cr
             "content-type": "application/json",
         },
         body,
+        signal: AbortSignal.timeout(20_000),
     });
     const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
     if (!response.ok) throw new BillingInputError(readWechatError(payload), response.status >= 500 ? 502 : 400);
@@ -267,26 +272,26 @@ async function createPayplyCheckout(order: BillingOrderRecord, options: CreatePa
     const requestMethod = payplyRequestMethod(paymentConfig);
     const contentType = payplyContentType(paymentConfig);
     const request = buildPayplyRequest(checkoutUrl, requestMethod, contentType, body, payplyHeaders(paymentConfig, apiKey, contentType));
-    const response = await fetch(request.url, request.init);
+    const response = await fetchSafeOutbound(request.url, { ...request.init, signal: AbortSignal.timeout(20_000) });
     const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
     if (!response.ok) throw new BillingInputError(readPayplyError(payload), response.status >= 500 ? 502 : 400);
 
     const forcedKind = normalizeCheckoutKind(getPaymentRuntimeEnv(paymentConfig, "VOZEB_PRO_PAYPLY_RESULT_KIND"));
-    const formHtml = normalizeOptionalText(readConfiguredPath(paymentConfig, payload, "VOZEB_PRO_PAYPLY_FORM_FIELD", ["formHtml", "html", "data.formHtml", "data.html", "result.formHtml"]), 40_000);
+    const form = normalizePaymentForm(readConfiguredPath(paymentConfig, payload, "VOZEB_PRO_PAYPLY_FORM_FIELD", ["form", "formHtml", "html", "data.form", "data.formHtml", "data.html", "result.form", "result.formHtml"]), checkoutUrl);
     const qrContent = normalizeOptionalText(readConfiguredPath(paymentConfig, payload, "VOZEB_PRO_PAYPLY_QR_FIELD", ["qrContent", "qrCode", "qrcode", "codeUrl", "code_url", "data.qrContent", "data.qrCode", "data.codeUrl", "result.qrContent"]), 4000);
     const url = normalizeOptionalText(
         readConfiguredPath(paymentConfig, payload, "VOZEB_PRO_PAYPLY_URL_FIELD", ["url", "paymentUrl", "payment_url", "checkoutUrl", "checkout_url", "payUrl", "pay_url", "data.url", "data.paymentUrl", "data.payUrl", "result.url"]),
         2000,
     );
-    const kind = forcedKind || (formHtml ? "form" : qrContent ? "qr" : url ? "redirect" : undefined);
-    if (!kind || (kind === "form" && !formHtml) || (kind === "qr" && !qrContent) || (kind === "redirect" && !url)) throw new BillingInputError("PayPly 未返回有效支付参数", 502);
+    const kind = forcedKind || (form ? "form" : qrContent ? "qr" : url ? "redirect" : undefined);
+    if (!kind || (kind === "form" && !form) || (kind === "qr" && !qrContent) || (kind === "redirect" && !url)) throw new BillingInputError("PayPly 未返回有效支付参数", 502);
     return {
         provider: "payply",
         orderId: order.id,
         orderNo: order.orderNo,
         kind,
         url,
-        formHtml,
+        form,
         qrContent,
         providerOrderId:
             normalizeOptionalText(readConfiguredPath(paymentConfig, payload, "VOZEB_PRO_PAYPLY_PROVIDER_ORDER_ID_FIELD", ["providerOrderId", "tradeId", "trade_no", "id", "data.providerOrderId", "data.tradeId", "data.id", "result.id"]), 160) ||
@@ -313,11 +318,8 @@ function signWechatRequest(method: string, path: string, timestamp: string, nonc
     return createSign("RSA-SHA256").update(message, "utf8").sign(privateKey, "base64");
 }
 
-function buildAutoSubmitForm(action: string, params: Record<string, string>) {
-    const inputs = Object.entries(params)
-        .map(([key, value]) => `<input type="hidden" name="${escapeHtml(key)}" value="${escapeHtml(value)}" />`)
-        .join("");
-    return `<!doctype html><html><head><meta charset="utf-8" /></head><body><form id="vozeb-pro-alipay-form" method="post" action="${escapeHtml(action)}">${inputs}</form><script>document.getElementById("vozeb-pro-alipay-form").submit();</script></body></html>`;
+function buildPaymentForm(action: string, params: Record<string, string>): PaymentForm {
+    return { action, method: "POST", fields: Object.entries(params).map(([name, value]) => ({ name, value })) };
 }
 
 export function checkoutMetadata(checkout: PaymentCheckoutResult): JsonValue {
@@ -325,7 +327,7 @@ export function checkoutMetadata(checkout: PaymentCheckoutResult): JsonValue {
         provider: checkout.provider,
         kind: checkout.kind,
         url: checkout.url || "",
-        formHtml: checkout.formHtml || "",
+        form: checkout.form || null,
         qrContent: checkout.qrContent || "",
         providerOrderId: checkout.providerOrderId || "",
         providerPaymentId: checkout.providerPaymentId || "",
@@ -349,13 +351,13 @@ export function checkoutFromMetadata(order: BillingOrderRecord, provider: string
         orderNo: order.orderNo,
         kind,
         url: normalizeOptionalText(item.url, 2000),
-        formHtml: normalizeOptionalText(item.formHtml, 20_000),
+        form: normalizePaymentForm(item.form),
         qrContent: normalizeOptionalText(item.qrContent, 4000),
         providerOrderId: normalizeOptionalText(item.providerOrderId, 160),
         providerPaymentId: normalizeOptionalText(item.providerPaymentId, 160),
         expiresAt,
     };
-    if ((kind === "redirect" && !result.url) || (kind === "form" && !result.formHtml) || (kind === "qr" && !result.qrContent && !result.url)) return null;
+    if ((kind === "redirect" && !result.url) || (kind === "form" && !result.form) || (kind === "qr" && !result.qrContent && !result.url)) return null;
     return result;
 }
 
@@ -588,8 +590,4 @@ function normalizeText(value: unknown, fallback: string, maxLength: number) {
 function normalizeOptionalText(value: unknown, maxLength: number) {
     const text = normalizeText(value, "", maxLength);
     return text || undefined;
-}
-
-function escapeHtml(value: string) {
-    return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }

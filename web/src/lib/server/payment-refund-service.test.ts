@@ -1,4 +1,4 @@
-import { generateKeyPairSync } from "node:crypto";
+import { createSign, generateKeyPairSync } from "node:crypto";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -18,6 +18,7 @@ vi.mock("@/lib/server/payment-config-store", () => ({
     getPaymentRuntimeEnv: (config: typeof mocks.runtimeConfig, name: string) => config.valuesByEnvName[name]?.trim() || process.env[name]?.trim() || "",
     getPaymentRuntimeValue: (config: typeof mocks.runtimeConfig, ...names: string[]) => names.map((name) => config.valuesByEnvName[name]?.trim() || process.env[name]?.trim() || "").find(Boolean) || "",
 }));
+vi.mock("@/lib/server/safe-outbound-fetch", () => ({ fetchSafeOutbound: (url: string | URL, init?: RequestInit) => fetch(url, init) }));
 
 import { refundPaymentTransaction } from "./payment-refund-service";
 
@@ -179,14 +180,31 @@ describe("payment refunds", () => {
     });
 
     it("creates a WeChat Pay v3 refund with signed JSON payload", async () => {
+        const platformKeyPair = generateKeyPairSync("rsa", { modulusLength: 2048 });
+        const platformPublicKey = platformKeyPair.publicKey.export({ type: "spki", format: "pem" }).toString();
         mocks.runtimeConfig.valuesByEnvName = {
             VOZEB_PRO_WECHAT_PAY_MCH_ID: "1900000001",
             VOZEB_PRO_WECHAT_PAY_CERT_SERIAL_NO: "serial-no",
             VOZEB_PRO_WECHAT_PAY_PRIVATE_KEY: testPrivateKey(),
+            VOZEB_PRO_WECHAT_PAY_PLATFORM_PUBLIC_KEY: platformPublicKey,
             VOZEB_PRO_WECHAT_PAY_API_BASE: "https://wechat.test",
             VOZEB_PRO_WECHAT_PAY_REFUND_NOTIFY_URL: "https://example.com/refund-notify",
         };
-        const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => Response.json({ refund_id: "5030001", status: "PROCESSING" }));
+        const responseBody = JSON.stringify({ refund_id: "5030001", status: "PROCESSING" });
+        const responseTimestamp = "1785600000";
+        const responseNonce = "wechat-refund-response";
+        const responseSignature = createSign("RSA-SHA256").update(`${responseTimestamp}\n${responseNonce}\n${responseBody}\n`, "utf8").sign(platformKeyPair.privateKey, "base64");
+        const fetchMock = vi.fn(
+            async (_url: string, _init?: RequestInit) =>
+                new Response(responseBody, {
+                    headers: {
+                        "content-type": "application/json",
+                        "wechatpay-timestamp": responseTimestamp,
+                        "wechatpay-nonce": responseNonce,
+                        "wechatpay-signature": responseSignature,
+                    },
+                }),
+        );
         vi.stubGlobal("fetch", fetchMock);
 
         const result = await refundPaymentTransaction({ ...order, provider: "wechat", currency: "CNY" }, { ...payment, provider: "wechat", providerPaymentId: "4200000000000000001" }, { reason: "运营退款" });

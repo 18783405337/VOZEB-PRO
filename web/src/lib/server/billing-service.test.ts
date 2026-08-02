@@ -10,11 +10,18 @@ const mocks = vi.hoisted(() => ({
     payments: [] as PaymentTransactionRecord[],
     getOrderById: vi.fn(),
     upsertPayment: vi.fn(),
+    lockPaymentIdentity: vi.fn(),
+    getPaymentByProviderIdentifiers: vi.fn(),
     updateOrder: vi.fn(),
     listPayments: vi.fn(),
     listPlanAssignments: vi.fn(),
     updatePlanAssignment: vi.fn(),
     getActivePlanAssignment: vi.fn(),
+    getRefundJobByOrderId: vi.fn(),
+    upsertRefundJob: vi.fn(),
+    releaseRefundJob: vi.fn(),
+    checkpointRefundJob: vi.fn(),
+    updatePaymentState: vi.fn(),
     getSettings: vi.fn(),
     getUserById: vi.fn(),
     updateUser: vi.fn(),
@@ -31,11 +38,18 @@ vi.mock("@/lib/server/database", () => ({
         billing: {
             getOrderById: mocks.getOrderById,
             upsertPayment: mocks.upsertPayment,
+            lockPaymentIdentity: mocks.lockPaymentIdentity,
+            getPaymentByProviderIdentifiers: mocks.getPaymentByProviderIdentifiers,
             updateOrder: mocks.updateOrder,
             listPayments: mocks.listPayments,
             listPlanAssignments: mocks.listPlanAssignments,
             updatePlanAssignment: mocks.updatePlanAssignment,
             getActivePlanAssignment: mocks.getActivePlanAssignment,
+            getRefundJobByOrderId: mocks.getRefundJobByOrderId,
+            upsertRefundJob: mocks.upsertRefundJob,
+            releaseRefundJob: mocks.releaseRefundJob,
+            checkpointRefundJob: mocks.checkpointRefundJob,
+            updatePaymentState: mocks.updatePaymentState,
         },
         users: {
             getById: mocks.getUserById,
@@ -108,6 +122,20 @@ describe("billing payment completion", () => {
             mocks.payments = [...mocks.payments.filter((item) => item.id !== payment.id), payment];
             return payment;
         });
+        mocks.getPaymentByProviderIdentifiers.mockImplementation(
+            async (_provider: string, identifiers: string[]) => mocks.payments.find((item) => identifiers.includes(item.providerTradeId || "") || identifiers.includes(item.providerPaymentId || "")) || null,
+        );
+        mocks.lockPaymentIdentity.mockResolvedValue(undefined);
+        mocks.updatePaymentState.mockImplementation(async (payment: PaymentTransactionRecord) => {
+            mocks.payments = mocks.payments.map((item) =>
+                item.id === payment.id ? { ...item, status: payment.status, rawPayload: payment.rawPayload, paidAt: payment.paidAt, refundedAt: payment.refundedAt, failedAt: payment.failedAt, updatedAt: payment.updatedAt } : item,
+            );
+            return mocks.payments.find((item) => item.id === payment.id) || payment;
+        });
+        mocks.getRefundJobByOrderId.mockResolvedValue(null);
+        mocks.upsertRefundJob.mockImplementation(async (job: unknown) => job);
+        mocks.checkpointRefundJob.mockResolvedValue(null);
+        mocks.releaseRefundJob.mockResolvedValue(null);
         mocks.listPayments.mockImplementation(async () => ({ items: mocks.payments }));
         mocks.listPlanAssignments.mockResolvedValue({ items: [] });
         mocks.updateOrder.mockImplementation(async (_id: string, patch: Partial<BillingOrderRecord>) => {

@@ -95,6 +95,7 @@ describe("split Postgres repositories", () => {
                     name: "主渠道",
                     base_url: "https://api.example.com/v1",
                     api_key_ciphertext: "ciphertext",
+                    webhook_secret_ciphertext: "webhook-ciphertext",
                     api_format: "openai",
                     models: ["gpt-test"],
                     enabled: true,
@@ -111,6 +112,7 @@ describe("split Postgres repositories", () => {
             name: "主渠道",
             baseUrl: "https://api.example.com/v1",
             apiKeyCiphertext: "ciphertext",
+            webhookSecretCiphertext: "webhook-ciphertext",
             apiFormat: "openai",
             models: ["gpt-test"],
             enabled: true,
@@ -119,8 +121,10 @@ describe("split Postgres repositories", () => {
         });
 
         expect(String(queryArgs(query, 0)[0])).toContain("health_results");
-        expect(JSON.parse(String((queryArgs(query, 0)[1] as unknown[])[8]))).toEqual(healthResults);
+        expect((queryArgs(query, 0)[1] as unknown[])[4]).toBe("webhook-ciphertext");
+        expect(JSON.parse(String((queryArgs(query, 0)[1] as unknown[])[9]))).toEqual(healthResults);
         expect(channel.healthResults).toEqual(healthResults);
+        expect(channel.webhookSecretCiphertext).toBe("webhook-ciphertext");
     });
 
     it("loads an authenticated user with one targeted session query", async () => {
@@ -217,6 +221,80 @@ describe("split Postgres repositories", () => {
         expect(query).toHaveBeenCalledTimes(1);
         expect(queryArgs(query, 0)[0]).toContain("INSERT INTO sessions");
         expect(queryArgs(query, 0)[1]).toEqual(["session-one", "user-one", "token-hash", timestamp, "2026-01-08T00:00:00.000Z"]);
+    });
+
+    it("updates one user row without rewriting sessions or point records", async () => {
+        const timestamp = "2026-01-01T00:00:00.000Z";
+        const { executor, query } = mockExecutor([
+            [
+                {
+                    id: "user-one",
+                    account_id: 1,
+                    username: "user-one",
+                    email: null,
+                    display_name: "User One",
+                    role: "user",
+                    status: "active",
+                    plan_id: "free",
+                    points_balance: 20,
+                    password_hash: "hash",
+                    created_at: timestamp,
+                    updated_at: timestamp,
+                },
+            ],
+        ]);
+
+        await createPostgresRepositories(executor).users.update("user-one", { email: null, displayName: "User One" });
+
+        const [sql, params] = queryArgs(query, 0) as [string, unknown[]];
+        expect(sql).toContain("WHERE id = $1");
+        expect(sql).toContain("email = CASE WHEN $3::boolean");
+        expect(sql).not.toMatch(/DELETE FROM (sessions|point_records|quota_usage)/);
+        expect(params.slice(0, 5)).toEqual(["user-one", undefined, true, null, "User One"]);
+    });
+
+    it("locks and persists one email verification attempt", async () => {
+        const timestamp = "2026-01-01T00:00:00.000Z";
+        const { executor, query } = mockExecutor([
+            [
+                {
+                    id: "code-one",
+                    purpose: "password-reset",
+                    email: "user@example.com",
+                    code_hash: "hash",
+                    created_at: timestamp,
+                    expires_at: "2026-01-01T00:10:00.000Z",
+                    attempts: 1,
+                },
+            ],
+            [
+                {
+                    id: "code-one",
+                    purpose: "password-reset",
+                    email: "user@example.com",
+                    code_hash: "hash",
+                    created_at: timestamp,
+                    expires_at: "2026-01-01T00:10:00.000Z",
+                    attempts: 2,
+                },
+            ],
+        ]);
+        const emailCodes = createPostgresRepositories(executor).emailCodes;
+
+        await emailCodes.findActive({ purpose: "password-reset", email: "user@example.com", now: timestamp }, true);
+        await emailCodes.updateAttempt("code-one", 2);
+
+        expect(String(queryArgs(query, 0)[0])).toContain("FOR UPDATE");
+        expect(String(queryArgs(query, 1)[0])).toContain("UPDATE email_codes SET attempts = $2");
+        expect(queryArgs(query, 1)[1]).toEqual(["code-one", 2, null]);
+    });
+
+    it("deletes sessions by user with one targeted statement", async () => {
+        const { executor, query } = mockExecutor([[]]);
+
+        await createPostgresRepositories(executor).sessions.deleteByUserId("user-one");
+
+        expect(queryArgs(query, 0)).toEqual(["DELETE FROM sessions WHERE user_id = $1", ["user-one"]]);
     });
 
     it("paginates and searches users before loading wallet details", async () => {
@@ -354,7 +432,7 @@ describe("split Postgres repositories", () => {
         expect(sql).toContain("free_daily_points_enabled");
         expect(sql).not.toContain("daily_plan_points_enabled");
         expect(params[3]).toBe(false);
-        expect(params[14]).toBe(20);
+        expect(params[16]).toBe(20);
     });
 
     it("preserves the product list boolean contract", async () => {
@@ -563,7 +641,7 @@ describe("split Postgres repositories", () => {
         const { executor, query } = mockExecutor([[eventRow], [{ ...eventRow, processing_at: timestamp }]]);
         const billing = createPostgresRepositories(executor).billing;
 
-        await billing.upsertProviderEvent({
+        const recorded = await billing.upsertProviderEvent({
             id: "event-one",
             provider: "stripe",
             eventId: "evt-one",
@@ -574,13 +652,107 @@ describe("split Postgres repositories", () => {
         });
         const claimed = await billing.claimProviderEvent("event-one");
 
+        expect(recorded).toMatchObject({ event: { id: "event-one" }, conflict: false });
         expect(claimed?.processingAt).toBe(timestamp);
         expect(queryArgs(query, 0)[0]).toContain("ON CONFLICT (provider, event_id)");
+        expect(queryArgs(query, 0)[0]).toContain("DO NOTHING");
         expect(queryArgs(query, 0)[0]).toContain("RETURNING *");
         expect(queryArgs(query, 1)[0]).toContain("processed_at IS NULL");
         expect(queryArgs(query, 1)[0]).toContain("processing_at IS NULL OR processing_at < now() - interval '5 minutes'");
         expect(queryArgs(query, 1)[0]).toContain("RETURNING *");
         expect(queryArgs(query, 1)[1]).toEqual(["event-one"]);
+    });
+
+    it("preserves the original payment and event record when a duplicate identity conflicts", async () => {
+        const timestamp = "2026-01-01T00:00:00.000Z";
+        const paymentRow = {
+            id: "payment-one",
+            order_id: "order-one",
+            user_id: "user-one",
+            provider: "stripe",
+            channel: "webhook",
+            status: "succeeded",
+            amount_cents: 1299,
+            currency: "CNY",
+            provider_trade_id: "trade-one",
+            created_at: timestamp,
+            updated_at: timestamp,
+        };
+        const eventRow = { id: "event-one", provider: "stripe", event_id: "evt-one", event_type: "paid", order_id: "order-one", signature_valid: true, payload: { amountCents: 1299 }, created_at: timestamp, updated_at: timestamp };
+        const { executor, query } = mockExecutor([[], [paymentRow], [], [eventRow]]);
+        const billing = createPostgresRepositories(executor).billing;
+
+        const payment = await billing.upsertPayment({
+            id: "payment-one",
+            orderId: "order-two",
+            userId: "user-two",
+            provider: "stripe",
+            channel: "webhook",
+            status: "succeeded",
+            amountCents: 1299,
+            currency: "CNY",
+            providerTradeId: "trade-one",
+            createdAt: timestamp,
+            updatedAt: timestamp,
+        });
+        const event = await billing.upsertProviderEvent({
+            id: "event-two",
+            provider: "stripe",
+            eventId: "evt-one",
+            eventType: "paid",
+            orderId: "order-two",
+            signatureValid: true,
+            payload: { amountCents: 1299 },
+            createdAt: timestamp,
+            updatedAt: timestamp,
+        });
+
+        expect(payment).toMatchObject({ orderId: "order-one", userId: "user-one" });
+        expect(event).toMatchObject({ event: { id: "event-one", orderId: "order-one" }, conflict: true });
+        expect(queryArgs(query, 0)[0]).toContain("ON CONFLICT (id) DO NOTHING");
+        expect(queryArgs(query, 1)[0]).toContain("SELECT * FROM payment_transactions WHERE id = $1");
+        expect(queryArgs(query, 2)[0]).toContain("ON CONFLICT (provider, event_id)");
+        expect(queryArgs(query, 3)[0]).toContain("SELECT * FROM payment_provider_events");
+    });
+
+    it("updates payment state without allowing transaction ownership fields to change", async () => {
+        const timestamp = "2026-01-01T00:00:00.000Z";
+        const refundedAt = "2026-01-02T00:00:00.000Z";
+        const paymentRow = {
+            id: "payment-one",
+            order_id: "order-one",
+            user_id: "user-one",
+            provider: "stripe",
+            channel: "webhook",
+            status: "refunded",
+            amount_cents: 1299,
+            currency: "CNY",
+            provider_trade_id: "trade-one",
+            refunded_at: refundedAt,
+            created_at: timestamp,
+            updated_at: refundedAt,
+        };
+        const { executor, query } = mockExecutor([[paymentRow]]);
+
+        const payment = await createPostgresRepositories(executor).billing.updatePaymentState({
+            id: "payment-one",
+            orderId: "order-one",
+            userId: "different-user-is-ignored",
+            provider: "stripe",
+            channel: "different-channel-is-ignored",
+            status: "refunded",
+            amountCents: 1,
+            currency: "USD",
+            providerTradeId: "different-trade-is-ignored",
+            refundedAt,
+            createdAt: timestamp,
+            updatedAt: refundedAt,
+        });
+
+        expect(payment).toMatchObject({ orderId: "order-one", userId: "user-one", providerTradeId: "trade-one", amountCents: 1299, currency: "CNY", status: "refunded" });
+        expect(queryArgs(query, 0)[0]).toContain("WHERE id = $1 AND order_id = $2 AND provider = $3");
+        expect(queryArgs(query, 0)[0]).not.toContain("user_id =");
+        expect(queryArgs(query, 0)[0]).not.toContain("provider_trade_id =");
     });
 
     it("replaces generation assets during upsert", async () => {

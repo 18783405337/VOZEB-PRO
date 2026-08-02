@@ -18,11 +18,27 @@ export function createPaymentFixtureServer(options = {}) {
 }
 
 async function handlePaymentRequest({ request, response, url, body, options }) {
+    if (request.method === "GET" && url.pathname === "/health") return sendJson(response, 200, { ok: true });
+    if (request.method === "GET" && url.pathname === "/payply/query") {
+        return sendJson(response, 200, {
+            data: {
+                status: "succeeded",
+                orderId: url.searchParams.get("orderId") || "",
+                orderNo: url.searchParams.get("orderNo") || "",
+                tradeId: url.searchParams.get("tradeId") || "payply_trade_fixture",
+                paymentId: url.searchParams.get("paymentId") || "payply_payment_fixture",
+                amountCents: 100,
+                currency: "CNY",
+                paidAt: new Date().toISOString(),
+            },
+        });
+    }
+    if (request.method === "GET" && url.pathname === "/payply/refund-query") return sendJson(response, 200, { data: { status: "succeeded", refundId: url.searchParams.get("refundId") || "payply_refund_fixture" } });
     if (request.method !== "POST") return sendJson(response, 405, { error: { message: "method not allowed" } });
     if (url.pathname === "/stripe/v1/checkout/sessions") return sendJson(response, 200, { id: "cs_fixture", url: "https://checkout.fixture/stripe", expires_at: Math.floor(Date.now() / 1000) + 1800 });
     if (url.pathname === "/stripe/v1/refunds") return sendJson(response, 200, { id: "re_fixture", status: "succeeded" });
     if (url.pathname === "/wechat/v3/pay/transactions/native") return sendJson(response, 200, { code_url: "weixin://wxpay/bizpayurl?pr=fixture" });
-    if (url.pathname === "/wechat/v3/refund/domestic/refunds") return sendJson(response, 200, { refund_id: "wx_refund_fixture", status: "SUCCESS" });
+    if (url.pathname === "/wechat/v3/refund/domestic/refunds") return sendSignedWechat(response, { refund_id: "wx_refund_fixture", status: "SUCCESS" }, options.wechatPrivateKey);
     if (url.pathname === "/payply/checkout") return sendJson(response, 200, { data: { paymentUrl: "https://checkout.fixture/payply", tradeId: "payply_trade_fixture", paymentId: "payply_payment_fixture" } });
     if (url.pathname === "/payply/refund") return sendJson(response, 200, { data: { status: "success", refundId: "payply_refund_fixture" } });
     if (url.pathname === "/alipay/gateway.do") return handleAlipay(response, body, options.alipayPrivateKey);
@@ -49,6 +65,20 @@ function sendSignedAlipay(response, key, result, privateKey) {
     sendJson(response, 200, { [key]: result, sign });
 }
 
+function sendSignedWechat(response, result, privateKey) {
+    if (!privateKey) throw new Error("WeChat fixture private key is required");
+    const timestamp = String(Math.floor(Date.now() / 1000));
+    const nonce = "wechat-fixture-response";
+    const rawBody = JSON.stringify(result);
+    const signature = createSign("RSA-SHA256").update(`${timestamp}\n${nonce}\n${rawBody}\n`, "utf8").sign(privateKey, "base64");
+    sendJson(response, 200, result, {
+        "wechatpay-timestamp": timestamp,
+        "wechatpay-nonce": nonce,
+        "wechatpay-signature": signature,
+        "wechatpay-serial": "fixture-platform-serial",
+    });
+}
+
 async function readRequestBody(request) {
     const chunks = [];
     for await (const chunk of request) chunks.push(chunk);
@@ -64,9 +94,9 @@ function parseObject(value) {
     }
 }
 
-function sendJson(response, status, value) {
+function sendJson(response, status, value, headers = {}) {
     const bytes = Buffer.from(JSON.stringify(value));
-    response.writeHead(status, { "content-type": "application/json; charset=utf-8", "content-length": bytes.length, "cache-control": "no-store" });
+    response.writeHead(status, { "content-type": "application/json; charset=utf-8", "content-length": bytes.length, "cache-control": "no-store", ...headers });
     response.end(bytes);
 }
 

@@ -159,7 +159,7 @@ export class ReferralRepository {
         return result.rows[0] ? mapReferralRelationship(result.rows[0]) : null;
     }
 
-    async listRelationships(input: PageInput & { keyword?: string; riskStatus?: ReferralRiskStatus; inviterUserId?: string } = {}): Promise<PageResult<ReferralRelationshipRecord>> {
+    async listRelationships(input: PageInput & { keyword?: string; riskStatus?: ReferralRiskStatus; inviterUserId?: string; participantUserId?: string } = {}): Promise<PageResult<ReferralRelationshipRecord>> {
         const page = normalizePage(input.page);
         const pageSize = normalizePageSize(input.pageSize);
         const keyword = input.keyword?.trim().toLowerCase() || "";
@@ -177,10 +177,11 @@ export class ReferralRepository {
                    OR lower(invitee.username) LIKE $2 OR lower(invitee.display_name) LIKE $2 OR lpad(invitee.account_id::text, 4, '0') LIKE $2 OR lower(code.code) LIKE $2)
               AND ($3::text IS NULL OR relationship.risk_status = $3)
               AND ($4::text IS NULL OR relationship.inviter_user_id = $4)
+              AND ($5::text IS NULL OR relationship.inviter_user_id = $5 OR relationship.invitee_user_id = $5)
             ORDER BY relationship.registered_at DESC
-            LIMIT $5 OFFSET $6
+            LIMIT $6 OFFSET $7
             `,
-            [keyword, `%${keyword}%`, input.riskStatus || null, input.inviterUserId || null, pageSize, (page - 1) * pageSize],
+            [keyword, `%${keyword}%`, input.riskStatus || null, input.inviterUserId || null, input.participantUserId || null, pageSize, (page - 1) * pageSize],
         );
         return pageResult(result.rows.map(mapReferralRelationship), numberValue(result.rows[0]?.total_count), page, pageSize);
     }

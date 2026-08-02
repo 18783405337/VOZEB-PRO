@@ -127,7 +127,11 @@ export type PaymentCheckout = {
     orderNo: string;
     kind: "manual" | "redirect" | "form" | "qr";
     url?: string;
-    formHtml?: string;
+    form?: {
+        action: string;
+        method: "GET" | "POST";
+        fields: Array<{ name: string; value: string }>;
+    };
     qrContent?: string;
     providerOrderId?: string;
     providerPaymentId?: string;

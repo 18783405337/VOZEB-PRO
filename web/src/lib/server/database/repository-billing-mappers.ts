@@ -216,6 +216,7 @@ export function mapBillingReconciliationRun(row: Record<string, unknown>): Billi
         importedByUserId: optionalString(row.imported_by_user_id),
         importedByUsername: optionalString(row.imported_by_username),
         fileName: optionalString(row.file_name),
+        fileHash: optionalString(row.file_hash),
         note: optionalString(row.note),
         metadata: optionalJson(row.metadata),
         createdAt: isoValue(row.created_at),

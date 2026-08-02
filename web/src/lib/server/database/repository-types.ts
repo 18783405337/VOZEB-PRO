@@ -63,6 +63,18 @@ export type SessionRecord = {
     expiresAt: string;
 };
 
+export type EmailCodeRecord = {
+    id: string;
+    purpose: "register" | "email-change" | "password-reset";
+    email: string;
+    userId?: string;
+    codeHash: string;
+    createdAt: string;
+    expiresAt: string;
+    consumedAt?: string;
+    attempts: number;
+};
+
 export type AuthenticatedUserRecord = {
     user: UserRecord;
     planId: string;
@@ -110,7 +122,9 @@ export type AppSettingsRecord = {
     generationConcurrency: JsonValue;
     generationDefaults: JsonValue;
     paymentConfig: JsonValue;
+    logicalModels: JsonValue;
     defaultModels: JsonValue;
+    agentSkills: JsonValue;
     createdAt: string;
     updatedAt: string;
 };
@@ -120,6 +134,7 @@ export type SystemModelChannelRecord = {
     name: string;
     baseUrl: string;
     apiKeyCiphertext: string;
+    webhookSecretCiphertext: string;
     apiFormat: "openai" | "gemini";
     models: JsonValue;
     enabled: boolean;
@@ -183,6 +198,10 @@ export type CdkCodeRecord = {
     expiresAt?: string;
     createdAt: string;
     updatedAt: string;
+};
+
+export type CdkCodeCreateRecord = CdkCodeRecord & {
+    codeCiphertext: string;
 };
 
 export type CdkRedemptionRecord = {
@@ -543,6 +562,7 @@ export type BillingReconciliationRunRecord = {
     importedByUserId?: string;
     importedByUsername?: string;
     fileName?: string;
+    fileHash?: string;
     note?: string;
     metadata?: JsonValue;
     createdAt: string;

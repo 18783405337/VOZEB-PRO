@@ -1,3 +1,5 @@
+import type { PaymentForm } from "./payment-form";
+
 export type PaymentCheckoutKind = "manual" | "redirect" | "form" | "qr";
 
 export type PaymentCheckoutResult = {
@@ -6,7 +8,7 @@ export type PaymentCheckoutResult = {
     orderNo: string;
     kind: PaymentCheckoutKind;
     url?: string;
-    formHtml?: string;
+    form?: PaymentForm;
     qrContent?: string;
     providerOrderId?: string;
     providerPaymentId?: string;
