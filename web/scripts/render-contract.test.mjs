@@ -51,6 +51,13 @@ describe("Render Blueprint contract", () => {
         expect(() => validateRenderBlueprint({ repoRoot, dockerfile: unsafe })).toThrow("生产镜像缺少 Sharp 原生依赖");
     });
 
+    it("rejects a production image that runs as root", () => {
+        const dockerfilePath = path.join(repoRoot, "Dockerfile");
+        const dockerfile = readFileSync(dockerfilePath, "utf8").replace("USER node", "");
+
+        expect(() => validateRenderBlueprint({ repoRoot, dockerfile })).toThrow("生产镜像必须使用非 root 用户运行");
+    });
+
     it("rejects an image that can collect no Sharp native package", () => {
         const dockerfilePath = path.join(repoRoot, "Dockerfile");
         const dockerfile = readFileSync(dockerfilePath, "utf8");

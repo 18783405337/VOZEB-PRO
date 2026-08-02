@@ -5,7 +5,7 @@ FROM node:22-bookworm-slim AS web-build
 WORKDIR /app/web
 ARG BUILD_NODE_OPTIONS=--max-old-space-size=1536
 ARG NEXT_BUILD_CPUS=1
-ARG PNPM_VERSION=11.7.0
+ARG PNPM_VERSION=11.9.0
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV CI=1
 ENV NODE_OPTIONS=${BUILD_NODE_OPTIONS}
@@ -40,7 +40,7 @@ ENV VOZEB_PRO_INTERNAL_ORIGIN=http://127.0.0.1:3000
 ENV NODE_OPTIONS=--max-old-space-size=384
 ENV UV_THREADPOOL_SIZE=2
 
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates ffmpeg fonts-noto-cjk && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates ffmpeg fonts-noto-cjk postgresql-client && rm -rf /var/lib/apt/lists/*
 RUN mkdir -p /app/web/scripts
 
 COPY VERSION /app/VERSION
@@ -52,8 +52,14 @@ COPY --from=web-build /app/sharp-runtime/node_modules/.pnpm /app/web/node_module
 COPY web/scripts/reset-admin-password.mjs /app/web/scripts/reset-admin-password.mjs
 COPY web/scripts/generation-runtime.mjs /app/web/scripts/generation-runtime.mjs
 COPY web/scripts/generation-worker.mjs /app/web/scripts/generation-worker.mjs
+COPY web/scripts/disaster-recovery-core.mjs /app/web/scripts/disaster-recovery-core.mjs
+COPY web/scripts/disaster-object-storage.mjs /app/web/scripts/disaster-object-storage.mjs
+COPY web/scripts/disaster-backup.mjs /app/web/scripts/disaster-backup.mjs
+COPY web/scripts/disaster-restore.mjs /app/web/scripts/disaster-restore.mjs
 
 RUN cd /app/web && node -e "require('sharp')"
+RUN mkdir -p /app/web/.data && chown -R node:node /app/web
 
 EXPOSE 3000
+USER node
 CMD ["sh", "-c", "cd /app/web && PORT=3000 node server.js"]

@@ -42,6 +42,8 @@ export function validateRenderBlueprint({ repoRoot, source, dockerfile: dockerfi
     ensure(dockerfile.includes("test -n \"$(find /app/sharp-runtime/node_modules/.pnpm -mindepth 1 -maxdepth 1 -type d -name '@img+sharp-libvips-linux-*' -print -quit)\""), "生产镜像缺少 Sharp libvips 依赖存在性检查");
     ensure(dockerfile.includes("COPY --from=web-build /app/sharp-runtime/node_modules/.pnpm /app/web/node_modules/.pnpm"), "生产镜像缺少 Sharp 原生依赖");
     ensure(dockerfile.includes("RUN cd /app/web && node -e \"require('sharp')\""), "生产镜像缺少 Sharp 运行时检查");
+    ensure(/\nUSER\s+node\s*\n/.test(dockerfile), "生产镜像必须使用非 root 用户运行");
+    ensure(dockerfile.includes("chown -R node:node /app/web"), "生产镜像必须把运行目录授权给非 root 用户");
     ensure(hasGroup(web?.envVars, "vozeb-pro-runtime") && hasGroup(worker?.envVars, "vozeb-pro-runtime"), "Web 与 Worker 必须引用同一运行时环境组");
     ensure(environmentMap(runtimeGroup?.envVars).VOZEB_PRO_MAINTENANCE_TOKEN?.generateValue === true, "运行时环境组必须生成共享维护令牌");
     ensure(webEnvironment.VOZEB_PRO_DATA_DIR?.value === "/app/web/.data", "Web 数据目录必须位于持久盘");

@@ -20,7 +20,7 @@ process.once("SIGINT", stop);
 console.log(`Generation worker started: ${workerId}`);
 void sendHeartbeat();
 const heartbeatTimer = setInterval(() => void sendHeartbeat(), heartbeatIntervalMs);
-await Promise.all(Array.from({ length: lanes }, (_, index) => runLane(index + 1)));
+await Promise.all([...Array.from({ length: lanes }, (_, index) => runLane(index + 1)), runRefundLane()]);
 clearInterval(heartbeatTimer);
 console.log("Generation worker stopped");
 
@@ -72,6 +72,30 @@ async function sendHeartbeat() {
         if (!stopping) console.error("Generation worker heartbeat failed", error instanceof Error ? error.message : error);
     } finally {
         heartbeatPending = false;
+    }
+}
+
+async function runRefundLane() {
+    const refundWorkerId = `${workerId}:billing-refunds`;
+    let consecutiveErrors = 0;
+    while (!stopping) {
+        try {
+            const response = await fetch(`${origin}/api/maintenance/billing-refunds/run`, {
+                method: "POST",
+                headers: { authorization: `Bearer ${token}`, "x-vozeb-pro-worker-id": refundWorkerId },
+                signal: AbortSignal.timeout(2 * 60_000),
+            });
+            const payload = await response.json().catch(() => null);
+            if (!response.ok) throw new Error(payload?.msg || `Refund worker endpoint returned HTTP ${response.status}`);
+            consecutiveErrors = 0;
+            await delay(Number(payload?.data?.claimed || 0) > 0 ? 1_000 : 10_000);
+        } catch (error) {
+            if (stopping) break;
+            consecutiveErrors += 1;
+            const retryMs = Math.min(60_000, 2_000 * 2 ** Math.min(consecutiveErrors - 1, 5));
+            console.error("Billing refund worker failed", error instanceof Error ? error.message : error, `retrying in ${retryMs}ms`);
+            await delay(retryMs);
+        }
     }
 }
 

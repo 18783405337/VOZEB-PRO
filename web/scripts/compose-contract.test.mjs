@@ -27,6 +27,13 @@ describe("Docker Compose contracts", () => {
         expect(() => validateComposeContract(source, profile)).toThrow("generation-worker 不应直接持有数据库连接串");
     });
 
+    it("rejects mutable latest release images", () => {
+        const profile = composeProfiles.find(({ file }) => file === "docker-compose.yml");
+        const source = readFileSync(path.join(repoRoot, profile.file), "utf8").replaceAll("ghcr.io/csyqlz/vozeb-pro:v0.0.4", "ghcr.io/csyqlz/vozeb-pro:latest");
+
+        expect(() => validateComposeContract(source, profile)).toThrow("app 必须使用当前发布版本的明确镜像");
+    });
+
     it("rejects a Worker that imports the application secret environment", () => {
         const profile = composeProfiles.find(({ file }) => file === "docker-compose.external-db.yml");
         const source = readFileSync(path.join(repoRoot, profile.file), "utf8").replace('    command: ["node", "/app/web/scripts/generation-worker.mjs"]', '    command: ["node", "/app/web/scripts/generation-worker.mjs"]\n    env_file:\n      - .env');
