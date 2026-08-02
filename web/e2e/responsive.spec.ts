@@ -25,6 +25,77 @@ test("creative workspaces remain usable without horizontal overflow in light and
     await expectNoHorizontalOverflow(page, "/create dark");
 });
 
+test("eight billing plans remain dense and usable across desktop and mobile", async ({ page }, testInfo) => {
+    await page.route("**/api/billing/products", (route) =>
+        route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ products: billingProductsFixture(), paymentProviders: ["payply"] }),
+        }),
+    );
+    await page.goto("/profile?section=billing", { waitUntil: "domcontentloaded" });
+    await expect(page.getByRole("heading", { name: "可选套餐" })).toBeVisible();
+    await expect.poll(() => page.locator("[role='tab']").count()).toBe(8);
+
+    const layout = await page.evaluate(() => {
+        const visible = (element: Element) => {
+            const bounds = element.getBoundingClientRect();
+            return bounds.width > 0 && bounds.height > 0;
+        };
+        const cards = [...document.querySelectorAll<HTMLElement>("[data-billing-plan-card]")].filter(visible);
+        const tabs = [...document.querySelectorAll<HTMLElement>("[role='tab']")];
+        const tabViewport = tabs[0]?.parentElement?.parentElement;
+        return {
+            documentClientWidth: document.documentElement.clientWidth,
+            documentScrollWidth: document.documentElement.scrollWidth,
+            visibleCards: cards.length,
+            cardOverflow: cards.some((card) => card.scrollWidth > card.clientWidth + 1),
+            actionsOutsideCards: cards.some((card) => {
+                const action = card.querySelector<HTMLElement>("[data-billing-plan-action]");
+                if (!action) return true;
+                const cardBounds = card.getBoundingClientRect();
+                const actionBounds = action.getBoundingClientRect();
+                return actionBounds.left < cardBounds.left - 1 || actionBounds.right > cardBounds.right + 1;
+            }),
+            tabViewportWidth: tabViewport?.clientWidth || 0,
+            tabScrollWidth: tabViewport?.scrollWidth || 0,
+        };
+    });
+
+    const mobile = testInfo.project.name.startsWith("mobile-");
+    expect(layout.visibleCards).toBe(mobile ? 1 : 8);
+    expect(layout.documentScrollWidth).toBeLessThanOrEqual(layout.documentClientWidth + 1);
+    expect(layout.cardOverflow).toBe(false);
+    expect(layout.actionsOutsideCards).toBe(false);
+    if (mobile) expect(layout.tabScrollWidth).toBeGreaterThan(layout.tabViewportWidth);
+});
+
+function billingProductsFixture() {
+    const timestamp = "2026-08-02T00:00:00.000Z";
+    return Array.from({ length: 8 }, (_, index) => ({
+        id: `e2e-plan-${index + 1}`,
+        productKind: "points",
+        name: `E2E 创作积分包 ${index + 1}`,
+        description: `用于验证多套餐响应式布局 ${index + 1}`,
+        amountCents: (index + 1) * 900,
+        currency: "CNY",
+        pointsAmount: (index + 1) * 100,
+        dailyPoints: 0,
+        periodDays: 0,
+        enabled: true,
+        sortOrder: index,
+        metadata: { recommended: index === 2, features: ["图片与视频创作", "订单和积分流水可查", "支付成功自动到账"] },
+        pricing: {
+            listUnitAmountCents: (index + 1) * 1_000,
+            saleUnitAmountCents: (index + 1) * 900,
+            discountCents: (index + 1) * 100,
+            promotion: { id: `promo-${index + 1}`, label: "限时优惠", unitAmountCents: (index + 1) * 900, startsAt: timestamp, endsAt: timestamp },
+        },
+        createdAt: timestamp,
+        updatedAt: timestamp,
+    }));
+}
+
 async function expectNoHorizontalOverflow(page: import("@playwright/test").Page, label: string) {
     await expect
         .poll(async () =>

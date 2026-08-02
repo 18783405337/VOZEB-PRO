@@ -21,7 +21,7 @@ export function CreateWorkbenchOverview({ onUseAsset }: { onUseAsset: (asset: Cr
     const { latestProject, runningTasks, recentAssets, loading, error, reload } = useCreateWorkbenchOverview();
     const [importingAssetId, setImportingAssetId] = useState("");
 
-    const useAsset = async (asset: CreateOverviewAsset) => {
+    const importAsset = async (asset: CreateOverviewAsset) => {
         setImportingAssetId(asset.id);
         try {
             await onUseAsset(asset);
@@ -50,7 +50,7 @@ export function CreateWorkbenchOverview({ onUseAsset }: { onUseAsset: (asset: Cr
                     <div className="grid grid-cols-2 gap-2 pt-2 sm:grid-cols-3 sm:gap-3 sm:pt-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
                         {recentAssets.slice(0, recentAssetVisibilityClasses.length).map((asset, index) => (
                             <div key={asset.id} className={recentAssetVisibilityClasses[index]}>
-                                <RecentAssetCard asset={asset} importing={importingAssetId === asset.id} onUse={() => void useAsset(asset)} />
+                                <RecentAssetCard asset={asset} importing={importingAssetId === asset.id} onUse={() => void importAsset(asset)} />
                             </div>
                         ))}
                     </div>

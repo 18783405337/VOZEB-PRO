@@ -26,7 +26,7 @@ export function BillingPlansModal({ open, onClose, onSelect }: { open: boolean; 
             rootClassName="billing-plans-modal profile-page-scroll"
             title={null}
             open={open}
-            width="min(92vw, 980px)"
+            width="min(94vw, 1180px)"
             centered
             footer={null}
             closable={false}
@@ -45,7 +45,7 @@ export function BillingPlansModal({ open, onClose, onSelect }: { open: boolean; 
                     >
                         <X className="size-4" />
                     </button>
-                    <div className="relative mx-auto flex max-w-[820px] items-center justify-between gap-4 pr-12">
+                    <div className="relative mx-auto flex max-w-[1040px] items-center justify-between gap-4 pr-12">
                         <div className="flex items-start gap-3">
                             <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-[#d8dee8] text-[#252b33] sm:size-9 sm:rounded-xl">
                                 <Sparkles className="size-4.5" />
@@ -62,7 +62,7 @@ export function BillingPlansModal({ open, onClose, onSelect }: { open: boolean; 
                 </div>
 
                 <div className="px-2 pb-2 pt-2 sm:px-6 sm:pb-6 sm:pt-5">
-                    <div className="mx-auto max-w-[820px]">
+                    <div className="mx-auto max-w-[1040px]">
                         <h2 className="text-lg font-semibold tracking-tight sm:text-2xl">选择适合您的套餐</h2>
                         <p className="mt-0.5 text-xs leading-5 text-stone-500 sm:mt-1 sm:text-sm sm:leading-6 dark:text-stone-400">确认方案后进入独立安全结算页。</p>
                     </div>
@@ -72,7 +72,7 @@ export function BillingPlansModal({ open, onClose, onSelect }: { open: boolean; 
                             <Spin />
                         </div>
                     ) : products.length ? (
-                        <div className="mx-auto mt-2.5 max-w-[820px] sm:mt-4">
+                        <div className="mx-auto mt-2.5 max-w-[1040px] sm:mt-4">
                             <BillingPlanGrid
                                 variant="modal"
                                 products={products}

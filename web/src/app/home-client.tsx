@@ -282,7 +282,6 @@ export default function HomePage() {
         let cancelled = false;
         let idleHandle: number | undefined;
         let timeoutHandle: ReturnType<typeof globalThis.setTimeout> | undefined;
-        let observer: IntersectionObserver | undefined;
 
         const loadShowcase = () => {
             void fetchPrompts({ pageSize: 9, random: true })
@@ -316,7 +315,7 @@ export default function HomePage() {
             };
         }
 
-        observer = new IntersectionObserver(
+        const observer = new IntersectionObserver(
             (entries) => {
                 if (entries.some((entry) => entry.isIntersecting)) {
                     observer?.disconnect();

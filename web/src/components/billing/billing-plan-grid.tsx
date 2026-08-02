@@ -35,8 +35,8 @@ export function BillingPlanGrid({ products, onSelect, variant = "page" }: Billin
                         {products.length ? activeProductIndex + 1 : 0} / {products.length}
                     </span>
                 </div>
-                <div className="-mx-1 px-1 pb-1">
-                    <div className={`grid gap-1.5 ${products.length === 1 ? "grid-cols-1" : "grid-cols-2"}`} role="tablist" aria-label="套餐选择">
+                <div className="-mx-1 overflow-x-auto px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                    <div className="flex min-w-full gap-1.5" role="tablist" aria-label="套餐选择">
                         {products.map((product) => {
                             const selected = product.id === activeProduct?.id;
                             const pricing = productPricing(product);
@@ -46,7 +46,7 @@ export function BillingPlanGrid({ products, onSelect, variant = "page" }: Billin
                                     type="button"
                                     role="tab"
                                     aria-selected={selected}
-                                    className={`relative min-w-0 overflow-hidden rounded-lg border px-2 py-1.5 text-left transition ${
+                                    className={`relative min-w-0 overflow-hidden rounded-lg border px-2 py-1.5 text-left transition ${products.length === 1 ? "w-full" : "w-36 shrink-0"} ${
                                         selected
                                             ? "border-[#aebdce] bg-[#e9eef5] text-[#263141] shadow-[0_5px_16px_rgba(71,85,105,0.09)] dark:border-[#536173] dark:bg-[#252d37] dark:text-white"
                                             : "border-stone-200 bg-stone-50 text-stone-600 hover:border-[#cbd4df] hover:bg-white dark:border-stone-800 dark:bg-stone-900/70 dark:text-stone-300 dark:hover:border-[#3d4856] dark:hover:bg-[#1f252c]"
@@ -89,11 +89,12 @@ function PlanCard({ product, index, recommended, variant, onSelect }: { product:
     const features = featureLines(product, metadata.features).slice(0, variant === "modal" ? 3 : 4);
     return (
         <article
-            className={`relative overflow-hidden rounded-lg border bg-white p-1.5 text-stone-950 shadow-[0_8px_24px_rgba(15,23,42,0.05)] transition hover:-translate-y-0.5 hover:shadow-[0_18px_48px_rgba(15,23,42,0.10)] sm:rounded-[1.4rem] sm:p-6 dark:bg-stone-950 dark:text-white dark:shadow-black/25 ${
+            data-billing-plan-card={product.id}
+            className={`relative flex h-full min-w-0 flex-col overflow-hidden rounded-2xl border bg-white p-4 text-stone-950 shadow-[0_8px_24px_rgba(15,23,42,0.05)] transition hover:-translate-y-0.5 hover:shadow-[0_18px_48px_rgba(15,23,42,0.10)] sm:rounded-[1.4rem] sm:p-5 dark:bg-stone-950 dark:text-white dark:shadow-black/25 ${
                 recommended ? "border-[#9aa7ba] ring-1 ring-[#9aa7ba]/45 dark:border-[#74839a] dark:ring-[#74839a]/45" : "border-stone-200 hover:border-stone-300 dark:border-stone-800 dark:hover:border-stone-700"
             }`}
         >
-            <div className="relative flex items-center justify-between gap-3">
+            <div className="relative flex min-h-7 items-center justify-between gap-3">
                 <span className="text-[10px] font-semibold tracking-[0.14em] text-stone-400 sm:text-[11px] sm:tracking-[0.16em] dark:text-stone-500">VOZEB PASS · {String(index + 1).padStart(2, "0")}</span>
                 {promotion ? (
                     <span className="rounded-md border border-rose-200 bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-700 sm:px-3 sm:py-1 sm:text-[11px] dark:border-rose-900/60 dark:bg-rose-950/35 dark:text-rose-200">{promotion.label}</span>
@@ -104,32 +105,36 @@ function PlanCard({ product, index, recommended, variant, onSelect }: { product:
                 ) : null}
             </div>
 
-            <div className="relative mt-1 sm:mt-5">
-                <h3 className="text-base font-semibold tracking-tight sm:text-[1.7rem]">{product.name}</h3>
-                <p className="mt-2 hidden line-clamp-2 text-sm leading-6 text-stone-500 sm:block dark:text-stone-400">{product.description || "适合持续完成多媒体创作与商业项目交付。"}</p>
+            <div className="relative mt-4 sm:mt-5">
+                <h3 className="line-clamp-2 text-xl font-semibold leading-tight tracking-tight sm:min-h-[4.25rem] sm:text-[1.7rem]">{product.name}</h3>
+                <p className="mt-2 hidden min-h-12 line-clamp-2 text-sm leading-6 text-stone-500 sm:block dark:text-stone-400">{product.description || "适合持续完成多媒体创作与商业项目交付。"}</p>
             </div>
 
-            <div className="relative mt-1 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-1 border-t border-stone-200 pt-1 sm:mt-5 sm:gap-4 sm:pb-2 sm:pt-5 dark:border-stone-800">
-                <div className="flex items-end gap-1">
+            <div className="relative mt-4 flex flex-col gap-4 border-t border-stone-200 pt-4 sm:mt-5 sm:flex-row sm:items-end sm:justify-between sm:gap-3 sm:pt-5 dark:border-stone-800">
+                <div data-billing-plan-price className="flex min-w-0 flex-wrap items-end gap-x-1 gap-y-1">
                     <span className="pb-1 text-sm font-medium">¥</span>
-                    <span className="text-lg font-semibold leading-none sm:text-[2.65rem]">{formatYuan(pricing.saleUnitAmountCents)}</span>
+                    <span className="min-w-0 break-all text-3xl font-semibold leading-none sm:text-[2.35rem]">{formatYuan(pricing.saleUnitAmountCents)}</span>
                     <span className="pb-1 text-sm text-stone-500 dark:text-stone-400">/ {isPointsProduct ? "一次性" : periodLabel(product.periodDays)}</span>
                 </div>
-                <Button type="primary" size="small" className="profile-primary-button !h-7 !rounded-lg px-1.5 text-xs sm:!h-10 sm:min-w-36 sm:!rounded-xl" onClick={() => onSelect(product)}>
+                <Button type="primary" data-billing-plan-action className="profile-primary-button !h-10 w-full shrink-0 !rounded-xl px-5 text-sm sm:w-auto sm:min-w-28" onClick={() => onSelect(product)}>
                     <span className="inline-flex items-center gap-2">
                         {isPointsProduct ? "立即充值" : "购买套餐"} <ArrowUpRight className="size-4" />
                     </span>
                 </Button>
             </div>
 
-            {promotion ? (
-                <div className="relative -mt-0.5 mb-1 flex items-center gap-2 text-xs text-stone-500 sm:mb-0 sm:mt-1 dark:text-stone-400">
-                    <span className="line-through">日常价 ¥ {formatYuan(pricing.listUnitAmountCents)}</span>
-                    <span className="font-medium text-rose-600 dark:text-rose-300">省 ¥ {formatYuan(pricing.discountCents)}</span>
-                </div>
-            ) : null}
+            <div aria-hidden={promotion ? undefined : true} className={`relative mt-2 flex min-h-5 flex-wrap items-center gap-x-2 text-xs text-stone-500 dark:text-stone-400 ${promotion ? "" : "invisible"}`}>
+                {promotion ? (
+                    <>
+                        <span className="line-through">日常价 ¥ {formatYuan(pricing.listUnitAmountCents)}</span>
+                        <span className="font-medium text-rose-600 dark:text-rose-300">省 ¥ {formatYuan(pricing.discountCents)}</span>
+                    </>
+                ) : (
+                    <span>标准价格</span>
+                )}
+            </div>
 
-            <ul className="relative mt-1 space-y-0.5 border-t border-stone-200 pt-1 sm:mt-5 sm:space-y-2.5 sm:pt-5 dark:border-stone-800">
+            <ul className="relative mt-4 flex-1 space-y-2.5 border-t border-stone-200 pt-4 sm:mt-5 sm:pt-5 dark:border-stone-800">
                 <li className="flex gap-2 text-xs leading-5 text-stone-600 dark:text-stone-300 sm:gap-2.5 sm:text-sm">
                     <span className="mt-0.5 grid size-4 shrink-0 place-items-center rounded-full bg-[#eef2f7] text-[#66758e] dark:bg-[#66758e]/15 dark:text-[#d8dee8]">
                         <CreditSymbol className="text-[10px]" />
@@ -152,10 +157,9 @@ function PlanCard({ product, index, recommended, variant, onSelect }: { product:
 }
 
 function gridClass(count: number) {
-    if (count === 1) return "mx-auto grid max-w-lg items-start gap-5";
-    if (count === 2) return "mx-auto grid w-full max-w-[920px] items-start gap-5 md:grid-cols-2";
-    if (count === 3) return "mx-auto grid w-full max-w-6xl items-start gap-5 md:grid-cols-2 xl:grid-cols-3";
-    return "grid w-full items-start gap-5 md:grid-cols-2 xl:grid-cols-4";
+    if (count === 1) return "mx-auto grid max-w-lg items-stretch gap-5";
+    if (count === 2) return "mx-auto grid w-full max-w-[920px] items-stretch gap-5 md:grid-cols-2";
+    return "mx-auto grid w-full max-w-6xl items-stretch gap-5 md:grid-cols-2 xl:grid-cols-3";
 }
 
 function productMetadata(product: BillingProduct) {
