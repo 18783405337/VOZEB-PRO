@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { App, Button, Empty, Input, Progress, Segmented, Tabs, Tag } from "antd";
-import { ArrowLeft, BookOpenText, Captions, Clapperboard, Download, Film, ImageIcon, Pause, Play, RefreshCw, Save, ScanSearch, Send, Sparkles, Volume2 } from "lucide-react";
+import { App, Button, Empty, Progress, Tag } from "antd";
+import { Captions, Download, Film, ImageIcon, Pause, Play, RefreshCw, ScanSearch, Send, Volume2 } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 
 import { createImageGenerationTask, waitForImageGenerationTask } from "@/services/api/image";
@@ -12,7 +12,6 @@ import { exportDramaJianyingDraft, getDramaProjectCosts, reviewDramaEpisode } fr
 import { compileDramaShotPrompts } from "@/lib/drama-prompt-compiler";
 import { mediaDownloadFileName } from "@/lib/media-file";
 import { originalMediaDownloadUrl } from "@/lib/media-image-url";
-import { splitDramaSource } from "@/lib/drama-source-splitter";
 import { useEffectiveConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { useDramaStore } from "../stores/use-drama-store";
@@ -27,19 +26,11 @@ import { DramaJianyingModal, DramaSubtitleModal, DramaVersionModal } from "./dra
 import { DramaMediaPreviewModal, DramaMediaThumbnail, type DramaPreviewMedia } from "./drama-media-preview";
 import { dramaGenerationSize, estimateEpisodePoints, estimateTaskPoints, referenceImage, shotReferenceImages, storyboardReferenceImages } from "./drama-shot-generation-utils";
 import { useGenerationCapacityRetry } from "./use-generation-capacity-retry";
-
-type Stage = "script" | "review" | "assets" | "storyboard" | "generate";
+import { DramaProjectHeader, DramaScriptPanel, type DramaProjectStage } from "./drama-project-sections";
 
 function shotNeedsVoiceover(shot: DramaShot) {
     return shot.audioMode === "voiceover" && Boolean((shot.subtitle || shot.dialogue || shot.narration).trim());
 }
-const stages = [
-    { value: "script", label: "剧本", shortLabel: "剧本", icon: Clapperboard },
-    { value: "review", label: "内容审核", shortLabel: "审核", icon: Save },
-    { value: "assets", label: "视觉资产", shortLabel: "资产", icon: Sparkles },
-    { value: "storyboard", label: "分镜", shortLabel: "分镜", icon: Film },
-    { value: "generate", label: "镜头生成", shortLabel: "生成", icon: Sparkles },
-] as const;
 const generationActionButtonClass = "!h-9 !px-3 [&>span:last-child]:whitespace-nowrap";
 import { SectionTitle, GenerationTag, StoryboardTag, AudioTag, stableTaskUrl } from "./drama-editor-elements";
 
@@ -75,14 +66,10 @@ export default function DramaProjectPage() {
 }
 
 function DramaProjectEditor({ project }: { project: DramaProject }) {
-    const { message, modal } = App.useApp();
+    const { message } = App.useApp();
     const router = useRouter();
     const updateProject = useDramaStore((state) => state.updateProject);
     const updateEpisode = useDramaStore((state) => state.updateEpisode);
-    const addEpisode = useDramaStore((state) => state.addEpisode);
-    const importEpisodes = useDramaStore((state) => state.importEpisodes);
-    const deleteEpisode = useDramaStore((state) => state.deleteEpisode);
-    const selectEpisode = useDramaStore((state) => state.selectEpisode);
     const updateShot = useDramaStore((state) => state.updateShot);
     const queueShots = useDramaStore((state) => state.queueShots);
     const applyContentAnalysis = useDramaStore((state) => state.applyContentAnalysis);
@@ -94,8 +81,7 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
     const config = useEffectiveConfig();
     const startingShotRef = useRef("");
     const storyboardTaskRef = useRef("");
-    const sourceFileInputRef = useRef<HTMLInputElement>(null);
-    const [stage, setStage] = useState<Stage>("script");
+    const [stage, setStage] = useState<DramaProjectStage>("script");
     const [analyzing, setAnalyzing] = useState(false);
     const [designing, setDesigning] = useState(false);
     const [versionsOpen, setVersionsOpen] = useState(false);
@@ -163,29 +149,6 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
             message.error(error instanceof Error ? error.message : "AI 剧本解析失败");
         } finally {
             setAnalyzing(false);
-        }
-    };
-    const importSourceBook = async (file?: File) => {
-        if (!file) return;
-        try {
-            const drafts = splitDramaSource(await file.text());
-            if (!drafts.length) return message.warning("导入文件没有可识别的文本内容");
-            modal.confirm({
-                title: `导入并自动分为 ${drafts.length} 集？`,
-                content: "当前剧集会被替换，系统会先保存一个可恢复的版本快照。",
-                okText: "导入分集",
-                cancelText: "取消",
-                onOk: async () => {
-                    await createVersion(project, "整本导入前");
-                    importEpisodes(project.id, drafts);
-                    setStage("script");
-                    message.success(`已导入 ${drafts.length} 集，请逐集检查并提取内容结构`);
-                },
-            });
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "整本导入失败");
-        } finally {
-            if (sourceFileInputRef.current) sourceFileInputRef.current.value = "";
         }
     };
     const designVisuals = async () => {
@@ -493,127 +456,11 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
     return (
         <main className="h-full overflow-x-hidden overflow-y-auto bg-background text-foreground">
             <div className="relative mx-auto w-full max-w-[1500px] px-2.5 py-2.5 sm:px-6 sm:py-8">
-                <header className="overflow-hidden rounded-lg border border-border bg-card p-3 sm:p-6">
-                    <div className="flex flex-col gap-3 sm:gap-6 lg:flex-row lg:items-center lg:justify-between">
-                        <div className="flex min-w-0 items-start gap-2.5 sm:gap-4">
-                            <Button type="text" shape="circle" className="!size-9 sm:!size-9" icon={<ArrowLeft className="size-4" />} onClick={() => router.push("/drama")} aria-label="返回短剧项目" />
-                            <div className="min-w-0">
-                                <Input variant="borderless" className="!p-0 !text-xl !font-semibold sm:!text-2xl" value={project.title} onChange={(event) => updateProject(project.id, { title: event.target.value })} />
-                                <p className="mt-1.5 text-sm leading-5 text-muted-foreground sm:mt-3 sm:leading-6">{project.summary || "完善剧本与角色后，再逐镜头生成视频。"}</p>
-                            </div>
-                        </div>
-                        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 sm:flex sm:flex-wrap">
-                            <Tag className="!m-0 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap" title={project.style}>
-                                {project.style}
-                            </Tag>
-                            <Tag className="!m-0">{project.ratio}</Tag>
-                            <Tag className="!m-0">{episode.shots.length} 个镜头</Tag>
-                            <Button className="!h-9" icon={<Save className="size-4" />} onClick={() => void openVersions()}>
-                                版本
-                            </Button>
-                        </div>
-                    </div>
-                    <Tabs
-                        className="mt-2.5 sm:mt-6"
-                        type="editable-card"
-                        activeKey={episode.id}
-                        items={project.episodes.map((item) => ({ key: item.id, label: item.title, closable: project.episodes.length > 1 }))}
-                        onChange={(episodeId) => selectEpisode(project.id, episodeId)}
-                        onEdit={(targetKey, action) => {
-                            if (action === "add") {
-                                addEpisode(project.id);
-                                setStage("script");
-                                return;
-                            }
-                            const removing = project.episodes.find((item) => item.id === String(targetKey));
-                            if (!removing) return;
-                            modal.confirm({
-                                title: `删除${removing.title}？`,
-                                content: "本集剧本、分镜和任务记录会一起删除。",
-                                okText: "删除",
-                                okButtonProps: { danger: true },
-                                cancelText: "取消",
-                                onOk: () => deleteEpisode(project.id, removing.id),
-                            });
-                        }}
-                    />
-                    <div className="mt-3 grid grid-cols-5 gap-1.5 sm:mt-6 sm:gap-3">
-                        {stages.map((item, index) => {
-                            const Icon = item.icon;
-                            const active = stage === item.value;
-                            return (
-                                <button
-                                    key={item.value}
-                                    type="button"
-                                    onClick={() => setStage(item.value)}
-                                    aria-label={`${String(index + 1).padStart(2, "0")} ${item.label}`}
-                                    className={`flex min-h-12 min-w-0 flex-col items-center justify-center gap-1 rounded-lg border px-1 py-2 text-center transition sm:min-h-12 sm:flex-row sm:gap-3 sm:px-4 sm:py-3.5 sm:text-left ${active ? "border-foreground bg-foreground !text-background" : "border-border bg-background text-muted-foreground hover:border-foreground/20 hover:bg-accent hover:text-foreground"}`}
-                                >
-                                    <span className="hidden text-xs opacity-60 sm:inline">0{index + 1}</span>
-                                    <Icon className="size-4" />
-                                    <span className="whitespace-nowrap text-[11px] font-medium leading-none sm:text-sm">
-                                        <span className="sm:hidden">{item.shortLabel}</span>
-                                        <span className="hidden sm:inline">{item.label}</span>
-                                    </span>
-                                </button>
-                            );
-                        })}
-                    </div>
-                </header>
+                <DramaProjectHeader project={project} episode={episode} stage={stage} onStageChange={setStage} onOpenVersions={() => void openVersions()} />
 
                 <div className="mt-3 grid min-h-0 min-w-0 gap-3 xl:grid-cols-[minmax(0,1fr)_380px] sm:mt-5 sm:gap-5">
                     <section className="min-w-0 rounded-lg border border-border bg-card p-3 sm:p-6">
-                        {stage === "script" ? (
-                            <div>
-                                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-5">
-                                    <SectionTitle className="!mb-0" title="剧本与创作方向" description="先整理故事文本，AI 只提取可审核的内容结构，不会在这一步生成视觉提示词。" />
-                                    <Button className="!h-9 !w-full sm:!w-auto" icon={<BookOpenText className="size-4" />} onClick={() => sourceFileInputRef.current?.click()}>
-                                        导入整本并分集
-                                    </Button>
-                                </div>
-                                <input ref={sourceFileInputRef} type="file" accept=".txt,.md,text/plain,text/markdown" className="hidden" onChange={(event) => void importSourceBook(event.target.files?.[0])} />
-                                <div className="mt-4 grid gap-3 sm:mt-6 sm:gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
-                                    <Input.TextArea
-                                        className="!h-52 !rounded-lg !bg-background !p-2.5 sm:!h-auto sm:!p-4"
-                                        value={episode.script}
-                                        onChange={(event) => updateEpisode(project.id, episode.id, { script: event.target.value })}
-                                        rows={18}
-                                        placeholder="粘贴或编写本集剧本，每个段落会生成一个镜头草稿…"
-                                    />
-                                    <div className="space-y-4 rounded-lg border border-border bg-background p-3 sm:space-y-5 sm:p-5">
-                                        <label className="block space-y-2.5">
-                                            <span className="text-sm font-medium">本集名称</span>
-                                            <Input value={episode.title} onChange={(event) => updateEpisode(project.id, episode.id, { title: event.target.value })} />
-                                        </label>
-                                        <label className="block space-y-2.5">
-                                            <span className="text-sm font-medium">故事简介</span>
-                                            <Input.TextArea value={project.summary} onChange={(event) => updateProject(project.id, { summary: event.target.value })} rows={4} />
-                                        </label>
-                                        <label className="block space-y-2.5">
-                                            <span className="text-sm font-medium">视觉风格</span>
-                                            <Input value={project.style} onChange={(event) => updateProject(project.id, { style: event.target.value })} />
-                                        </label>
-                                        <label className="block space-y-2.5">
-                                            <span className="text-sm font-medium">视频生产模式</span>
-                                            <Segmented
-                                                block
-                                                value={project.defaultVideoMode}
-                                                options={[
-                                                    { label: "分镜驱动", value: "storyboard" },
-                                                    { label: "直接生成", value: "direct" },
-                                                    { label: "参考图", value: "reference" },
-                                                ]}
-                                                onChange={(value) => updateProject(project.id, { defaultVideoMode: value as DramaProject["defaultVideoMode"] })}
-                                            />
-                                        </label>
-                                        <Button type="primary" block className="!h-11 sm:!h-9" icon={<Sparkles className="size-4" />} loading={analyzing} onClick={() => void analyzeScript()}>
-                                            AI 提取内容结构
-                                        </Button>
-                                        <p className="pt-1 text-xs leading-5 text-muted-foreground">解析结果会进入内容审核，不会直接启动图片或视频生成。</p>
-                                    </div>
-                                </div>
-                            </div>
-                        ) : null}
+                        {stage === "script" ? <DramaScriptPanel project={project} episode={episode} analyzing={analyzing} onAnalyze={() => void analyzeScript()} onStageChange={setStage} /> : null}
 
                         {stage === "review" ? <DramaReviewPanel project={project} episode={episode} designing={designing} onDesignVisuals={() => void designVisuals()} /> : null}
 
