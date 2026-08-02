@@ -41,6 +41,7 @@ describe("administrator account deletion review API", () => {
         const response = await PATCH(request({ status: "accepted", reviewNote: "进入人工核验" }), context());
 
         expect(response.status).toBe(200);
+        await expect(response.json()).resolves.toEqual({ code: 0, data: { id: "request-one", username: "creator", status: "accepted", reviewNote: "进入人工核验" }, msg: "注销申请已受理" });
         expect(mocks.review).toHaveBeenCalledWith({ id: "request-one", status: "accepted", reviewNote: "进入人工核验", reviewer: expect.objectContaining({ id: "admin-one" }) });
         expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({ action: "admin.account_deletion.accept", target: expect.objectContaining({ id: "request-one" }) }));
     });

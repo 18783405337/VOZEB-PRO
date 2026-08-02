@@ -9,6 +9,7 @@ import { GENERATION_TASK_NEEDS_REVIEW_MESSAGE, GenerationTaskNeedsReviewError, t
 import { GenerationTaskRequestError } from "@/services/api/generation-task-request-error";
 import { imageToDataUrl } from "@/services/image-storage";
 import { refreshUserPointsIfSystem, syncUserPointsFromHeaders } from "@/services/api/points";
+import { throwIfClientSessionExpired } from "@/services/api/session-expiration";
 import { boolConfig, buildSeedancePromptText, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceVideoReferenceError, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
 import { buildApiUrl, modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
@@ -170,6 +171,7 @@ export async function createServerVideoGenerationTask(
         }),
         signal: options?.signal,
     });
+    throwIfClientSessionExpired(response);
     const payload = (await response.json().catch(() => ({}))) as { task?: { id?: string; model?: string; durationSeconds?: number }; error?: string; canRetry?: boolean };
     if (!response.ok) throw new GenerationTaskRequestError(payload.error || "后台视频任务创建失败", response.status, payload.canRetry === true);
     if (!payload.task?.id) throw new Error(payload.error || "后台视频任务创建失败");
@@ -246,6 +248,7 @@ export async function pollVideoGenerationTask(config: AiConfig, task: VideoGener
 
 export async function pollServerVideoTask(task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
     const response = await fetch(`/api/video-tasks/${encodeURIComponent(task.serverTaskId || task.id)}`, { cache: "no-store", signal: options?.signal });
+    throwIfClientSessionExpired(response);
     syncUserPointsFromHeaders(response.headers, "system");
     const payload = (await response.json().catch(() => ({}))) as { task?: GenerationTaskExecutionState & { status?: string; result?: VideoGenerationResult; error?: string; canRetry?: boolean }; error?: string };
     if (!response.ok) throw new Error(payload.error || "后台视频任务查询失败");

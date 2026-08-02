@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { apiError, apiSuccess } from "@/app/api/_shared/api-response";
 
 import { readJsonBody } from "@/lib/auth/request";
 import { getCurrentUser } from "@/lib/auth/session";
@@ -10,8 +10,8 @@ export const dynamic = "force-dynamic";
 
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
     const currentUser = await getCurrentUser();
-    if (!currentUser) return NextResponse.json({ code: 401, data: null, msg: "请先登录" }, { status: 401 });
-    if (currentUser.role !== "admin") return NextResponse.json({ code: 403, data: null, msg: "需要管理员权限" }, { status: 403 });
+    if (!currentUser) return apiError(401, "请先登录");
+    if (currentUser.role !== "admin") return apiError(403, "需要管理员权限");
 
     let action: "accepted" | "rejected" | undefined;
     let reviewNote = "";
@@ -28,7 +28,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
             target: { type: "account_deletion_request", id: data.id, label: data.username },
             metadata: { status: data.status, reviewNote: data.reviewNote },
         });
-        return NextResponse.json({ code: 0, data, msg: action === "accepted" ? "注销申请已受理" : "注销申请已拒绝" });
+        return apiSuccess(data, action === "accepted" ? "注销申请已受理" : "注销申请已拒绝");
     } catch (error) {
         await safeRecordAuditLog({
             action: action === "rejected" ? "admin.account_deletion.reject" : "admin.account_deletion.accept",
@@ -37,8 +37,8 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
             target: { type: "account_deletion_request", id },
             metadata: { reviewNote, error: error instanceof Error ? error.message : "unknown" },
         });
-        if (error instanceof AccountDeletionRequestError) return NextResponse.json({ code: error.status, data: null, msg: error.message }, { status: error.status });
+        if (error instanceof AccountDeletionRequestError) return apiError(error.status, error.message);
         console.error("Account deletion request review failed", error);
-        return NextResponse.json({ code: 500, data: null, msg: "注销申请处理失败" }, { status: 500 });
+        return apiError(500, "注销申请处理失败");
     }
 }

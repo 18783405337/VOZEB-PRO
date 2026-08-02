@@ -1,6 +1,7 @@
 import { isCreativeProjectHandoff, type CreativeAsset, type CreativeConversation, type CreativeConversationSource, type CreativeMessage, type CreativeProjectHandoff, type CreativeRunRequest } from "@/lib/creative-runtime-contract";
 import type { CreativeWorkbenchSessionDetail, CreativeWorkbenchSessionSummary, WorkbenchWorkspace } from "@/lib/workbench-session-contract";
 import { refreshUserPointsIfSystem } from "@/services/api/points";
+import { stopIfClientSessionExpired, throwIfClientSessionExpired } from "@/services/api/session-expiration";
 
 export type CreativeAgentRun = {
     id: string;
@@ -180,6 +181,12 @@ export function watchCreativeAgentRun(runId: string, handlers: CreativeRunHandle
     };
     source.onerror = () => {
         if (settled) return;
+        void stopIfClientSessionExpired().then((expired) => {
+            if (!expired || settled) return;
+            settled = true;
+            source.close();
+            handlers.onConnectionError("登录状态已失效，请重新登录");
+        });
         connectionErrors += 1;
         if (connectionErrors >= 5) {
             settled = true;
@@ -197,6 +204,7 @@ export function watchCreativeAgentRun(runId: string, handlers: CreativeRunHandle
 
 async function request<T>(url: string, init?: RequestInit) {
     const response = await fetch(url, { ...init, cache: "no-store" });
+    throwIfClientSessionExpired(response);
     const payload = (await response.json().catch(() => null)) as ApiResponse<T> | null;
     if (!response.ok || !payload || payload.code !== 0) throw new Error(payload?.msg || "请求失败");
     return payload.data;

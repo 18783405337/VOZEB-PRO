@@ -3,6 +3,7 @@
 import { useUserStore, type LocalUser } from "@/stores/use-user-store";
 import type { PublicPointRecord } from "@/lib/auth/store-types";
 import { serializeApiParams } from "./request";
+import { expireClientSession } from "./session-expiration";
 
 export type PointRecord = Pick<PublicPointRecord, "id" | "type" | "amount" | "balanceAfter" | "description" | "createdAt">;
 
@@ -68,6 +69,7 @@ async function refreshQueuedUserPoints() {
             const response = await fetch("/api/auth/session", { cache: "no-store" });
             const payload = (await response.json()) as { user?: LocalUser | null };
             if (payload.user) useUserStore.getState().setUser(payload.user);
+            else if (useUserStore.getState().user) expireClientSession();
         } catch {
             // Balance refresh is best-effort; the generation result should not fail because of it.
         }

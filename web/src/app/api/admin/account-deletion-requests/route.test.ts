@@ -25,6 +25,7 @@ describe("administrator account deletion request API", () => {
         const response = await GET(request("?page=2&pageSize=20&keyword=creator&status=pending"));
 
         expect(response.status).toBe(200);
+        await expect(response.json()).resolves.toEqual({ code: 0, data: { items: [], total: 0, page: 2, pageSize: 20 }, msg: "OK" });
         expect(mocks.list).toHaveBeenCalledWith({ page: 2, pageSize: 20, keyword: "creator", status: "pending" });
     });
 });

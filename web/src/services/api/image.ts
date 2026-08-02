@@ -3,6 +3,7 @@ import { nanoid } from "nanoid";
 import { GenerationTaskNeedsReviewError, type GenerationTaskExecutionState } from "@/services/api/generation-task-state";
 import { GenerationTaskRequestError } from "@/services/api/generation-task-request-error";
 import { refreshUserPointsIfSystem, syncUserPointsFromHeaders } from "@/services/api/points";
+import { throwIfClientSessionExpired } from "@/services/api/session-expiration";
 import { imageToDataUrl } from "@/services/image-storage";
 import { resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
@@ -94,6 +95,7 @@ export async function createImageGenerationTask(config: AiConfig, prompt: string
         }),
         signal: options?.signal,
     });
+    throwIfClientSessionExpired(response);
     syncUserPointsFromHeaders(response.headers, requestConfig.apiSource);
     if (!response.ok) throw new GenerationTaskRequestError(await readFetchError(response, "创建图片任务失败"), response.status);
     const payload = (await response.json()) as ImageTaskPayload;
@@ -135,6 +137,7 @@ export async function waitForImageGenerationTask(config: AiConfig, task: ImageGe
             await delay(IMAGE_TASK_POLL_INTERVAL_MS, options?.signal);
             continue;
         }
+        throwIfClientSessionExpired(response);
         syncUserPointsFromHeaders(response.headers, config.apiSource);
         if (!response.ok) {
             const message = await readFetchError(response, "读取图片任务失败");
@@ -175,7 +178,7 @@ export async function waitForImageGenerationTask(config: AiConfig, task: ImageGe
 }
 
 function isDeferredPollStatus(status: number) {
-    return status === 401 || status === 403 || [408, 425, 429].includes(status) || status >= 500;
+    return status === 403 || [408, 425, 429].includes(status) || status >= 500;
 }
 
 async function referenceToTaskInput(reference: ReferenceImage) {
