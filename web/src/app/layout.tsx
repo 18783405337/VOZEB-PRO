@@ -1,5 +1,4 @@
 import type { Metadata, Viewport } from "next";
-import Script from "next/script";
 import { AntdRegistry } from "@ant-design/nextjs-registry";
 import { AppProviders } from "@/components/layout/app-providers";
 import { absoluteSiteUrl, getPublicSiteSettings, siteMetadataBase } from "@/lib/server/site-metadata";
@@ -84,13 +83,6 @@ export default async function RootLayout({
                 }}
             >
                 <script id="website-json-ld" type="application/ld+json" dangerouslySetInnerHTML={{ __html: serializeStructuredData(websiteStructuredData) }} />
-                <Script
-                    id="theme-script"
-                    strategy="beforeInteractive"
-                    dangerouslySetInnerHTML={{
-                        __html: `try{var s=JSON.parse(localStorage.getItem("vozeb-pro:theme_store")||"{}");var t=s.state&&s.state.theme==="dark"?"dark":"light";document.documentElement.classList.toggle("dark",t==="dark");document.documentElement.style.colorScheme=t}catch(e){}`,
-                    }}
-                />
                 <AntdRegistry>
                     <AppProviders>{children}</AppProviders>
                 </AntdRegistry>
