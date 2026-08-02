@@ -11,13 +11,6 @@ export type ChannelWorkspaceSettings = {
 
 export type ChannelWorkspaceStatus = "healthy" | "warning" | "untested" | "draft" | "disabled";
 
-export type ChannelBindingDraft = {
-    upstreamModel: string;
-    logicalId: string;
-    newLogicalId: string;
-    newLogicalName: string;
-};
-
 const capabilityLabels: Record<LogicalModelCapability, string> = { text: "文本", image: "图片", video: "视频", audio: "音频" };
 
 export function channelWorkspaceStatus(channel: SystemModelChannel, healthResults: Record<string, ChannelHealthResult>): ChannelWorkspaceStatus {
@@ -73,10 +66,6 @@ export function updateChannelInWorkspace(settings: ChannelWorkspaceSettings, cha
 
 export function defaultModelField(capability: LogicalModelCapability): keyof SystemDefaultModels {
     return capability === "text" ? "textModel" : capability === "image" ? "imageModel" : capability === "video" ? "videoModel" : "audioModel";
-}
-
-export function switchChannelBindingUpstream(upstreamModel = ""): ChannelBindingDraft {
-    return { upstreamModel, logicalId: "", newLogicalId: "", newLogicalName: "" };
 }
 
 export function channelBindingCount(channelId: string, settings: ChannelWorkspaceSettings) {

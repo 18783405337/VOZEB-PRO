@@ -72,7 +72,7 @@ import dayjs from "dayjs";
 import { nanoid } from "nanoid";
 
 import { formatCreditAmount } from "@/constant/credits";
-import { normalizeDefaultModelsConfig } from "@/lib/model-routing-config";
+import { normalizeDefaultModelsConfig, synchronizeLogicalModelsWithChannels } from "@/lib/model-routing-config";
 import { buildGlobalAiOpcSelection, isGlobalAiOpcBaseUrl } from "@/lib/globalaiopc-catalog";
 import type {
     AgentSkill,
@@ -158,12 +158,11 @@ import type { AdminDashboardDataActions } from "./use-admin-dashboard-data-actio
 
 export function useAdminDashboardSettingsActions({ state, data }: { state: AdminDashboardState; data: AdminDashboardDataActions }) {
     const { message, settings, setSettings, setMailTestLoading, mailTestTo, setFetchingModelId, setTestingChannelKey, setChannelHealthResults, customPointModel, setCustomPointModel } = state;
-    const {} = data;
+    const { saveSettings } = data;
 
     const updateChannel = (id: string, patch: Partial<SystemModelChannel>) => {
-        setSettings((current) => ({
-            ...current,
-            systemChannels: current.systemChannels.map((channel) => {
+        setSettings((current) => {
+            const systemChannels = current.systemChannels.map((channel) => {
                 if (channel.id !== id) return channel;
                 const invalidatesHealth = patch.healthResults === undefined && ["baseUrl", "apiKey", "apiFormat", "models", "advancedConfig"].some((key) => key in patch);
                 return {
@@ -173,8 +172,11 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
                     apiFormat: patch.apiFormat || channel.apiFormat,
                     models: patch.models ? uniqueList(patch.models) : channel.models,
                 };
-            }),
-        }));
+            });
+            if (!("models" in patch)) return { ...current, systemChannels };
+            const logicalModels = synchronizeLogicalModelsWithChannels(current.logicalModels, systemChannels);
+            return { ...current, systemChannels, logicalModels, defaultModels: normalizeDefaultModelsConfig(current.defaultModels, logicalModels, systemChannels) };
+        });
     };
 
     const updateChannelHealth = (id: string, result: ChannelHealthResult) => {
@@ -188,12 +190,11 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
         setSettings((current) => ({ ...current, systemChannels: [...current.systemChannels, createSystemChannel()] }));
     };
 
-    const deleteChannel = (id: string) => {
-        setSettings((current) => {
-            const systemChannels = current.systemChannels.filter((channel) => channel.id !== id);
-            const logicalModels = current.logicalModels.map((model) => ({ ...model, bindings: model.bindings.filter((binding) => binding.channelId !== id) })).filter((model) => model.bindings.length);
-            return { ...current, systemChannels, logicalModels, defaultModels: normalizeDefaultModelsConfig(current.defaultModels, logicalModels, systemChannels) };
-        });
+    const deleteChannel = async (id: string) => {
+        const systemChannels = settings.systemChannels.filter((channel) => channel.id !== id);
+        const logicalModels = synchronizeLogicalModelsWithChannels(settings.logicalModels, systemChannels);
+        const defaultModels = normalizeDefaultModelsConfig(settings.defaultModels, logicalModels, systemChannels);
+        return saveSettings({ systemChannels, logicalModels, defaultModels }, "渠道已删除");
     };
 
     const updateFreeDailyPoints = (value: number | null) => {
@@ -434,13 +435,14 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
             const entries = results.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
             const modelMap = new Map(entries);
             if (modelMap.size) {
-                setSettings((current) => ({
-                    ...current,
-                    systemChannels: current.systemChannels.map((channel) => {
+                setSettings((current) => {
+                    const systemChannels = current.systemChannels.map((channel) => {
                         const result = modelMap.get(channel.id);
                         return result ? { ...channel, ...adminModelsChannelPatch(channel, result) } : channel;
-                    }),
-                }));
+                    });
+                    const logicalModels = synchronizeLogicalModelsWithChannels(current.logicalModels, systemChannels);
+                    return { ...current, systemChannels, logicalModels, defaultModels: normalizeDefaultModelsConfig(current.defaultModels, logicalModels, systemChannels) };
+                });
             }
             const failedChannels = results.flatMap((result, index) => (result.status === "rejected" ? [`${runnable[index].name || "未命名渠道"}：${result.reason instanceof Error ? result.reason.message : "拉取模型失败"}`] : []));
             if (!failedChannels.length) message.success("模型列表已拉取");
@@ -561,8 +563,8 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
             const okKinds: string[] = results.filter((result) => result.ok).map((result) => healthKindLabel(result.kind));
             const failedKinds: string[] = results.filter((result) => !result.ok).map((result) => healthKindLabel(result.kind));
             const imageReferenceTest = results.find((result) => result.kind === "image")?.referenceImageTest;
-            if (imageReferenceTest?.ok) okKinds.push("图生图");
-            else if (imageReferenceTest && !imageReferenceTest.ok) failedKinds.push("图生图");
+            if (imageReferenceTest?.ok) okKinds.push("参考图编辑");
+            else if (imageReferenceTest && !imageReferenceTest.ok) failedKinds.push("参考图编辑");
             const summary = `可用：${okKinds.join("、") || "无"}${failedKinds.length ? `；需检查：${failedKinds.join("、")}` : ""}`;
             if (failedKinds.length) message.warning(`${channel.name || "渠道"} 智能检测完成，${summary}`);
             else message.success(`${channel.name || "渠道"} 智能检测完成，${summary}`);

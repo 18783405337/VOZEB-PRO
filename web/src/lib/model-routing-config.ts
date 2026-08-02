@@ -11,80 +11,68 @@ const CAPABILITY_DEFAULT_KEYS = {
 } as const satisfies Record<LogicalModelCapability, keyof SystemDefaultModels>;
 
 export function normalizeLogicalModelsConfig(models: LogicalModel[] | undefined, channels: SystemModelChannel[]) {
-    const channelById = new Map(channels.map((channel) => [channel.id, channel]));
-    const source = Array.isArray(models) ? models : deriveLogicalModelsConfig(channels);
-    const seenModels = new Set<string>();
-
-    return source.flatMap((model) => {
-        const id = text(model?.id, 120);
-        const modelKey = id.toLowerCase();
-        if (!id || seenModels.has(modelKey)) return [];
-        seenModels.add(modelKey);
-
-        const seenBindings = new Set<string>();
-        const bindings = (Array.isArray(model?.bindings) ? model.bindings : [])
-            .flatMap((binding, index) => {
-                const channelId = text(binding?.channelId, 120);
-                const upstreamModel = text(binding?.upstreamModel, 200);
-                const channel = channelById.get(channelId);
-                const bindingKey = `${channelId}:${normalizeModelName(upstreamModel)}`;
-                if (!channel || !upstreamModel || !channelSupportsModel(channel, upstreamModel) || seenBindings.has(bindingKey)) return [];
-                seenBindings.add(bindingKey);
-                const capabilityProfile = normalizeStoredCapabilityProfile(binding.capabilityProfile);
-                const weight = clampWeight(binding.weight);
-                return [
-                    {
-                        id: text(binding.id, 120) || `${channelId}:${upstreamModel}`,
-                        channelId,
-                        upstreamModel,
-                        enabled: binding.enabled !== false,
-                        priority: clampPriority(binding.priority, index + 1),
-                        ...(weight !== undefined ? { weight } : {}),
-                        ...(capabilityProfile ? { capabilityProfile } : {}),
-                    },
-                ];
-            })
-            .sort((left, right) => left.priority - right.priority || left.id.localeCompare(right.id));
-
-        if (!bindings.length) return [];
-        return [{ id, name: text(model.name, 120) || id, capability: normalizeCapability(model.capability), enabled: model.enabled !== false, bindings }];
-    });
+    return synchronizeLogicalModelsWithChannels(Array.isArray(models) ? models : [], channels);
 }
 
 export function deriveLogicalModelsConfig(channels: SystemModelChannel[]): LogicalModel[] {
-    const catalog = new Map<string, LogicalModel>();
+    return synchronizeLogicalModelsWithChannels([], channels);
+}
+
+export function synchronizeLogicalModelsWithChannels(existingModels: LogicalModel[], channels: SystemModelChannel[]): LogicalModel[] {
+    const catalog = new Map<
+        string,
+        {
+            upstreamModel: string;
+            capability: LogicalModelCapability;
+            bindings: Array<{ channel: SystemModelChannel; channelIndex: number; upstreamModel: string }>;
+        }
+    >();
     channels.forEach((channel, channelIndex) => {
         channel.models.forEach((upstreamModel) => {
             const id = rawModelName(upstreamModel);
             if (!id) return;
-            const key = id.toLowerCase();
-            const model = catalog.get(key) || { id, name: id, capability: channelModelCapability(channel, upstreamModel), enabled: true, bindings: [] };
-            model.bindings.push({ id: `${channel.id}:${upstreamModel}`, channelId: channel.id, upstreamModel, enabled: true, priority: channelIndex + 1 });
+            const key = normalizeModelName(id);
+            const model = catalog.get(key) || { upstreamModel: id, capability: channelModelCapability(channel, upstreamModel), bindings: [] };
+            if (!model.bindings.some((binding) => binding.channel.id === channel.id)) model.bindings.push({ channel, channelIndex, upstreamModel });
             catalog.set(key, model);
         });
     });
-    return Array.from(catalog.values());
+
+    const usedExistingIds = new Set<string>();
+    const usedModelIds = new Set<string>();
+    return Array.from(catalog.entries()).map(([modelKey, catalogModel]) => {
+        const matchingModels = existingModels.filter((model) => model.bindings?.some((binding) => normalizeModelName(binding.upstreamModel) === modelKey));
+        const existing = matchingModels.find((model) => normalizeModelName(model.id) === modelKey && !usedExistingIds.has(model.id.toLowerCase())) || matchingModels.find((model) => !usedExistingIds.has(model.id.toLowerCase()));
+        if (existing) usedExistingIds.add(existing.id.toLowerCase());
+        const id = uniqueLogicalModelId(existing?.id || catalogModel.upstreamModel, usedModelIds);
+        const bindings = catalogModel.bindings
+            .map(({ channel, channelIndex, upstreamModel }) => {
+                const stored = findStoredBinding(existingModels, channel.id, upstreamModel);
+                const capabilityProfile = normalizeStoredCapabilityProfile(stored?.capabilityProfile);
+                const weight = clampWeight(stored?.weight);
+                return {
+                    id: text(stored?.id, 120) || `${channel.id}:${rawModelName(upstreamModel)}`,
+                    channelId: channel.id,
+                    upstreamModel,
+                    enabled: stored?.enabled !== false,
+                    priority: clampPriority(stored?.priority, channelIndex + 1),
+                    ...(weight !== undefined ? { weight } : {}),
+                    ...(capabilityProfile ? { capabilityProfile } : {}),
+                };
+            })
+            .sort((left, right) => left.priority - right.priority || left.id.localeCompare(right.id));
+        return {
+            id,
+            name: catalogModel.upstreamModel,
+            capability: existing ? normalizeCapability(existing.capability) : catalogModel.capability,
+            enabled: existing?.enabled !== false,
+            bindings,
+        };
+    });
 }
 
 export function mergeChannelModelsIntoLogicalModels(logicalModels: LogicalModel[], channels: SystemModelChannel[]) {
-    const merged = logicalModels.map((model) => ({ ...model, bindings: [...model.bindings] }));
-    const modelIndex = new Map(merged.map((model, index) => [normalizeModelName(model.id), index]));
-
-    for (const derived of deriveLogicalModelsConfig(channels)) {
-        const index = modelIndex.get(normalizeModelName(derived.id));
-        if (index === undefined) {
-            modelIndex.set(normalizeModelName(derived.id), merged.length);
-            merged.push(derived);
-            continue;
-        }
-
-        const current = merged[index];
-        const bindingKeys = new Set(current.bindings.map((binding) => `${binding.channelId}:${normalizeModelName(binding.upstreamModel)}`));
-        const additions = derived.bindings.filter((binding) => !bindingKeys.has(`${binding.channelId}:${normalizeModelName(binding.upstreamModel)}`));
-        if (additions.length) merged[index] = { ...current, bindings: [...current.bindings, ...additions] };
-    }
-
-    return merged;
+    return synchronizeLogicalModelsWithChannels(logicalModels, channels);
 }
 
 export function normalizeDefaultModelsConfig(defaults: Partial<SystemDefaultModels> | undefined, logicalModels: LogicalModel[], channels: SystemModelChannel[]): SystemDefaultModels {
@@ -181,6 +169,23 @@ export function resolveLogicalModelCapabilityProfile(binding: Pick<LogicalModelB
 function channelSupportsModel(channel: Pick<SystemModelChannel, "models">, model: string) {
     const target = normalizeModelName(model);
     return Boolean(target && channel.models.some((item) => normalizeModelName(item) === target));
+}
+
+function findStoredBinding(models: LogicalModel[], channelId: string, upstreamModel: string) {
+    const modelKey = normalizeModelName(upstreamModel);
+    return models.flatMap((model) => model.bindings || []).find((binding) => binding.channelId === channelId && normalizeModelName(binding.upstreamModel) === modelKey);
+}
+
+function uniqueLogicalModelId(value: string, usedIds: Set<string>) {
+    const base = text(rawModelName(value), 120) || "model";
+    let candidate = base;
+    let suffix = 2;
+    while (usedIds.has(candidate.toLowerCase())) {
+        const ending = `-${suffix++}`;
+        candidate = `${base.slice(0, 120 - ending.length)}${ending}`;
+    }
+    usedIds.add(candidate.toLowerCase());
+    return candidate;
 }
 
 function normalizeStoredCapabilityProfile(value: unknown): LogicalModelCapabilityProfile | undefined {

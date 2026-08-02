@@ -621,8 +621,8 @@ function ChannelCapabilitySummary({ channel, results }: { channel: SystemModelCh
     const items: Array<{ label: string; value: string; tone: "default" | "green" | "red" }> = [];
     if (capabilities.has("text")) items.push({ label: "文本", value: pending || healthStateText(text), tone: pending ? "default" : healthStateTone(text) });
     if (capabilities.has("image")) {
-        items.push({ label: "生图", value: pending || healthStateText(image), tone: pending ? "default" : healthStateTone(image) });
-        items.push({ label: "图生图", value: pending || referenceImageText(image, advanced, needsPublicReference), tone: pending ? "default" : referenceImageTone(image) });
+        items.push({ label: "图片生成", value: pending || healthStateText(image), tone: pending ? "default" : healthStateTone(image) });
+        items.push({ label: "参考图编辑", value: pending || referenceImageText(image, advanced, needsPublicReference), tone: pending ? "default" : referenceImageTone(image) });
     }
     if (capabilities.has("video")) {
         items.push({ label: "视频", value: pending || healthStateText(video), tone: pending ? "default" : healthStateTone(video) });
@@ -683,23 +683,27 @@ function referenceMediaText(result: ChannelHealthResult | undefined, advanced: S
 }
 
 function ChannelHealthResultRow({ result }: { result: ChannelHealthResult }) {
-    const detail = result.remoteUrl || result.taskId || result.error || "创建成功";
+    const detail = result.remoteUrl || result.taskId || result.error;
     return (
         <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-stone-500 dark:text-stone-400">
             <Tag color={result.ok ? "green" : "red"} className="m-0">
                 {healthKindLabel(result.kind)}
-                {result.ok ? "成功" : "失败"}
+                {result.ok ? "可用" : "不可用"}
             </Tag>
             <span className="truncate">模型：{result.model}</span>
             {result.protocol ? <span className="truncate">协议：{result.protocol}</span> : null}
             <span>状态：{result.status || "-"}</span>
             <span>扣费：{typeof result.pointsCost === "number" ? formatCreditAmount(result.pointsCost) : "-"}</span>
             {result.referenceHint ? <span className="min-w-0 flex-1 basis-full truncate sm:basis-auto">参考图：{result.referenceHint}</span> : null}
-            {result.referenceImageTest ? <span className="min-w-0 basis-full truncate">图生图：{result.referenceImageTest.ok ? "成功" : `失败（${result.referenceImageTest.error || `状态码 ${result.referenceImageTest.status || "-"}`}）`}</span> : null}
-            <span className="min-w-0 flex-1 truncate">
-                {result.remoteUrl ? "远程地址：" : result.taskId ? "任务：" : result.error ? "原因：" : ""}
-                {detail}
-            </span>
+            {result.referenceImageTest ? (
+                <span className="min-w-0 basis-full truncate">参考图编辑：{result.referenceImageTest.ok ? "可用" : `不可用（${result.referenceImageTest.error || `状态码 ${result.referenceImageTest.status || "-"}`}）`}</span>
+            ) : null}
+            {detail ? (
+                <span className="min-w-0 flex-1 truncate">
+                    {result.remoteUrl ? "远程地址：" : result.taskId ? "任务：" : "原因："}
+                    {detail}
+                </span>
+            ) : null}
         </div>
     );
 }

@@ -1,20 +1,19 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { App, Alert, Button, Checkbox, Drawer, Empty, Input, Select, Space, Switch, Tag } from "antd";
+import { App, Alert, Button, Drawer, Empty, Input, Select, Space, Switch, Tag } from "antd";
 import { ArrowLeft, Check, CircleDollarSign, FlaskConical, Link2, PlugZap, RefreshCw, Save, WandSparkles } from "lucide-react";
-import { nanoid } from "nanoid";
 
 import { AdminChannelProtocolSetup } from "@/components/admin/admin-channel-protocol-setup";
 import { LabeledControl } from "@/components/admin/admin-settings-controls";
 import { channelHealthKinds } from "@/components/admin/admin-system-channel-editor";
 import type { ChannelHealthResult } from "@/components/admin/admin-system-channel-editor";
 import { createSystemChannel } from "@/components/admin/admin-dashboard-elements";
-import type { LogicalModel, LogicalModelCapability, SystemChannelAuthMode, SystemChannelProtocol, SystemModelChannel } from "@/lib/auth/store";
+import type { SystemChannelAuthMode, SystemChannelProtocol, SystemModelChannel } from "@/lib/auth/store";
 import { applyChannelProtocol, channelConnectionReady, channelProtocolDefinition, channelProtocolOptions, channelRequiresApiKey, resolveChannelAuthMode } from "@/lib/channel-protocol-registry";
-import { capabilityLabel, channelModelCapability } from "@/lib/model-routing-config";
+import { capabilityLabel, channelModelCapability, synchronizeLogicalModelsWithChannels } from "@/lib/model-routing-config";
 
-import { channelHealthEntries, defaultModelField, removeChannelFromWorkspace, switchChannelBindingUpstream, type ChannelWorkspaceSettings } from "./admin-channel-workspace-model";
+import { channelHealthEntries, defaultModelField, removeChannelFromWorkspace, type ChannelWorkspaceSettings } from "./admin-channel-workspace-model";
 
 type Props = {
     open: boolean;
@@ -31,34 +30,30 @@ type Props = {
     onPersist: (settings: ChannelWorkspaceSettings, successText: string) => Promise<boolean>;
 };
 
-const steps = [{ title: "选择协议" }, { title: "连接上游" }, { title: "获取模型" }, { title: "验证能力" }, { title: "绑定模型" }, { title: "确认启用" }];
+const steps = [{ title: "选择协议" }, { title: "连接上游" }, { title: "获取模型" }, { title: "验证能力" }, { title: "同步模型" }, { title: "确认启用" }];
 
 export function AdminChannelOnboardingDrawer({ open, initialProtocol, settings, fetchingModelId, testingChannelKey, healthResults, saving, onClose, onChange, onFetchModels, onTestAll, onPersist }: Props) {
     const { message, modal } = App.useApp();
     const [step, setStep] = useState(0);
     const [selectedProtocol, setSelectedProtocol] = useState<SystemChannelProtocol>("openai");
     const [draftId, setDraftId] = useState("");
-    const [bindingDraft, setBindingDraft] = useState(switchChannelBindingUpstream);
     const [setAsDefault, setSetAsDefault] = useState(true);
-    const { upstreamModel: selectedUpstreamModel, logicalId: selectedLogicalId, newLogicalId, newLogicalName } = bindingDraft;
     const channel = settings.systemChannels.find((item) => item.id === draftId);
     const webhookSecretInvalid = Boolean(channel?.webhookSecret?.trim() && channel.webhookSecret.trim().length < 32);
     const validations = draftId ? channelHealthEntries(draftId, healthResults, channel?.healthResults) : [];
     const verified = validations.some(({ result }) => result.ok);
-    const bound = Boolean(channel && settings.logicalModels.some((model) => model.bindings.some((binding) => binding.channelId === channel.id)));
+    const modelsSynchronized = Boolean(
+        channel?.models.length &&
+        channel.models.every((upstreamModel) => settings.logicalModels.some((model) => model.bindings.some((binding) => binding.channelId === channel.id && normalizedUpstreamModel(binding.upstreamModel) === normalizedUpstreamModel(upstreamModel)))),
+    );
 
     useEffect(() => {
         if (!open) return;
         setStep(0);
         setSelectedProtocol(initialProtocol || "openai");
         setDraftId("");
-        setBindingDraft(switchChannelBindingUpstream());
         setSetAsDefault(true);
     }, [initialProtocol, open]);
-
-    useEffect(() => {
-        if (!selectedUpstreamModel && channel?.models.length) setBindingDraft(switchChannelBindingUpstream(channel.models[0]));
-    }, [channel?.models, selectedUpstreamModel]);
 
     const protocolOptions = useMemo(() => channelProtocolOptions().filter((item) => !["auto", "compatible"].includes(item.value)), []);
     const updateChannel = (patch: Partial<SystemModelChannel>) => {
@@ -98,37 +93,26 @@ export function AdminChannelOnboardingDrawer({ open, initialProtocol, settings, 
         if (await onPersist(next, "渠道草稿已保存")) onClose();
     };
     const enableChannel = async () => {
-        if (!channel || !verified || !bound) return;
+        if (!channel || !verified || !modelsSynchronized) return;
         const next = { ...settings, systemChannels: settings.systemChannels.map((item) => (item.id === channel.id ? { ...item, enabled: true } : item)) };
         onChange(next);
         if (await onPersist(next, "渠道已启用")) onClose();
     };
-    const bindModel = () => {
-        if (!channel || !selectedUpstreamModel) return message.error("请选择上游模型");
-        const capability = channelModelCapability(channel, selectedUpstreamModel);
-        let logicalModels = settings.logicalModels;
-        let logical: LogicalModel | undefined;
-        if (selectedLogicalId) logical = logicalModels.find((item) => item.id === selectedLogicalId && item.capability === capability);
-        else {
-            const id = newLogicalId.trim();
-            if (!/^[a-z0-9][a-z0-9._-]*$/i.test(id)) return message.error("逻辑模型 ID 只能包含字母、数字、点、下划线和短横线");
-            if (logicalModels.some((item) => item.id.toLowerCase() === id.toLowerCase())) return message.error("逻辑模型 ID 已存在");
-            logical = { id, name: newLogicalName.trim() || id, capability, enabled: true, bindings: [] };
-            logicalModels = [...logicalModels, logical];
+    const synchronizeModels = () => {
+        if (!channel?.models.length) return message.error("请先同步或填写上游模型目录");
+        const logicalModels = synchronizeLogicalModelsWithChannels(settings.logicalModels, settings.systemChannels);
+        const defaultModels = { ...settings.defaultModels };
+        if (setAsDefault) {
+            channel.models.forEach((upstreamModel) => {
+                const capability = channelModelCapability(channel, upstreamModel);
+                const field = defaultModelField(capability);
+                if (defaultModels[field]) return;
+                const logical = logicalModels.find((model) => model.bindings.some((binding) => binding.channelId === channel.id && binding.upstreamModel === upstreamModel));
+                if (logical) defaultModels[field] = logical.id;
+            });
         }
-        if (!logical) return message.error("请选择或创建逻辑模型");
-        const exists = logical.bindings.some((binding) => binding.channelId === channel.id && binding.upstreamModel === selectedUpstreamModel);
-        const nextLogical = exists
-            ? logical
-            : {
-                  ...logical,
-                  bindings: [...logical.bindings, { id: nanoid(), channelId: channel.id, upstreamModel: selectedUpstreamModel, enabled: true, priority: logical.bindings.length + 1, weight: 100 }],
-              };
-        logicalModels = logicalModels.map((item) => (item.id === logical!.id ? nextLogical : item));
-        const defaultModels = setAsDefault ? { ...settings.defaultModels, [defaultModelField(capability)]: nextLogical.id } : settings.defaultModels;
         onChange({ ...settings, logicalModels, defaultModels });
-        setBindingDraft((current) => ({ ...current, logicalId: nextLogical.id, newLogicalId: "", newLogicalName: "" }));
-        message.success(exists ? "这个上游绑定已经存在" : "上游模型已绑定");
+        message.success("已按上游模型名自动合并逻辑模型");
     };
 
     const renderStep = () => {
@@ -137,33 +121,16 @@ export function AdminChannelOnboardingDrawer({ open, initialProtocol, settings, 
         if (step === 1) return <ConnectionStep channel={channel} onChange={updateChannel} />;
         if (step === 2) return <ModelStep channel={channel} fetching={fetchingModelId === channel.id} onChange={updateChannel} onFetch={() => void onFetchModels(channel)} />;
         if (step === 3) return <ValidationStep channel={channel} entries={validations} testing={testingChannelKey === `${channel.id}:all`} onTest={() => void onTestAll(channel)} />;
-        if (step === 4)
-            return (
-                <BindingStep
-                    channel={channel}
-                    logicalModels={settings.logicalModels}
-                    selectedUpstreamModel={selectedUpstreamModel}
-                    selectedLogicalId={selectedLogicalId}
-                    newLogicalId={newLogicalId}
-                    newLogicalName={newLogicalName}
-                    setAsDefault={setAsDefault}
-                    onSelectUpstream={(value) => setBindingDraft(switchChannelBindingUpstream(value))}
-                    onSelectLogical={(value) => setBindingDraft((current) => ({ ...current, logicalId: value }))}
-                    onNewLogicalId={(value) => setBindingDraft((current) => ({ ...current, newLogicalId: value }))}
-                    onNewLogicalName={(value) => setBindingDraft((current) => ({ ...current, newLogicalName: value }))}
-                    onSetAsDefault={setSetAsDefault}
-                    onBind={bindModel}
-                />
-            );
+        if (step === 4) return <BindingStep channel={channel} logicalModels={settings.logicalModels} setAsDefault={setAsDefault} onSetAsDefault={setSetAsDefault} onSynchronize={synchronizeModels} />;
         return <ReviewStep channel={channel} settings={settings} validations={validations} />;
     };
 
-    const nextDisabled = step === 1 ? !channel?.name.trim() || !channelConnectionReady(channel) || webhookSecretInvalid : step === 2 ? !channel?.models.length : step === 4 ? !bound : false;
+    const nextDisabled = step === 1 ? !channel?.name.trim() || !channelConnectionReady(channel) || webhookSecretInvalid : step === 2 ? !channel?.models.length : step === 4 ? !modelsSynchronized : false;
 
     return (
         <Drawer
             title="接入新渠道"
-            size="min(736px, 100vw)"
+            width="min(736px, 100vw)"
             open={open}
             destroyOnHidden
             mask={{ closable: false }}
@@ -184,7 +151,7 @@ export function AdminChannelOnboardingDrawer({ open, initialProtocol, settings, 
                                 {step === 0 ? "开始配置" : "下一步"}
                             </Button>
                         ) : (
-                            <Button type="primary" loading={saving} disabled={!verified || !bound} icon={<Check className="size-4" />} onClick={() => void enableChannel()}>
+                            <Button type="primary" loading={saving} disabled={!verified || !modelsSynchronized} icon={<Check className="size-4" />} onClick={() => void enableChannel()}>
                                 启用渠道
                             </Button>
                         )}
@@ -457,77 +424,50 @@ function ValidationStep({ channel, entries, testing, onTest }: { channel: System
 function BindingStep({
     channel,
     logicalModels,
-    selectedUpstreamModel,
-    selectedLogicalId,
-    newLogicalId,
-    newLogicalName,
     setAsDefault,
-    onSelectUpstream,
-    onSelectLogical,
-    onNewLogicalId,
-    onNewLogicalName,
     onSetAsDefault,
-    onBind,
+    onSynchronize,
 }: {
     channel: SystemModelChannel;
-    logicalModels: LogicalModel[];
-    selectedUpstreamModel: string;
-    selectedLogicalId: string;
-    newLogicalId: string;
-    newLogicalName: string;
+    logicalModels: ChannelWorkspaceSettings["logicalModels"];
     setAsDefault: boolean;
-    onSelectUpstream: (value: string) => void;
-    onSelectLogical: (value: string) => void;
-    onNewLogicalId: (value: string) => void;
-    onNewLogicalName: (value: string) => void;
     onSetAsDefault: (value: boolean) => void;
-    onBind: () => void;
+    onSynchronize: () => void;
 }) {
-    const capability: LogicalModelCapability = selectedUpstreamModel ? channelModelCapability(channel, selectedUpstreamModel) : "text";
-    const candidates = logicalModels.filter((model) => model.capability === capability);
     return (
         <div className="space-y-4">
-            <div className="grid gap-3 sm:grid-cols-2">
-                <LabeledControl label="上游模型">
-                    <Select showSearch optionFilterProp="label" className="w-full" value={selectedUpstreamModel || undefined} options={channel.models.map((model) => ({ label: model, value: model }))} onChange={onSelectUpstream} />
-                </LabeledControl>
-                <LabeledControl label="识别能力">
-                    <Input value={capabilityLabel(capability)} disabled />
-                </LabeledControl>
-            </div>
-            <div className="border-y border-stone-200 py-4 dark:border-stone-800">
-                <LabeledControl label="绑定已有逻辑模型">
-                    <Select
-                        allowClear
-                        showSearch
-                        optionFilterProp="label"
-                        className="w-full"
-                        value={selectedLogicalId || undefined}
-                        placeholder="不选择则创建新逻辑模型"
-                        options={candidates.map((model) => ({ label: `${model.name} (${model.id})`, value: model.id }))}
-                        onChange={(value) => onSelectLogical(value || "")}
-                    />
-                </LabeledControl>
-                {!selectedLogicalId ? (
-                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                        <LabeledControl label="新逻辑模型 ID">
-                            <Input value={newLogicalId} placeholder="例如：video-pro" onChange={(event) => onNewLogicalId(event.target.value)} />
-                        </LabeledControl>
-                        <LabeledControl label="展示名称">
-                            <Input value={newLogicalName} placeholder="例如：专业视频模型" onChange={(event) => onNewLogicalName(event.target.value)} />
-                        </LabeledControl>
-                    </div>
-                ) : null}
+            <Alert type="info" showIcon message="逻辑模型由渠道目录自动维护" description="同名上游模型会跨渠道合并；没有同名项时会按该上游模型名建立独立逻辑模型，无需填写逻辑 ID 或展示名称。" />
+            <div className="divide-y divide-stone-200 border-y border-stone-200 dark:divide-stone-800 dark:border-stone-800">
+                {channel.models.map((upstreamModel) => {
+                    const logical = logicalModels.find((model) => model.bindings.some((binding) => normalizedUpstreamModel(binding.upstreamModel) === normalizedUpstreamModel(upstreamModel)));
+                    return (
+                        <div key={upstreamModel} className="flex min-w-0 items-center justify-between gap-3 py-2.5 text-sm">
+                            <div className="min-w-0">
+                                <div className="truncate font-medium text-stone-950 dark:text-stone-100">{upstreamModel}</div>
+                                <div className="mt-0.5 text-xs text-stone-500 dark:text-stone-400">{capabilityLabel(channelModelCapability(channel, upstreamModel))}</div>
+                            </div>
+                            <Tag className="m-0 shrink-0">{logical?.name || displayUpstreamModel(upstreamModel)}</Tag>
+                        </div>
+                    );
+                })}
             </div>
             <div className="flex min-h-10 items-center justify-between gap-3 border-b border-stone-200 pb-4 dark:border-stone-800">
-                <span className="text-sm text-stone-700 dark:text-stone-300">设为默认{capabilityLabel(capability)}模型</span>
+                <span className="text-sm text-stone-700 dark:text-stone-300">为尚未配置的能力设置默认模型</span>
                 <Switch checked={setAsDefault} onChange={onSetAsDefault} />
             </div>
-            <Button type="primary" icon={<Link2 className="size-4" />} onClick={onBind}>
-                绑定模型
+            <Button type="primary" icon={<Link2 className="size-4" />} onClick={onSynchronize}>
+                同步并自动合并
             </Button>
         </div>
     );
+}
+
+function normalizedUpstreamModel(value: string) {
+    return displayUpstreamModel(value).toLowerCase();
+}
+
+function displayUpstreamModel(value: string) {
+    return value.trim().replace(/^models\//i, "");
 }
 
 function ReviewStep({ channel, settings, validations }: { channel: SystemModelChannel; settings: ChannelWorkspaceSettings; validations: ReturnType<typeof channelHealthEntries> }) {

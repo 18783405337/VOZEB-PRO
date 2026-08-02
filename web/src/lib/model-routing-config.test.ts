@@ -11,6 +11,7 @@ import {
     normalizeDefaultModelsConfig,
     normalizeLogicalModelsConfig,
     resolveLogicalModelConfig,
+    synchronizeLogicalModelsWithChannels,
 } from "./model-routing-config";
 
 const channel = (id: string, models: string[], enabled = true): SystemModelChannel => ({ id, name: id, baseUrl: `https://${id}.example.com/v1`, apiKey: "test-secret", apiFormat: "openai", models, enabled });
@@ -32,13 +33,13 @@ describe("model routing config", () => {
                 ],
             },
         ];
-        expect(normalizeLogicalModelsConfig(models, channels)[0].bindings).toEqual([{ id: "one", channelId: "one", upstreamModel: "gpt-test", enabled: true, priority: 2 }]);
+        expect(normalizeLogicalModelsConfig(models, channels)[0].bindings).toEqual([{ id: "one", channelId: "one", upstreamModel: "models/GPT-TEST", enabled: true, priority: 2 }]);
     });
 
-    it("preserves an explicitly empty logical model catalog", () => {
+    it("rebuilds an explicitly empty logical model catalog from channel models", () => {
         const channels = [channel("one", ["writer"])];
 
-        expect(normalizeLogicalModelsConfig([], channels)).toEqual([]);
+        expect(normalizeLogicalModelsConfig([], channels)).toHaveLength(1);
         expect(normalizeLogicalModelsConfig(undefined, channels)).toHaveLength(1);
     });
 
@@ -80,7 +81,34 @@ describe("model routing config", () => {
         const models = mergeChannelModelsIntoLogicalModels(existing, channels);
 
         expect(models).toHaveLength(1);
-        expect(models[0].bindings).toEqual([existing[0].bindings[0], expect.objectContaining({ channelId: "two", upstreamModel: "gpt-image-2" })]);
+        expect(models[0].bindings).toEqual([{ ...existing[0].bindings[0], upstreamModel: "models/GPT-IMAGE-2" }, expect.objectContaining({ channelId: "two", upstreamModel: "gpt-image-2" })]);
+    });
+
+    it("removes stale bindings and creates separate logical models for different upstream names", () => {
+        const channels = [channel("one", ["writer", "writer-mini"]), channel("two", ["models/WRITER"])];
+        const existing: LogicalModel[] = [
+            {
+                id: "custom-writer",
+                name: "旧名称",
+                capability: "text",
+                enabled: false,
+                bindings: [
+                    { id: "keep", channelId: "one", upstreamModel: "writer", enabled: false, priority: 9, weight: 25 },
+                    { id: "stale", channelId: "gone", upstreamModel: "writer", enabled: true, priority: 1 },
+                ],
+            },
+        ];
+
+        const models = synchronizeLogicalModelsWithChannels(existing, channels);
+
+        expect(models).toHaveLength(2);
+        expect(models[0]).toMatchObject({ id: "custom-writer", name: "writer", enabled: false });
+        expect(models[0].bindings).toEqual([
+            expect.objectContaining({ channelId: "two", upstreamModel: "models/WRITER", priority: 2 }),
+            expect.objectContaining({ id: "keep", channelId: "one", upstreamModel: "writer", enabled: false, priority: 9, weight: 25 }),
+        ]);
+        expect(models[1]).toMatchObject({ id: "writer-mini", name: "writer-mini", bindings: [{ channelId: "one", upstreamModel: "writer-mini" }] });
+        expect(models.flatMap((model) => model.bindings).some((binding) => binding.channelId === "gone")).toBe(false);
     });
 
     it("keeps the upstream auto model classified as text", () => {

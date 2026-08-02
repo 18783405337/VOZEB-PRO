@@ -21,7 +21,7 @@ type Props = {
     healthResults: Record<string, ChannelHealthResult>;
     onClose: () => void;
     onChange: (patch: Partial<SystemModelChannel>) => void;
-    onDelete: () => void;
+    onDelete: () => Promise<boolean>;
     onFetchModels: () => void;
     onTestHealth: (kind: ChannelHealthKind) => void;
     onTestAll: () => void;
@@ -32,7 +32,7 @@ export function AdminChannelDetailDrawer({ open, channel, settings, fetching, te
     const entries = channelHealthEntries(channel.id, healthResults, channel.healthResults);
     const status = channelWorkspaceStatus(channel, healthResults);
     return (
-        <Drawer title={channel.name || "渠道详情"} size="large" open={open} destroyOnHidden onClose={onClose}>
+        <Drawer title={channel.name || "渠道详情"} width="min(720px, 100vw)" open={open} destroyOnHidden onClose={onClose}>
             <Tabs
                 items={[
                     {
@@ -50,9 +50,8 @@ export function AdminChannelDetailDrawer({ open, channel, settings, fetching, te
                                 testingKey={testingKey}
                                 healthResults={healthResults}
                                 onChange={onChange}
-                                onDelete={() => {
-                                    onClose();
-                                    onDelete();
+                                onDelete={async () => {
+                                    if (await onDelete()) onClose();
                                 }}
                                 onFetchModels={onFetchModels}
                                 onTestHealth={onTestHealth}

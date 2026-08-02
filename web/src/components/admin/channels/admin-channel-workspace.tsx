@@ -33,7 +33,7 @@ type Props = {
     healthResults: Record<string, ChannelHealthResult>;
     saving: boolean;
     onChange: (settings: ChannelWorkspaceSettings) => void;
-    onDeleteChannel: (channelId: string) => void;
+    onDeleteChannel: (channelId: string) => Promise<boolean>;
     onFetchModels: (channel: SystemModelChannel) => Promise<void>;
     onFetchAll: () => Promise<void>;
     onTestHealth: (channel: SystemModelChannel, kind: ChannelHealthKind) => Promise<ChannelHealthResult | null>;
@@ -199,7 +199,7 @@ export function AdminChannelWorkspace({ settings, fetchingModelId, testingChanne
                 healthResults={healthResults}
                 onClose={() => setDetailId("")}
                 onChange={(patch) => selectedChannel && updateChannel(selectedChannel.id, patch)}
-                onDelete={() => selectedChannel && onDeleteChannel(selectedChannel.id)}
+                onDelete={async () => Boolean(selectedChannel && (await onDeleteChannel(selectedChannel.id)))}
                 onFetchModels={() => selectedChannel && void onFetchModels(selectedChannel)}
                 onTestHealth={(kind) => selectedChannel && void onTestHealth(selectedChannel, kind)}
                 onTestAll={() => selectedChannel && void onTestAll(selectedChannel)}

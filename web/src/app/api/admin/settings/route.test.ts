@@ -40,34 +40,33 @@ describe("admin settings model routing", () => {
         expect(mocks.setAuthSettings).toHaveBeenCalledWith(
             expect.objectContaining({
                 systemChannels: [expect.objectContaining({ id: "one", apiKey: "saved-secret", webhookSecret: savedSettings.systemChannels[0].webhookSecret })],
-                logicalModels: savedSettings.logicalModels,
+                logicalModels: [expect.objectContaining({ id: "writer", name: "vendor/writer", bindings: savedSettings.logicalModels[0].bindings })],
                 defaultModels: savedSettings.defaultModels,
             }),
         );
         expect(mocks.safeRecordAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "admin.settings.update", metadata: { fields: expect.arrayContaining(["systemChannels", "logicalModels", "defaultModels"]) } }));
     });
 
-    it("rejects deleting a channel while a logical binding still references it", async () => {
+    it("deletes a channel together with stale logical bindings and defaults", async () => {
         const response = await PATCH(request({ systemChannels: [], logicalModels: savedSettings.logicalModels, defaultModels: savedSettings.defaultModels }));
-        expect(response.status).toBe(400);
-        expect((await response.json()).error).toContain("不存在的渠道");
-        expect(mocks.setAuthSettings).not.toHaveBeenCalled();
+        expect(response.status).toBe(200);
+        expect(mocks.setAuthSettings).toHaveBeenCalledWith(expect.objectContaining({ systemChannels: [], logicalModels: [], defaultModels: { textModel: "", imageModel: "", videoModel: "", audioModel: "" } }));
     });
 
-    it("keeps an explicitly empty logical model catalog empty", async () => {
+    it("rebuilds an explicitly empty logical model catalog from channels", async () => {
         const response = await PATCH(request({ logicalModels: [], defaultModels: { ...savedSettings.defaultModels, textModel: "" } }));
 
         expect(response.status).toBe(200);
-        expect(mocks.setAuthSettings).toHaveBeenCalledWith(expect.objectContaining({ logicalModels: [], defaultModels: expect.objectContaining({ textModel: "" }) }));
+        expect(mocks.setAuthSettings).toHaveBeenCalledWith(expect.objectContaining({ logicalModels: [expect.objectContaining({ id: "vendor/writer", bindings: [expect.objectContaining({ channelId: "one", upstreamModel: "vendor/writer" })] })] }));
     });
 
-    it("does not recreate deleted logical models during a later channel-only save", async () => {
+    it("recreates channel-backed logical models during a later channel-only save", async () => {
         mocks.getAuthSettings.mockResolvedValue({ ...savedSettings, logicalModels: [], defaultModels: { ...savedSettings.defaultModels, textModel: "" } });
 
         const response = await PATCH(request({ systemChannels: savedSettings.systemChannels }));
 
         expect(response.status).toBe(200);
-        expect(mocks.setAuthSettings).toHaveBeenCalledWith(expect.objectContaining({ logicalModels: [] }));
+        expect(mocks.setAuthSettings).toHaveBeenCalledWith(expect.objectContaining({ logicalModels: [expect.objectContaining({ id: "vendor/writer" })] }));
     });
 
     it("saves a disabled channel after clearing its now-unresolvable default", async () => {

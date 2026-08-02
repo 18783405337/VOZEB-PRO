@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { AuthInputError, getAuthSettings, isAuthInputError, setAuthSettings, type AuthSettings } from "@/lib/auth/store";
-import { modelRoutingValidationErrors, normalizeDefaultModelsConfig, normalizeLogicalModelsConfig } from "@/lib/model-routing-config";
+import { modelRoutingValidationErrors, normalizeDefaultModelsConfig, synchronizeLogicalModelsWithChannels } from "@/lib/model-routing-config";
 import { readJsonBody } from "@/lib/auth/request";
 import { getCurrentUser } from "@/lib/auth/session";
 import { mergeSystemChannelSecrets, serializeAdminSettings, systemChannelWebhookSecretValidationError } from "@/lib/server/admin-channel-config";
@@ -48,12 +48,13 @@ export async function PATCH(request: Request) {
             const protocolErrors = channels.flatMap(channelProtocolValidationErrors);
             if (protocolErrors.length) throw new AuthInputError(protocolErrors[0]);
             const sourceLogicalModels = Array.isArray(body.logicalModels) ? body.logicalModels : currentSettings.logicalModels;
+            const logicalModels = synchronizeLogicalModelsWithChannels(sourceLogicalModels, channels);
             const defaultModels = { ...currentSettings.defaultModels, ...body.defaultModels };
-            const normalizedDefaults = normalizeDefaultModelsConfig(defaultModels, sourceLogicalModels, channels);
-            const errors = modelRoutingValidationErrors(sourceLogicalModels, channels, normalizedDefaults);
+            const normalizedDefaults = normalizeDefaultModelsConfig(defaultModels, logicalModels, channels);
+            const errors = modelRoutingValidationErrors(logicalModels, channels, normalizedDefaults);
             if (errors.length) throw new AuthInputError(errors[0]);
-            patch.logicalModels = normalizeLogicalModelsConfig(sourceLogicalModels, channels);
-            patch.defaultModels = normalizeDefaultModelsConfig(normalizedDefaults, patch.logicalModels, channels);
+            patch.logicalModels = logicalModels;
+            patch.defaultModels = normalizedDefaults;
         }
         if (Array.isArray(body.agentSkills)) patch.agentSkills = body.agentSkills;
         if (!Object.keys(patch).length) return NextResponse.json({ error: "没有可更新的设置" }, { status: 400 });

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { SystemModelChannel } from "@/lib/auth/store";
 import { applyChannelProtocol } from "@/lib/channel-protocol-registry";
-import { channelProtocolLabel, channelWorkspaceStatus, channelWorkspaceStatusLabel, defaultModelField, removeChannelFromWorkspace, switchChannelBindingUpstream, updateChannelInWorkspace } from "./admin-channel-workspace-model";
+import { channelProtocolLabel, channelWorkspaceStatus, channelWorkspaceStatusLabel, defaultModelField, removeChannelFromWorkspace, updateChannelInWorkspace } from "./admin-channel-workspace-model";
 
 const channel = applyChannelProtocol({ id: "sd2", name: "SD2 渠道", baseUrl: "https://api.example.com", apiKey: "secret", apiFormat: "openai", models: ["seedance-pro"], enabled: true } satisfies SystemModelChannel, "seedance");
 
@@ -45,10 +45,6 @@ describe("admin channel workspace model", () => {
         };
         expect(removeChannelFromWorkspace(settings, channel.id)).toEqual({ systemChannels: [], logicalModels: [], defaultModels: { textModel: "", imageModel: "", videoModel: "", audioModel: "" } });
         expect(defaultModelField("video")).toBe("videoModel");
-    });
-
-    it("clears stale logical-model fields when the upstream model changes", () => {
-        expect(switchChannelBindingUpstream("image-upstream")).toEqual({ upstreamModel: "image-upstream", logicalId: "", newLogicalId: "", newLogicalName: "" });
     });
 
     it("clears an unresolved default as soon as its only channel is disabled", () => {
