@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { GLOBAL_AIOPC_PRESETS } from "@/lib/globalaiopc-catalog";
 import { createProtocolFixtureServer } from "../../../scripts/protocol-fixture-server.mjs";
@@ -16,6 +16,12 @@ describe("GlobalAiOpc media protocol matrix over TCP fixtures", () => {
     afterEach(async () => {
         await close?.();
         close = undefined;
+        vi.unstubAllEnvs();
+    });
+
+    beforeEach(() => {
+        vi.stubEnv("VOZEB_PRO_ALLOW_PRIVATE_UPSTREAMS", "1");
+        vi.stubEnv("VOZEB_PRO_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1");
     });
 
     it("creates and queries every registered image and video preset exactly once", async () => {

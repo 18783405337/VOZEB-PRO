@@ -17,6 +17,7 @@ vi.mock("@/lib/server/database", () => ({
 }));
 vi.mock("@/lib/server/data-adapter", () => ({
     readJsonDataFile: vi.fn(async (fileName: string, fallback: unknown) => structuredClone(mocks.files.has(fileName) ? mocks.files.get(fileName) : fallback)),
+    withJsonDataFileLock: vi.fn(async (_fileName: string, callback: () => Promise<unknown>) => callback()),
     writeJsonDataFile: vi.fn(async (fileName: string, value: unknown) => {
         mocks.files.set(fileName, structuredClone(value));
     }),

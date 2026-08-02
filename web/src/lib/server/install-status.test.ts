@@ -27,7 +27,7 @@ vi.mock("@/lib/server/secret-crypto", () => ({
     getEncryptionKeyStatus: () => mocks.encryption,
 }));
 
-import { getInstallStatus, initializeInstallDatabase, invalidateInstallStatusCache } from "./install-status";
+import { getInstallStatus, initializeInstallDatabase, InstallInitializationError, invalidateInstallStatusCache } from "./install-status";
 
 describe("install status cache", () => {
     beforeEach(() => {
@@ -113,7 +113,12 @@ describe("install status cache", () => {
     it("rejects repeated initialization after the first user exists", async () => {
         mockHealthySchema(["1"]);
 
-        await expect(initializeInstallDatabase(process.env.VOZEB_PRO_INSTALL_TOKEN)).rejects.toMatchObject({ status: 409 });
+        await expect(initializeInstallDatabase(process.env.VOZEB_PRO_INSTALL_TOKEN)).rejects.toEqual(
+            expect.objectContaining<Partial<InstallInitializationError>>({
+                message: "项目已完成安装，禁止重复初始化数据库",
+                status: 409,
+            }),
+        );
         expect(mocks.initializePostgresSchema).not.toHaveBeenCalled();
     });
 
