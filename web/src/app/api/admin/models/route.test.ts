@@ -39,6 +39,21 @@ describe("admin models route", () => {
         expect(fetchMock).toHaveBeenCalledWith("https://sd.example.com/sdapi/v1/sd-models", expect.objectContaining({ headers: {} }));
     });
 
+    it("classifies opaque models from the selected protocol catalog", async () => {
+        const fetchMock = vi.fn(async () => Response.json({ data: [{ id: "opaque-seedance-model", object: "model" }] }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        const response = await POST(request({ baseUrl: "https://video.example.com", apiKey: "secret", protocol: "seedance" }));
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toMatchObject({
+            models: ["opaque-seedance-model"],
+            modelCapabilities: { "opaque-seedance-model": "video" },
+            modelConfigs: { "opaque-seedance-model": { capability: "video", protocol: "seedance", createPath: "/contents/generations/tasks" } },
+        });
+        expect(fetchMock).toHaveBeenCalledWith("https://video.example.com/models", expect.any(Object));
+    });
+
     it("loads every paginated provider model page and returns capability metadata", async () => {
         const fetchMock = vi
             .fn()

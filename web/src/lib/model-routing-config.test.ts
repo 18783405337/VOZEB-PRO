@@ -74,6 +74,43 @@ describe("model routing config", () => {
         expect(models.find((model) => model.id === "stable-video-diffusion")?.capability).toBe("video");
     });
 
+    it("repairs stale health detection for Nano Banana image models", () => {
+        const source = channel("sub2api", ["gemini-3.1-flash-image-preview", "nano-banana-2"]);
+        source.advancedConfig = {
+            modelCapabilities: { "gemini-3.1-flash-image-preview": "text", "nano-banana-2": "text" },
+            modelConfigs: {
+                "gemini-3.1-flash-image-preview": { capability: "text", source: "health" },
+                "nano-banana-2": { capability: "text", source: "health" },
+            },
+        } as never;
+
+        expect(channelModelCapability(source, "gemini-3.1-flash-image-preview")).toBe("image");
+        expect(channelModelCapability(source, "nano-banana-2")).toBe("image");
+        expect(Array.from(channelDetectedCapabilities(source))).toEqual(["image"]);
+    });
+
+    it("uses refreshed protocol catalog metadata to repair an existing logical capability", () => {
+        const source = channel("newapi", ["opaque-media"]);
+        source.advancedConfig = {
+            protocol: "newapi",
+            modelCapabilities: { "opaque-media": "image" },
+            modelConfigs: { "opaque-media": { capability: "image", source: "provider" } },
+        } as never;
+        const existing: LogicalModel[] = [{ id: "opaque-media", name: "opaque-media", capability: "text", enabled: true, bindings: [{ id: "old", channelId: "newapi", upstreamModel: "opaque-media", enabled: true, priority: 1 }] }];
+
+        expect(synchronizeLogicalModelsWithChannels(existing, [source])[0]?.capability).toBe("image");
+    });
+
+    it("uses single-capability protocol catalogs for opaque model names", () => {
+        const video = channel("seedance", ["opaque-video-model"]);
+        video.advancedConfig = { protocol: "seedance" } as never;
+        const image = channel("stable-diffusion", ["opaque-image-model"]);
+        image.advancedConfig = { protocol: "stable-diffusion" } as never;
+
+        expect(channelModelCapability(video, "opaque-video-model")).toBe("video");
+        expect(channelModelCapability(image, "opaque-image-model")).toBe("image");
+    });
+
     it("merges the same upstream model from multiple channels into one logical model", () => {
         const channels = [channel("one", ["models/GPT-IMAGE-2"]), channel("two", ["gpt-image-2"])];
         const existing: LogicalModel[] = [{ id: "gpt-image-2", name: "GPT Image 2", capability: "image", enabled: true, bindings: [{ id: "one:gpt-image-2", channelId: "one", upstreamModel: "gpt-image-2", enabled: true, priority: 1 }] }];

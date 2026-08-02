@@ -1,7 +1,7 @@
 import type { LogicalModel, LogicalModelBinding, LogicalModelCapability, LogicalModelCapabilityProfile, SystemDefaultModels, SystemModelChannel } from "@/lib/auth/store";
 import { resolveGlobalAiOpcPreset } from "@/lib/globalaiopc-catalog";
 import { inferModelCapability, normalizeModelId } from "@/lib/model-capability";
-import { channelConnectionReady, resolveChannelModelConfig } from "@/lib/channel-protocol-registry";
+import { channelConnectionReady, protocolCatalogCapability, resolveChannelModelConfig } from "@/lib/channel-protocol-registry";
 
 const CAPABILITY_DEFAULT_KEYS = {
     text: "textModel",
@@ -24,6 +24,7 @@ export function synchronizeLogicalModelsWithChannels(existingModels: LogicalMode
         {
             upstreamModel: string;
             capability: LogicalModelCapability;
+            authoritative: boolean;
             bindings: Array<{ channel: SystemModelChannel; channelIndex: number; upstreamModel: string }>;
         }
     >();
@@ -32,7 +33,12 @@ export function synchronizeLogicalModelsWithChannels(existingModels: LogicalMode
             const id = rawModelName(upstreamModel);
             if (!id) return;
             const key = normalizeModelName(id);
-            const model = catalog.get(key) || { upstreamModel: id, capability: channelModelCapability(channel, upstreamModel), bindings: [] };
+            const detected = resolveChannelModelCapability(channel, upstreamModel);
+            const model = catalog.get(key) || { upstreamModel: id, capability: detected.capability, authoritative: detected.authoritative, bindings: [] };
+            if ((!model.authoritative && detected.authoritative) || (model.capability === "text" && detected.capability !== "text")) {
+                model.capability = detected.capability;
+                model.authoritative = detected.authoritative;
+            }
             if (!model.bindings.some((binding) => binding.channel.id === channel.id)) model.bindings.push({ channel, channelIndex, upstreamModel });
             catalog.set(key, model);
         });
@@ -64,7 +70,7 @@ export function synchronizeLogicalModelsWithChannels(existingModels: LogicalMode
         return {
             id,
             name: catalogModel.upstreamModel,
-            capability: existing ? normalizeCapability(existing.capability) : catalogModel.capability,
+            capability: catalogModel.authoritative || !existing ? catalogModel.capability : normalizeCapability(existing.capability),
             enabled: existing?.enabled !== false,
             bindings,
         };
@@ -132,9 +138,20 @@ export function capabilityLabel(capability: LogicalModelCapability) {
 }
 
 export function channelModelCapability(channel: Pick<SystemModelChannel, "advancedConfig">, model: string): LogicalModelCapability {
+    return resolveChannelModelCapability(channel, model).capability;
+}
+
+function resolveChannelModelCapability(channel: Pick<SystemModelChannel, "advancedConfig">, model: string) {
     const key = normalizeModelId(model);
-    if (key === "auto") return "text";
-    return channel.advancedConfig?.modelConfigs?.[key]?.capability || channel.advancedConfig?.modelCapabilities?.[key] || inferModelCapability(model);
+    if (key === "auto") return { capability: "text" as const, authoritative: true };
+    const protocolCapability = protocolCatalogCapability(channel.advancedConfig?.protocol || "auto");
+    if (protocolCapability) return { capability: protocolCapability, authoritative: true };
+    const config = channel.advancedConfig?.modelConfigs?.[key];
+    const inferred = inferModelCapability(model);
+    if (config?.source === "health" && inferred !== "text") return { capability: inferred, authoritative: true };
+    const configured = config?.capability || channel.advancedConfig?.modelCapabilities?.[key];
+    if (!config && configured === "text" && inferred !== "text") return { capability: inferred, authoritative: true };
+    return configured ? { capability: configured, authoritative: true } : { capability: inferred, authoritative: false };
 }
 
 export function channelDetectedCapabilities(channel: Pick<SystemModelChannel, "advancedConfig" | "models">) {

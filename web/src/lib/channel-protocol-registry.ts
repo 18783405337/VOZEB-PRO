@@ -242,6 +242,11 @@ export function channelProtocolOptions() {
     return definitions.map(({ id: value, label, description, advanced }) => ({ value, label, description, advanced }));
 }
 
+export function protocolCatalogCapability(protocol: SystemChannelProtocol): LogicalModelCapability | undefined {
+    const definition = channelProtocolDefinition(protocol);
+    return definition.strict && definition.capabilities.length === 1 ? definition.capabilities[0] : undefined;
+}
+
 export function protocolModelConfig(protocol: SystemChannelProtocol, capability: LogicalModelCapability): SystemChannelModelConfig | undefined {
     const definition = channelProtocolDefinition(protocol);
     const operation = definition.operations[capability];
@@ -264,7 +269,7 @@ export function resolveChannelModelConfig(config: SystemChannelAdvancedConfig | 
     const key = normalizeModelId(model);
     const modelConfig = config.modelConfigs?.[key];
     if (modelConfig) return modelConfig;
-    const capability = config.modelCapabilities?.[key] || inferModelCapability(model);
+    const capability = protocolCatalogCapability(config.protocol) || config.modelCapabilities?.[key] || inferModelCapability(model);
     return config.operationConfigs?.[capability];
 }
 
@@ -291,7 +296,7 @@ export function applyChannelProtocol(channel: SystemModelChannel, protocol: Syst
     for (const model of models) {
         const key = normalizeModelId(model);
         const builtIn = definition.builtInModels?.find((item) => normalizeModelId(item.id) === key);
-        const capability = builtIn?.capability || modelConfigs[key]?.capability || modelCapabilities[key] || inferModelCapability(model);
+        const capability = builtIn?.capability || protocolCatalogCapability(protocol) || modelConfigs[key]?.capability || modelCapabilities[key] || inferModelCapability(model);
         const strict = protocolModelConfig(protocol, capability);
         if (strict) modelConfigs[key] = strict;
         modelCapabilities[key] = capability;

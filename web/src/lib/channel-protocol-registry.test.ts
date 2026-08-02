@@ -1,7 +1,17 @@
 import { describe, expect, it } from "vitest";
 
 import type { SystemModelChannel } from "@/lib/auth/store";
-import { applyChannelProtocol, applyModelProtocol, channelCredentialsReady, channelProtocolOptions, channelProtocolValidationErrors, normalizeStrictProtocolModelConfig, protocolAuthHeaders, resolveChannelModelConfig } from "./channel-protocol-registry";
+import {
+    applyChannelProtocol,
+    applyModelProtocol,
+    channelCredentialsReady,
+    channelProtocolDefinition,
+    channelProtocolOptions,
+    channelProtocolValidationErrors,
+    normalizeStrictProtocolModelConfig,
+    protocolAuthHeaders,
+    resolveChannelModelConfig,
+} from "./channel-protocol-registry";
 
 const channel = {
     id: "one",
@@ -17,6 +27,12 @@ describe("channel protocol registry", () => {
     it("exposes SD2 video and Stable Diffusion image as separate protocols", () => {
         const protocols = channelProtocolOptions().map((item) => item.value);
         expect(protocols).toEqual(expect.arrayContaining(["openai", "seedance", "stable-diffusion", "volcengine-video", "sub2api", "newapi", "seedance-special", "custom"]));
+        expect(channelProtocolDefinition("openai").modelCatalogPaths).toEqual(["/v1/models"]);
+        expect(channelProtocolDefinition("sub2api").modelCatalogPaths).toEqual(["/v1/models"]);
+        expect(channelProtocolDefinition("newapi").modelCatalogPaths).toEqual(["/v1/models"]);
+        expect(channelProtocolDefinition("seedance").modelCatalogPaths).toEqual(["/models"]);
+        expect(channelProtocolDefinition("volcengine-video").modelCatalogPaths).toEqual(["/api/v3/models"]);
+        expect(channelProtocolDefinition("stable-diffusion").modelCatalogPaths).toEqual(["/sdapi/v1/sd-models"]);
     });
 
     it("applies independent image edit and image-to-video paths", () => {
@@ -24,6 +40,11 @@ describe("channel protocol registry", () => {
         expect(applyModelProtocol({ capability: "video" }, "seedance")).toMatchObject({ createPath: "/contents/generations/tasks", imageToVideoPath: "/contents/generations/tasks" });
         expect(applyModelProtocol({ capability: "video" }, "volcengine-video")).toMatchObject({ createPath: "/contents/generations/tasks", queryPath: "/contents/generations/tasks/:task_id" });
         expect(applyModelProtocol({ capability: "image" }, "stable-diffusion")).toMatchObject({ createPath: "/sdapi/v1/txt2img", editPath: "/sdapi/v1/img2img", resultField: "images[0]" });
+    });
+
+    it("classifies opaque models from strict single-capability protocol catalogs", () => {
+        expect(applyChannelProtocol({ ...channel, models: ["opaque"] }, "seedance").advancedConfig?.modelCapabilities?.opaque).toBe("video");
+        expect(applyChannelProtocol({ ...channel, models: ["opaque"] }, "stable-diffusion").advancedConfig?.modelCapabilities?.opaque).toBe("image");
     });
 
     it("supports keyless Stable Diffusion channels without an authorization header", () => {

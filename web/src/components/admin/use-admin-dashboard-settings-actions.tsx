@@ -532,14 +532,16 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
         try {
             let channelForTest = channel;
             let detectedModels = channel.models;
-            if (!detectedModels.length || (isGlobalAiOpcBaseUrl(channel.baseUrl) && channel.advancedConfig?.protocol !== "globalaiopc")) {
+            const protocolDefinition = channelProtocolDefinition(channel.advancedConfig?.protocol || "auto");
+            const hasModelCatalog = Boolean(protocolDefinition.builtInModels?.length || protocolDefinition.modelCatalogPaths.length || channel.advancedConfig?.modelCatalogPaths?.length);
+            if (hasModelCatalog || isGlobalAiOpcBaseUrl(channel.baseUrl)) {
                 try {
                     const catalog = await requestAdminModels(channel);
                     const patch = adminModelsChannelPatch(channel, catalog);
                     channelForTest = { ...channel, ...patch };
                     detectedModels = catalog.models;
                 } catch {
-                    detectedModels = [];
+                    channelForTest = channel;
                 }
             }
             detectedModels = uniqueList([...detectedModels, ...suggestedChannelModels(channel)]);

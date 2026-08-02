@@ -46,6 +46,54 @@ describe("admin model catalog", () => {
         ]);
     });
 
+    it("uses the Sub2API catalog shape and falls back to known media model names only when metadata is absent", () => {
+        expect(
+            parseModelCatalog(
+                {
+                    object: "list",
+                    data: [
+                        { id: "gemini-3.1-flash-image-preview", object: "model" },
+                        { id: "nano-banana-2", object: "model" },
+                    ],
+                },
+                "provider",
+                "sub2api",
+            ),
+        ).toEqual([
+            { id: "gemini-3.1-flash-image-preview", capability: "image", source: "provider" },
+            { id: "nano-banana-2", capability: "image", source: "provider" },
+        ]);
+    });
+
+    it("uses New API catalog endpoint metadata before model-name fallback", () => {
+        expect(
+            parseModelCatalog(
+                {
+                    data: [
+                        { id: "opaque-newapi-image", supported_endpoint_types: ["openai", "image-generation"] },
+                        { id: "opaque-newapi-video", supported_endpoint_types: ["openai-video"] },
+                        { id: "image-named-text-model", capability: "text" },
+                    ],
+                },
+                "provider",
+                "newapi",
+            ),
+        ).toEqual([
+            { id: "image-named-text-model", capability: "text", source: "provider" },
+            { id: "opaque-newapi-image", capability: "image", source: "provider" },
+            { id: "opaque-newapi-video", capability: "video", source: "provider" },
+        ]);
+    });
+
+    it("uses a single-capability protocol catalog before model-name inference", () => {
+        const payload = { data: [{ id: "opaque-model", object: "model" }] };
+
+        expect(parseModelCatalog(payload, "provider", "seedance")).toEqual([{ id: "opaque-model", capability: "video", source: "provider" }]);
+        expect(parseModelCatalog(payload, "provider", "stable-diffusion")).toEqual([{ id: "opaque-model", capability: "image", source: "provider" }]);
+        expect(parseModelCatalog(payload, "provider", "openai")).toEqual([{ id: "opaque-model", capability: "text", source: "provider" }]);
+        expect(parseModelConfigs(payload, "seedance")["opaque-model"]).toMatchObject({ capability: "video", source: "provider" });
+    });
+
     it("keeps per-model endpoints when a company catalog mixes OpenAI and SD2.0", () => {
         expect(
             parseModelConfigs({

@@ -163,9 +163,9 @@ export async function POST(request: Request) {
                     return NextResponse.json({ error: sanitizeProviderMessage(readProviderError(payload) || payload.msg || payload.error?.message || `拉取模型失败：${response.status}`, [apiKey]) }, { status: 502 });
                 }
                 catalogSucceeded = true;
-                const pageCatalog = parseModelCatalog(payload);
+                const pageCatalog = parseModelCatalog(payload, "provider", protocol);
                 providerCatalog.splice(0, providerCatalog.length, ...mergeModelCatalogEntries(providerCatalog, pageCatalog));
-                providerConfigs = { ...providerConfigs, ...parseModelConfigs(payload) };
+                providerConfigs = { ...providerConfigs, ...parseModelConfigs(payload, protocol) };
                 nextUrl = nextModelsPageUrl(nextUrl, payload, apiFormat, pageCatalog.at(-1)?.id || providerCatalog.at(-1)?.id || "");
             }
         }

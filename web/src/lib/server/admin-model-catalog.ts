@@ -2,6 +2,7 @@ import { agnesModelCatalog, agnesModelConfigs } from "@/lib/agnes-model-catalog"
 import { capabilityFromHint, inferModelCapability, normalizeModelId, type ModelCatalogEntry, type ModelCatalogSource } from "@/lib/model-capability";
 import type { LogicalModelCapability } from "@/lib/auth/store-types";
 import type { SystemChannelModelConfig, SystemChannelProtocol } from "@/lib/auth/store-types";
+import { protocolCatalogCapability } from "@/lib/channel-protocol-registry";
 
 type ModelsResponse = Record<string, unknown> & {
     data?: unknown;
@@ -32,6 +33,12 @@ const MODEL_METADATA_KEYS = new Set([
     "outputModalities",
     "supported_generation_methods",
     "supportedGenerationMethods",
+    "supported_endpoint_types",
+    "supportedEndpointTypes",
+    "supported_endpoints",
+    "supportedEndpoints",
+    "endpoints",
+    "interfaces",
 ]);
 
 export function buildModelsUrl(baseUrl: string, apiFormat: "openai" | "gemini", globalAiOpc = false) {
@@ -66,22 +73,22 @@ export function parseModels(payload: ModelsResponse) {
     return parseModelCatalog(payload).map((entry) => entry.id);
 }
 
-export function parseModelCatalog(payload: unknown, source: ModelCatalogSource = "provider") {
+export function parseModelCatalog(payload: unknown, source: ModelCatalogSource = "provider", protocol?: SystemChannelProtocol) {
     return mergeModelCatalogEntries(
         ...collectModelValues(payload).map(({ id, metadata }) => [
             {
                 id,
-                capability: capabilityFromModelMetadata(metadata) || inferModelCapability(id),
+                capability: resolveCatalogCapability(id, metadata, protocol),
                 source,
             },
         ]),
     );
 }
 
-export function parseModelConfigs(payload: unknown) {
+export function parseModelConfigs(payload: unknown, protocol?: SystemChannelProtocol) {
     return Object.fromEntries(
         collectModelValues(payload).map(({ id, metadata }) => {
-            const capability = capabilityFromModelMetadata(metadata) || inferModelCapability(id);
+            const capability = resolveCatalogCapability(id, metadata, protocol);
             return [normalizeModelId(id), { ...modelConfigFromMetadata(metadata, capability), source: "provider" as const }] as const;
         }),
     ) as Record<string, SystemChannelModelConfig>;
@@ -225,6 +232,11 @@ function capabilityFromModelMetadata(record: Record<string, unknown> | undefined
         record.capabilities,
         record.supported_generation_methods,
         record.supportedGenerationMethods,
+        record.supported_endpoint_types,
+        record.supportedEndpointTypes,
+        record.supported_endpoints,
+        record.supportedEndpoints,
+        record.endpoints,
         record.interfaces,
     ];
     for (const hint of directHints) {
@@ -236,6 +248,10 @@ function capabilityFromModelMetadata(record: Record<string, unknown> | undefined
     const modalities = record.modalities ?? record.modality;
     if (!Array.isArray(modalities) || modalities.length <= 1) return capabilityFromHint(modalities);
     return undefined;
+}
+
+function resolveCatalogCapability(model: string, metadata: Record<string, unknown> | undefined, protocol?: SystemChannelProtocol) {
+    return capabilityFromModelMetadata(metadata) || (protocol ? protocolCatalogCapability(protocol) : undefined) || inferModelCapability(model);
 }
 
 function modelConfigFromMetadata(record: Record<string, unknown> | undefined, capability: LogicalModelCapability): SystemChannelModelConfig {
