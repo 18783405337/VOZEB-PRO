@@ -1,4 +1,3 @@
-import { lookup } from "node:dns/promises";
 import { NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth/session";
@@ -6,7 +5,8 @@ import { UnsupportedMediaContentError } from "@/lib/server/media-content-validat
 import { acquireMediaConcurrency, withMediaConcurrency } from "@/lib/server/media-concurrency";
 import { MediaProxyResponseError, fetchSafeUpstreamMedia } from "@/lib/server/media-proxy-service";
 import { MAX_MEDIA_PROXY_BYTES, MAX_MEDIA_PROXY_RANGE_BYTES, normalizeMediaProxyRange } from "@/lib/server/media-response-limit";
-import { checkMediaProxyRateLimit, isPublicIpAddress, rateLimitHeaders } from "@/lib/server/security";
+import { fetchSafeOutbound } from "@/lib/server/safe-outbound-fetch";
+import { checkMediaProxyRateLimit, isSafeOutboundUrl, rateLimitHeaders } from "@/lib/server/security";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -66,11 +66,10 @@ async function readTargetUrl(request: Request) {
 async function fetchMedia(target: URL, method: "GET" | "HEAD", range: string | null, signal: AbortSignal) {
     let current = target;
     for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects += 1) {
-        if (!(await isSafeTarget(current))) throw new Error("Unsafe media url");
-        const response = await fetch(current, {
+        const response = await fetchSafeOutbound(current, {
             method,
             headers: {
-                "User-Agent": "VOZEB-PRO-Media-Proxy/0.0.3",
+                "User-Agent": "VOZEB-PRO-Media-Proxy/0.0.4",
                 ...(range ? { Range: range } : {}),
             },
             cache: "no-store",
@@ -100,13 +99,5 @@ function mediaHeaders(source: Headers, mimeType: string) {
 }
 
 async function isSafeTarget(target: URL) {
-    if (!["http:", "https:"].includes(target.protocol) || target.username || target.password) return false;
-    const host = target.hostname.toLowerCase();
-    if (!host || host === "localhost" || host.endsWith(".localhost")) return false;
-    try {
-        const addresses = await lookup(host, { all: true, verbatim: true });
-        return addresses.length > 0 && addresses.every((item) => isPublicIpAddress(item.address));
-    } catch {
-        return false;
-    }
+    return isSafeOutboundUrl(target.toString(), { allowCredentials: false });
 }

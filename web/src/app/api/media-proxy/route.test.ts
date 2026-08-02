@@ -7,14 +7,14 @@ const mocks = vi.hoisted(() => ({
     release: vi.fn(),
 }));
 
-vi.mock("node:dns/promises", () => ({ lookup: vi.fn(async () => [{ address: "203.0.113.10", family: 4 }]) }));
 vi.mock("@/lib/auth/session", () => ({ getCurrentUser: vi.fn(async () => ({ id: "user-one" })) }));
 vi.mock("@/lib/server/security", () => ({
     checkMediaProxyRateLimit: mocks.checkMediaProxyRateLimit,
-    isPublicIpAddress: vi.fn(() => true),
+    isSafeOutboundUrl: vi.fn(async () => true),
     rateLimitHeaders: vi.fn(() => ({ "Retry-After": "60" })),
 }));
 vi.mock("@/lib/server/media-concurrency", () => ({ acquireMediaConcurrency: mocks.acquire, withMediaConcurrency: mocks.wrap }));
+vi.mock("@/lib/server/safe-outbound-fetch", () => ({ fetchSafeOutbound: (url: string | URL, init?: RequestInit) => fetch(url, init) }));
 
 import { GET, HEAD } from "./route";
 import { MEDIA_SNIFF_RANGE } from "@/lib/server/media-content-validation";

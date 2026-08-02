@@ -1,7 +1,7 @@
 import { open } from "node:fs/promises";
 
 import { fetchInternalApi } from "@/lib/server/internal-origin";
-import { isSafeOutboundUrl } from "@/lib/server/security";
+import { fetchSafeOutbound } from "@/lib/server/safe-outbound-fetch";
 
 export async function downloadMediaToFile(url: string, path: string, input: { origin: string; cookie?: string; internalHeaders?: HeadersInit; maxBytes: number; timeoutMs?: number }) {
     const source = url.trim();
@@ -40,8 +40,7 @@ export async function downloadMediaToFile(url: string, path: string, input: { or
 async function fetchExternalMedia(initialUrl: string, timeoutMs: number) {
     let target = initialUrl;
     for (let redirects = 0; redirects <= 3; redirects += 1) {
-        if (!(await isSafeOutboundUrl(target))) throw new Error("媒体地址不安全");
-        const response = await fetch(target, { redirect: "manual", signal: AbortSignal.timeout(timeoutMs) });
+        const response = await fetchSafeOutbound(target, { redirect: "manual", signal: AbortSignal.timeout(timeoutMs) });
         if (![301, 302, 303, 307, 308].includes(response.status)) return response;
         const location = response.headers.get("location");
         if (!location) throw new Error("媒体重定向地址无效");
