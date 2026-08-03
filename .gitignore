@@ -4,6 +4,7 @@
 out/
 node_modules/
 .pnpm-store/
+/pnpm-lock.yaml
 .env*
 !.env.example
 .data/

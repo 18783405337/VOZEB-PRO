@@ -17,6 +17,8 @@ describe("low-memory release type-check contract", () => {
         const productionBuild = readFileSync(path.join(webRoot, "scripts/production-build.mjs"), "utf8");
         const packageJson = JSON.parse(readFileSync(path.join(webRoot, "package.json"), "utf8"));
         const nextConfig = readFileSync(path.join(webRoot, "next.config.ts"), "utf8");
+        const rootGitignore = readFileSync(path.join(repoRoot, ".gitignore"), "utf8");
+        const docsNextConfig = readFileSync(path.join(repoRoot, "docs/next.config.mjs"), "utf8");
         const standaloneStart = readFileSync(path.join(webRoot, "scripts/start-standalone.mjs"), "utf8");
         const dockerfile = readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
 
@@ -36,6 +38,11 @@ describe("low-memory release type-check contract", () => {
         expect(productionBuild).toContain('"tsconfig.json", "next-env.d.ts"');
         expect(releaseCheck).toContain("prepareStandaloneAssets");
         expect(nextConfig).toContain("typescript: { ignoreBuildErrors: skipBuildTypeCheck }");
+        expect(nextConfig).toContain("outputFileTracingRoot: webDir");
+        expect(nextConfig).toContain("turbopack: { root: webDir }");
+        expect(rootGitignore.split(/\r?\n/)).toContain("/pnpm-lock.yaml");
+        expect(docsNextConfig).toContain("outputFileTracingRoot: docsRoot");
+        expect(docsNextConfig).toContain("turbopack: { root: docsRoot }");
         expect(standaloneStart).toContain('process.env.NEXT_DIST_DIR?.trim() || ".next"');
         expect(standaloneStart).toContain("prepareStandaloneAssets");
         expect(dockerfile).toContain("pnpm run typecheck && NEXT_SKIP_BUILD_TYPECHECK=1 pnpm run build");
