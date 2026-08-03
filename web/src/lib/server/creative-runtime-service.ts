@@ -17,6 +17,8 @@ import { getCreativeWorkbenchSessionDetail, listCreativeWorkbenchSessionSummarie
 import type { WorkbenchWorkspace } from "@/lib/workbench-session-contract";
 import { normalizeWorkbenchAgentAttachments, type WorkbenchAgentAttachment } from "@/lib/workbench-agent-attachment";
 import { WORKBENCH_PUBLIC_MESSAGE_VISIBILITY } from "@/lib/workbench-session-contract";
+import { deleteCreativeConversationAggregates } from "@/lib/server/creative-entity-deletion-store";
+import { deleteUserLocalMediaAssets } from "@/lib/server/local-media-storage";
 
 export class CreativeRuntimeServiceError extends Error {
     constructor(
@@ -76,6 +78,14 @@ export async function updateConversationForUser(userId: string, id: string, valu
     const status = input.status === undefined ? undefined : normalizeStatus(input.status);
     if (input.status !== undefined && !status) throw new CreativeRuntimeServiceError("会话状态不正确", 400);
     return updateCreativeConversation(id, userId, { title, status });
+}
+
+export async function deleteConversationsForUser(userId: string, value: unknown) {
+    const ids = normalizeIds(value, 100);
+    if (!ids.length) return 0;
+    const result = await deleteCreativeConversationAggregates(userId, ids);
+    await deleteUserLocalMediaAssets(userId, result.mediaStorageKeys);
+    return result.deletedConversations;
 }
 
 export async function listMessagesForUser(userId: string, id: string, afterSequence: number, limit: number, beforeSequence = 0) {
@@ -263,4 +273,8 @@ function object(value: unknown) {
 
 function optionalText(value: unknown, max: number) {
     return typeof value === "string" ? value.trim().slice(0, max) || undefined : undefined;
+}
+
+function normalizeIds(value: unknown, limit: number) {
+    return Array.from(new Set((Array.isArray(value) ? value : []).map((item) => optionalText(item, 160)).filter((item): item is string => Boolean(item)))).slice(0, limit);
 }

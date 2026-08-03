@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
     getCurrentUser: vi.fn(),
     getWorkbenchSessionForUser: vi.fn(),
+    deleteConversationsForUser: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session", () => ({ getCurrentUser: mocks.getCurrentUser }));
@@ -18,15 +19,24 @@ vi.mock("@/lib/server/creative-runtime-service", () => ({
     getConversationForUser: vi.fn(),
     getWorkbenchSessionForUser: mocks.getWorkbenchSessionForUser,
     updateConversationForUser: vi.fn(),
+    deleteConversationsForUser: mocks.deleteConversationsForUser,
 }));
 
-import { GET } from "./route";
+import { DELETE, GET } from "./route";
 
 describe("creative workbench conversation detail route", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.getCurrentUser.mockResolvedValue({ id: "user-one" });
         mocks.getWorkbenchSessionForUser.mockResolvedValue({ id: "conversation-one", recordId: "record-one", messages: [], hasMore: false });
+        mocks.deleteConversationsForUser.mockResolvedValue(1);
+    });
+
+    it("deletes one owned conversation instead of archiving it", async () => {
+        const response = await DELETE(new Request("http://localhost/api/creative/conversations/conversation-one", { method: "DELETE" }), { params: Promise.resolve({ id: "conversation-one" }) });
+
+        expect(mocks.deleteConversationsForUser).toHaveBeenCalledWith("user-one", ["conversation-one"]);
+        await expect(response.json()).resolves.toMatchObject({ code: 0, data: { deleted: true } });
     });
 
     it("loads one owned workbench conversation on demand", async () => {

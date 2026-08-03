@@ -71,6 +71,12 @@ export async function withJsonDataFileLock<T>(fileName: string, callback: () => 
     }
 }
 
+export function withJsonDataFileLocks<T>(fileNames: string[], callback: () => Promise<T>, options: { timeoutMs?: number } = {}) {
+    const names = Array.from(new Set(fileNames.map((name) => name.trim()).filter(Boolean))).sort();
+    const acquire = (index: number): Promise<T> => (index >= names.length ? callback() : withJsonDataFileLock(names[index], () => acquire(index + 1), options));
+    return acquire(0);
+}
+
 export async function copyDataFile(sourceFileName: string, targetFileName: string) {
     const targetPath = resolveServerDataPath(targetFileName);
     await mkdir(dirname(targetPath), { recursive: true });

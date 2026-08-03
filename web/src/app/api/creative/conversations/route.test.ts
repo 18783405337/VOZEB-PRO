@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
     getCurrentUser: vi.fn(),
     listWorkbenchSessionsForUser: vi.fn(),
+    deleteConversationsForUser: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session", () => ({ getCurrentUser: mocks.getCurrentUser }));
@@ -18,9 +19,10 @@ vi.mock("@/lib/server/creative-runtime-service", () => ({
     },
     listConversationsForUser: vi.fn(),
     listWorkbenchSessionsForUser: mocks.listWorkbenchSessionsForUser,
+    deleteConversationsForUser: mocks.deleteConversationsForUser,
 }));
 
-import { GET } from "./route";
+import { DELETE, GET } from "./route";
 
 describe("creative workbench conversation summaries route", () => {
     beforeEach(() => {
@@ -30,6 +32,7 @@ describe("creative workbench conversation summaries route", () => {
             { id: "one", title: "一", lastPrompt: "一", searchText: "一", updatedAt: 2 },
             { id: "two", title: "二", lastPrompt: "二", searchText: "二", updatedAt: 1 },
         ]);
+        mocks.deleteConversationsForUser.mockResolvedValue(2);
     });
 
     it("returns one bounded summary page without expanding conversations", async () => {
@@ -46,5 +49,19 @@ describe("creative workbench conversation summaries route", () => {
         const response = await GET(new Request("http://localhost/api/creative/conversations?view=workbench&workspace=image"));
         expect(response.status).toBe(401);
         expect(mocks.listWorkbenchSessionsForUser).not.toHaveBeenCalled();
+    });
+
+    it("hard-deletes a bounded conversation batch for the current user", async () => {
+        const response = await DELETE(
+            new Request("http://localhost/api/creative/conversations", {
+                method: "DELETE",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ ids: ["one", "two"] }),
+            }),
+        );
+
+        expect(response.status).toBe(200);
+        expect(mocks.deleteConversationsForUser).toHaveBeenCalledWith("user-one", ["one", "two"]);
+        await expect(response.json()).resolves.toMatchObject({ code: 0, data: { deleted: 2 } });
     });
 });

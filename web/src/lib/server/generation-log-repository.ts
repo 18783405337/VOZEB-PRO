@@ -5,7 +5,7 @@ import { dirname, resolve, sep } from "node:path";
 import { ensureMediaFileExtension, mediaFileExtension } from "@/lib/media-file";
 import type { GenerationLogReferenceSnapshot, GenerationLogRequestSnapshot, GenerationLogSlotSnapshot, GenerationLogSnapshotParameters } from "@/lib/generation-log-snapshot";
 import { isPostgresDatabaseEnabled, type QueryExecutor } from "@/lib/server/database";
-import { readJsonDataFile, writeJsonDataFile } from "@/lib/server/data-adapter";
+import { readJsonDataFile, withJsonDataFileLock, writeJsonDataFile } from "@/lib/server/data-adapter";
 import { normalizeGeneratedImageBytes } from "@/lib/server/generated-image-normalizer";
 import { createDatedMediaPath, GENERATION_MEDIA_ROOT } from "@/lib/server/local-media-storage";
 import { deleteLocalMediaRegistrations, getLocalMediaRegistration, registerLocalMediaAsset } from "@/lib/server/local-media-registry";
@@ -265,12 +265,14 @@ export async function readGenerationLogDb(): Promise<GenerationLogDatabase> {
 }
 
 export async function mutateGenerationLogDb<T>(mutator: (db: GenerationLogDatabase) => T | Promise<T>) {
-    const run = mutationQueue.then(async () => {
-        const db = await readGenerationLogDb();
-        const result = await mutator(db);
-        await writeGenerationLogDb(db);
-        return result;
-    });
+    const run = mutationQueue.then(() =>
+        withJsonDataFileLock(LOG_DATA_FILE, async () => {
+            const db = await readGenerationLogDb();
+            const result = await mutator(db);
+            await writeGenerationLogDb(db);
+            return result;
+        }),
+    );
     mutationQueue = run.then(
         () => undefined,
         () => undefined,

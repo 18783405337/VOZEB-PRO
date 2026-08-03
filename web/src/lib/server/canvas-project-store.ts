@@ -1,7 +1,7 @@
 import type { CanvasProject, CanvasProjectSummary } from "@/lib/canvas-project-contract";
 import { summarizeCanvasProjectRecord } from "@/lib/canvas-project-summary";
 import { summarizeCanvasProject, type CreateOverviewMedia, type CreateOverviewProject } from "@/lib/create-workbench-overview";
-import { readJsonDataFile, writeJsonDataFile } from "@/lib/server/data-adapter";
+import { readJsonDataFile, withJsonDataFileLock, writeJsonDataFile } from "@/lib/server/data-adapter";
 import { ensurePostgresSchema, getDatabaseProvider, postgresQuery } from "@/lib/server/database";
 
 type CanvasProjectRecord = { userId: string; project: CanvasProject };
@@ -140,34 +140,12 @@ export async function updateCanvasProject(userId: string, project: CanvasProject
     return project;
 }
 
-export async function deleteCanvasProjects(userId: string, ids: string[]) {
-    const uniqueIds = Array.from(new Set(ids.map((id) => id.trim()).filter(Boolean)));
-    if (!uniqueIds.length) return 0;
-    if (getDatabaseProvider() === "postgres") {
-        await ensurePostgresSchema();
-        const result = await postgresQuery("DELETE FROM canvas_projects WHERE user_id = $1 AND id = ANY($2::text[]) RETURNING id", [userId, uniqueIds]);
-        return result.rows.length;
-    }
-    let deleted = 0;
-    await mutateDatabase((db) => ({
-        ...db,
-        projects: db.projects.filter((record) => {
-            if (record.userId === userId && uniqueIds.includes(record.project.id)) {
-                deleted += 1;
-                return false;
-            }
-            return true;
-        }),
-    }));
-    return deleted;
-}
-
 function readDatabase() {
     return readJsonDataFile<CanvasProjectDatabase>(FILE_NAME, { version: 1, projects: [] });
 }
 
 function mutateDatabase(mutator: (database: CanvasProjectDatabase) => CanvasProjectDatabase) {
-    const operation = mutationQueue.then(async () => writeJsonDataFile(FILE_NAME, mutator(await readDatabase())));
+    const operation = mutationQueue.then(() => withJsonDataFileLock(FILE_NAME, async () => writeJsonDataFile(FILE_NAME, mutator(await readDatabase()))));
     mutationQueue = operation.catch(() => undefined);
     return operation;
 }

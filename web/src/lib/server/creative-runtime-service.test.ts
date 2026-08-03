@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => ({
     listCreativeWorkbenchSessionSummaries: vi.fn(),
     getLocalMediaRegistrations: vi.fn(),
     writePersistentMediaDataUrl: vi.fn(),
+    deleteCreativeConversationAggregates: vi.fn(),
+    deleteUserLocalMediaAssets: vi.fn(),
 }));
 
 vi.mock("@/lib/server/creative-runtime-store", () => ({
@@ -27,8 +29,10 @@ vi.mock("@/lib/server/creative-workbench-session-store", () => ({
     getCreativeWorkbenchSessionDetail: mocks.getCreativeWorkbenchSessionDetail,
     listCreativeWorkbenchSessionSummaries: mocks.listCreativeWorkbenchSessionSummaries,
 }));
+vi.mock("@/lib/server/creative-entity-deletion-store", () => ({ deleteCreativeConversationAggregates: mocks.deleteCreativeConversationAggregates }));
+vi.mock("@/lib/server/local-media-storage", () => ({ deleteUserLocalMediaAssets: mocks.deleteUserLocalMediaAssets }));
 
-import { appendWorkbenchExchangeForUser, getWorkbenchSessionForUser, listWorkbenchSessionsForUser, registerGenerationLogAssetsForUser, uploadAssetForUser } from "./creative-runtime-service";
+import { appendWorkbenchExchangeForUser, deleteConversationsForUser, getWorkbenchSessionForUser, listWorkbenchSessionsForUser, registerGenerationLogAssetsForUser, uploadAssetForUser } from "./creative-runtime-service";
 
 function file(name: string, type: string, size = 4): File {
     return { name, type, size, arrayBuffer: async () => new Uint8Array(Math.min(size, 4)).buffer } as File;
@@ -42,7 +46,16 @@ describe("创作会话素材上传", () => {
         mocks.listCreativeWorkbenchSessionSummaries.mockReset().mockResolvedValue([]);
         mocks.getLocalMediaRegistrations.mockReset().mockResolvedValue([]);
         mocks.writePersistentMediaDataUrl.mockReset().mockResolvedValue({ token: "persistent-one.mp4", storage: "local", bytes: 4, mimeType: "video/mp4" });
+        mocks.deleteCreativeConversationAggregates.mockReset().mockResolvedValue({ deletedConversations: 1, deletedProjects: 0, mediaStorageKeys: ["permanent/one.png"] });
+        mocks.deleteUserLocalMediaAssets.mockReset().mockResolvedValue({ deletedFiles: 1, deletedBytes: 4, blocked: [] });
         mocks.registerCreativeAssets.mockReset().mockImplementation(async ([input]) => [{ ...input, id: "asset-one", status: "ready", metadata: input.metadata || {}, createdAt: 1, updatedAt: 1 }]);
+    });
+
+    it("hard-deletes conversations before reclaiming only their candidate media", async () => {
+        await expect(deleteConversationsForUser("user-one", ["conversation-one", "conversation-one"])).resolves.toBe(1);
+
+        expect(mocks.deleteCreativeConversationAggregates).toHaveBeenCalledWith("user-one", ["conversation-one"]);
+        expect(mocks.deleteUserLocalMediaAssets).toHaveBeenCalledWith("user-one", ["permanent/one.png"]);
     });
 
     it("stores image, video and audio as stable assets without persisting base64", async () => {

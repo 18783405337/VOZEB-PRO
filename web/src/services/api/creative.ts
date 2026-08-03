@@ -94,8 +94,12 @@ export function updateCreativeConversation(conversationId: string, patch: { titl
     }).then((data) => data.conversation);
 }
 
-export function archiveCreativeConversation(conversationId: string) {
-    return updateCreativeConversation(conversationId, { status: "archived" });
+export function deleteCreativeConversations(conversationIds: string[]) {
+    return request<{ deleted: number }>("/api/creative/conversations", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: conversationIds }),
+    });
 }
 
 type CreativeRunHandlers = {

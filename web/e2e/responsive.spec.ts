@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { expect, test } from "@playwright/test";
 
 test("creative workspaces remain usable without horizontal overflow in light and dark themes", async ({ page, request }) => {
@@ -23,6 +25,60 @@ test("creative workspaces remain usable without horizontal overflow in light and
     await page.goto("/create", { waitUntil: "domcontentloaded" });
     await expect(page.locator("html")).toHaveClass(/dark/);
     await expectNoHorizontalOverflow(page, "/create dark");
+});
+
+test("conversation and Canvas deletion stay deleted after refresh", async ({ page, request }) => {
+    const suffix = randomUUID().slice(0, 8);
+    const conversationTitles = [`删除回归 A ${suffix}`, `删除回归 B ${suffix}`, `删除回归 C ${suffix}`];
+    const conversations = await Promise.all(
+        conversationTitles.map(async (title) => {
+            const response = await request.post("/api/creative/conversations", { data: { surface: "chat", source: "agent", title } });
+            expect(response.ok(), await response.text()).toBe(true);
+            return ((await response.json()) as { data: { conversation: { id: string } } }).data.conversation;
+        }),
+    );
+
+    await page.goto(`/create?conversationId=${encodeURIComponent(conversations[0].id)}`, { waitUntil: "domcontentloaded" });
+    let historyDialog = await openCreativeHistory(page);
+    await expect(historyDialog.getByText(conversationTitles[0], { exact: true })).toBeVisible();
+    await historyDialog.getByText(conversationTitles[0], { exact: true }).hover();
+    await historyDialog.getByRole("button", { name: `管理${conversationTitles[0]}` }).click();
+    await page.getByRole("menuitem", { name: "删除" }).click();
+    const conversationDialog = page.getByRole("dialog", { name: "删除这条对话？" });
+    await expect(conversationDialog).toContainText("永久删除消息、生成记录");
+    await expectDialogWithinViewport(conversationDialog);
+    await conversationDialog.getByRole("button", { name: /删\s*除/ }).click();
+    await expect(historyDialog.getByText(conversationTitles[0], { exact: true })).toHaveCount(0);
+    expect((await request.get(`/api/creative/conversations/${conversations[0].id}`)).status()).toBe(404);
+
+    await historyDialog.getByRole("button", { name: "批量管理" }).click();
+    await historyDialog.getByRole("checkbox", { name: `选择${conversationTitles[1]}` }).check();
+    await historyDialog.getByRole("checkbox", { name: `选择${conversationTitles[2]}` }).check();
+    await historyDialog.getByRole("button", { name: "批量删除" }).click();
+    const batchDialog = page.getByRole("dialog", { name: "删除 2 条对话？" });
+    await expectDialogWithinViewport(batchDialog);
+    await batchDialog.getByRole("button", { name: /删\s*除/ }).click();
+    await page.reload({ waitUntil: "domcontentloaded" });
+    historyDialog = await openCreativeHistory(page);
+    for (const title of conversationTitles) await expect(historyDialog.getByText(title, { exact: true })).toHaveCount(0);
+
+    const canvasTitle = `删除画布回归 ${suffix}`;
+    const canvasResponse = await request.post("/api/canvas/projects", { data: { title: canvasTitle, project: { nodes: [], connections: [] } } });
+    expect(canvasResponse.ok(), await canvasResponse.text()).toBe(true);
+    const canvasProject = ((await canvasResponse.json()) as { data: { project: { id: string; creativeConversationId: string } } }).data.project;
+    await page.goto("/canvas", { waitUntil: "domcontentloaded" });
+    const canvasCard = page.locator("article").filter({ hasText: canvasTitle });
+    await expect(canvasCard).toBeVisible();
+    await canvasCard.getByLabel("删除", { exact: true }).click();
+    const canvasDialog = page.getByRole("dialog", { name: "删除画布？" });
+    await expect(canvasDialog).toContainText("永久删除 1 个画布");
+    await expectDialogWithinViewport(canvasDialog);
+    await canvasDialog.getByRole("button", { name: /删\s*除/ }).click();
+    await expect(canvasCard).toHaveCount(0);
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page.getByText(canvasTitle, { exact: true })).toHaveCount(0);
+    expect((await request.get(`/api/canvas/projects/${canvasProject.id}`)).status()).toBe(404);
+    expect((await request.get(`/api/creative/conversations/${canvasProject.creativeConversationId}`)).status()).toBe(404);
 });
 
 test("eight billing plans remain dense and usable across desktop and mobile", async ({ page }, testInfo) => {
@@ -124,4 +180,25 @@ async function expectNoHorizontalOverflow(page: import("@playwright/test").Page,
             .filter((item) => item.visible),
     );
     for (const control of controls) expect(control.scrollWidth, `${label} control overflow`).toBeLessThanOrEqual(control.clientWidth + 1);
+}
+
+async function expectDialogWithinViewport(dialog: import("@playwright/test").Locator) {
+    const bounds = await dialog.boundingBox();
+    expect(bounds).not.toBeNull();
+    const viewport = dialog.page().viewportSize();
+    expect(viewport).not.toBeNull();
+    expect(bounds!.x).toBeGreaterThanOrEqual(0);
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport!.width + 1);
+}
+
+async function openCreativeHistory(page: import("@playwright/test").Page) {
+    const dialog = page.getByRole("dialog", { name: "创作历史" });
+    await expect
+        .poll(async () => {
+            if (await dialog.isVisible().catch(() => false)) return true;
+            await page.getByRole("button", { name: "创作历史" }).click();
+            return dialog.isVisible().catch(() => false);
+        })
+        .toBe(true);
+    return dialog;
 }

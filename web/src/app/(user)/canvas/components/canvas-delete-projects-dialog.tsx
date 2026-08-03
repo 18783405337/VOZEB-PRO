@@ -41,7 +41,7 @@ export function CanvasDeleteProjectsDialog() {
                 </>
             }
         >
-            <p className="text-sm text-stone-500">将删除 {ids.length} 个画布，里面的节点和连线也会一起移除。</p>
+            <p className="text-sm text-stone-500">将永久删除 {ids.length} 个画布、节点、连线和专属生成记录；仍被素材库、其他项目或作品引用的媒体会保留。</p>
         </Modal>
     );
 }

@@ -7,10 +7,11 @@ const mocks = vi.hoisted(() => ({ files: new Map<string, unknown>(), provider: "
 vi.mock("@/lib/server/database", () => ({ ensurePostgresSchema: vi.fn(), getDatabaseProvider: vi.fn(() => mocks.provider), postgresQuery: mocks.postgresQuery }));
 vi.mock("@/lib/server/data-adapter", () => ({
     readJsonDataFile: vi.fn(async (name: string, fallback: unknown) => structuredClone(mocks.files.has(name) ? mocks.files.get(name) : fallback)),
+    withJsonDataFileLock: vi.fn(async (_name: string, callback: () => Promise<unknown>) => callback()),
     writeJsonDataFile: vi.fn(async (name: string, value: unknown) => mocks.files.set(name, structuredClone(value))),
 }));
 
-import { createCanvasProject, deleteCanvasProjects, getCanvasProject, getLatestCanvasProjectOverview, listCanvasProjects, listCanvasProjectSummaries, updateCanvasProject } from "./canvas-project-store";
+import { createCanvasProject, getCanvasProject, getLatestCanvasProjectOverview, listCanvasProjects, listCanvasProjectSummaries, updateCanvasProject } from "./canvas-project-store";
 
 describe("canvas project file provider", () => {
     beforeEach(() => {
@@ -30,7 +31,6 @@ describe("canvas project file provider", () => {
         const updated = { ...project("one", "已更新"), nodes: [{ id: "node-one" }] as CanvasProject["nodes"], updatedAt: new Date(Date.now() + 1000).toISOString() };
         await updateCanvasProject("user-one", updated);
         expect(await getCanvasProject("one", "user-one")).toMatchObject({ title: "已更新", nodes: [{ id: "node-one" }] });
-        expect(await deleteCanvasProjects("user-one", ["one", "two"])).toBe(1);
     });
 
     it("returns file-provider summaries without changing stored project details", async () => {

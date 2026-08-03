@@ -1,7 +1,7 @@
 import { nanoid } from "nanoid";
 
 import { creativeConversationSourceForSurface, normalizeCreativeConversationSource, type CreativeAsset, type CreativeConversation, type CreativeMessage, type CreativeRunEvent, type CreativeSurface } from "@/lib/creative-runtime-contract";
-import { readJsonDataFile, writeJsonDataFile } from "@/lib/server/data-adapter";
+import { readJsonDataFile, withJsonDataFileLock, writeJsonDataFile } from "@/lib/server/data-adapter";
 import { ensurePostgresSchema, withPostgresTransaction, type QueryExecutor } from "@/lib/server/database";
 import type { StoredGenerationTaskRecord } from "@/lib/server/generation-task-store";
 
@@ -397,7 +397,7 @@ export function mutateRuntimeFile(mutator: (db: RuntimeFileDatabase) => RuntimeF
 }
 
 export function queueRuntimeFileOperation<T>(operation: () => Promise<T>) {
-    const run = runtimeMutationQueue.then(operation);
+    const run = runtimeMutationQueue.then(() => withJsonDataFileLock(RUNTIME_FILE, operation));
     runtimeMutationQueue = run.then(
         () => undefined,
         () => undefined,

@@ -1,10 +1,10 @@
 import { nanoid } from "nanoid";
 
 import type { CanvasProject, CreateCanvasProjectInput } from "@/lib/canvas-project-contract";
-import { createCanvasProject, CanvasProjectStoreError, deleteCanvasProjects, getCanvasProject, listCanvasProjectSummaries, updateCanvasProject } from "@/lib/server/canvas-project-store";
-import { collectLocalMediaStorageKeys } from "@/lib/server/local-media-references";
+import { createCanvasProject, CanvasProjectStoreError, getCanvasProject, listCanvasProjectSummaries, updateCanvasProject } from "@/lib/server/canvas-project-store";
 import { deleteUserLocalMediaAssets } from "@/lib/server/local-media-storage";
-import { createCreativeConversation, updateCreativeConversation } from "@/lib/server/creative-runtime-store";
+import { createCreativeConversation } from "@/lib/server/creative-runtime-store";
+import { deleteCanvasProjectAggregates } from "@/lib/server/creative-entity-deletion-store";
 
 const MAX_PROJECT_BYTES = 5 * 1024 * 1024;
 
@@ -57,7 +57,7 @@ export async function createCanvasProjectForUser(userId: string, value: unknown)
     try {
         return await createCanvasProject(userId, project);
     } catch (error) {
-        await updateCreativeConversation(conversation.id, userId, { status: "archived" }).catch(() => null);
+        await deleteCanvasProjectAggregates(userId, [id]).catch(() => null);
         throw error;
     }
 }
@@ -78,13 +78,9 @@ export async function deleteCanvasProjectsForUser(userId: string, value: unknown
               .filter(Boolean)
               .slice(0, 100)
         : [];
-    const projects = (await Promise.all(ids.map((id) => getCanvasProject(id, userId)))).filter(Boolean);
-    const deleted = await deleteCanvasProjects(userId, ids);
-    if (deleted) {
-        await Promise.all(projects.map((project) => (project?.creativeConversationId ? updateCreativeConversation(project.creativeConversationId, userId, { status: "archived" }) : Promise.resolve(null))));
-    }
-    await deleteUserLocalMediaAssets(userId, projects.flatMap(collectLocalMediaStorageKeys));
-    return deleted;
+    const result = await deleteCanvasProjectAggregates(userId, ids);
+    await deleteUserLocalMediaAssets(userId, result.mediaStorageKeys);
+    return result.deletedProjects;
 }
 
 function normalizeProject(value: Record<string, unknown>, current: CanvasProject): CanvasProject {

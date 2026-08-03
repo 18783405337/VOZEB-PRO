@@ -333,9 +333,9 @@ export default function CreatePage() {
                             throw error;
                         }
                     }}
-                    onArchive={async (ids) => {
+                    onDelete={async (ids) => {
                         try {
-                            await agent.archiveConversations(ids);
+                            await agent.deleteConversations(ids);
                             message.success(ids.length > 1 ? `已删除 ${ids.length} 条对话` : "对话已删除");
                         } catch (error) {
                             message.error(error instanceof Error ? error.message : "删除对话失败");

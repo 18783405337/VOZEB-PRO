@@ -14,17 +14,17 @@ type Props = {
     onNew: () => void;
     onOpen: (id: string) => void;
     onRename: (id: string, title: string) => Promise<void>;
-    onArchive: (ids: string[]) => Promise<void>;
+    onDelete: (ids: string[]) => Promise<void>;
     hasMore?: boolean;
     loadingMore?: boolean;
     onLoadMore?: () => void;
 };
 
-export function CreativeConversationList({ items, activeId, loading, onNew, onOpen, onRename, onArchive, hasMore, loadingMore, onLoadMore }: Props) {
+export function CreativeConversationList({ items, activeId, loading, onNew, onOpen, onRename, onDelete, hasMore, loadingMore, onLoadMore }: Props) {
     const [managing, setManaging] = useState(false);
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const [renaming, setRenaming] = useState<CreativeConversation>();
-    const [archiveIds, setArchiveIds] = useState<string[]>([]);
+    const [deleteIds, setDeleteIds] = useState<string[]>([]);
     const [title, setTitle] = useState("");
     const [submitting, setSubmitting] = useState(false);
     const selected = useMemo(() => new Set(selectedIds), [selectedIds]);
@@ -40,11 +40,11 @@ export function CreativeConversationList({ items, activeId, loading, onNew, onOp
         setSelectedIds([]);
     };
 
-    const archive = async (ids: string[]) => {
+    const remove = async (ids: string[]) => {
         if (!ids.length || submitting) return false;
         setSubmitting(true);
         try {
-            await onArchive(ids);
+            await onDelete(ids);
             if (ids.length > 1) leaveManage();
             return true;
         } catch {
@@ -172,13 +172,13 @@ export function CreativeConversationList({ items, activeId, loading, onNew, onOp
                                             <Dropdown
                                                 trigger={["click"]}
                                                 menu={{
-                                                    items: [{ key: "rename", icon: <Pencil className="size-3.5" />, label: "重命名" }, { type: "divider" }, { key: "archive", danger: true, icon: <Trash2 className="size-3.5" />, label: "删除" }],
+                                                    items: [{ key: "rename", icon: <Pencil className="size-3.5" />, label: "重命名" }, { type: "divider" }, { key: "delete", danger: true, icon: <Trash2 className="size-3.5" />, label: "删除" }],
                                                     onClick: ({ key }) => {
                                                         if (key === "rename") {
                                                             setRenaming(item);
                                                             setTitle(item.title);
                                                         } else {
-                                                            setArchiveIds([item.id]);
+                                                            setDeleteIds([item.id]);
                                                         }
                                                     },
                                                 }}
@@ -209,27 +209,27 @@ export function CreativeConversationList({ items, activeId, loading, onNew, onOp
             {managing ? (
                 <div className="flex shrink-0 items-center gap-3 border-t border-[#e6eaee] bg-white px-4 py-3 dark:border-[#2b3037] dark:bg-[#181b20]">
                     <span className="min-w-0 flex-1 text-xs text-[#8b949f] dark:text-[#7f8996]">已选择 {selectedIds.length} 条</span>
-                    <Button danger icon={<Trash2 className="size-3.5" />} disabled={!selectedIds.length} loading={submitting} onClick={() => setArchiveIds(selectedIds)}>
+                    <Button danger icon={<Trash2 className="size-3.5" />} disabled={!selectedIds.length} loading={submitting} onClick={() => setDeleteIds(selectedIds)}>
                         批量删除
                     </Button>
                 </div>
             ) : null}
 
             <Modal
-                title={archiveIds.length > 1 ? `删除 ${archiveIds.length} 条对话？` : "删除这条对话？"}
-                open={Boolean(archiveIds.length)}
+                title={deleteIds.length > 1 ? `删除 ${deleteIds.length} 条对话？` : "删除这条对话？"}
+                open={Boolean(deleteIds.length)}
                 okText="删除"
                 cancelText="取消"
                 okButtonProps={{ danger: true }}
                 confirmLoading={submitting}
                 onOk={() =>
-                    void archive(archiveIds).then((success) => {
-                        if (success) setArchiveIds([]);
+                    void remove(deleteIds).then((success) => {
+                        if (success) setDeleteIds([]);
                     })
                 }
-                onCancel={() => setArchiveIds([])}
+                onCancel={() => setDeleteIds([])}
             >
-                <p className="text-sm text-[#697381] dark:text-[#a7afb9]">删除后会从创作历史中移除，当前对话中的消息和生成记录将不再显示。</p>
+                <p className="text-sm text-[#697381] dark:text-[#a7afb9]">将永久删除消息、生成记录和仅由这些对话使用的媒体；仍被素材库、画布、短剧或作品引用的媒体会保留。</p>
             </Modal>
         </div>
     );

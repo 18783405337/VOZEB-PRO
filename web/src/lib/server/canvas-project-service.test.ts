@@ -4,23 +4,24 @@ import type { CanvasProject } from "@/lib/canvas-project-contract";
 
 const mocks = vi.hoisted(() => ({
     createCreativeConversation: vi.fn(),
-    updateCreativeConversation: vi.fn(),
     createCanvasProject: vi.fn(),
-    deleteCanvasProjects: vi.fn(),
+    deleteCanvasProjectAggregates: vi.fn(),
     getCanvasProject: vi.fn(),
     listCanvasProjectSummaries: vi.fn(),
     updateCanvasProject: vi.fn(),
     deleteUserLocalMediaAssets: vi.fn(),
 }));
 
-vi.mock("@/lib/server/creative-runtime-store", () => ({ createCreativeConversation: mocks.createCreativeConversation, updateCreativeConversation: mocks.updateCreativeConversation }));
+vi.mock("@/lib/server/creative-runtime-store", () => ({ createCreativeConversation: mocks.createCreativeConversation }));
 vi.mock("@/lib/server/canvas-project-store", () => ({
     CanvasProjectStoreError: class CanvasProjectStoreError extends Error {},
     createCanvasProject: mocks.createCanvasProject,
-    deleteCanvasProjects: mocks.deleteCanvasProjects,
     getCanvasProject: mocks.getCanvasProject,
     listCanvasProjectSummaries: mocks.listCanvasProjectSummaries,
     updateCanvasProject: mocks.updateCanvasProject,
+}));
+vi.mock("@/lib/server/creative-entity-deletion-store", () => ({
+    deleteCanvasProjectAggregates: mocks.deleteCanvasProjectAggregates,
 }));
 vi.mock("@/lib/server/local-media-storage", () => ({ deleteUserLocalMediaAssets: mocks.deleteUserLocalMediaAssets }));
 
@@ -30,17 +31,17 @@ describe("canvas project service lifecycle", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.createCreativeConversation.mockResolvedValue({ id: "conversation-new" });
-        mocks.updateCreativeConversation.mockResolvedValue({ id: "conversation-new", status: "archived" });
+        mocks.deleteCanvasProjectAggregates.mockResolvedValue({ deletedConversations: 1, deletedProjects: 1, mediaStorageKeys: ["permanent/canvas.png"] });
         mocks.getCanvasProject.mockResolvedValue(null);
     });
 
-    it("archives the new conversation when project creation fails", async () => {
+    it("deletes the new conversation when project creation fails", async () => {
         const error = new Error("write failed");
         mocks.createCanvasProject.mockRejectedValue(error);
 
         await expect(createCanvasProjectForUser("user-one", { title: "画布" })).rejects.toBe(error);
 
-        expect(mocks.updateCreativeConversation).toHaveBeenCalledWith("conversation-new", "user-one", { status: "archived" });
+        expect(mocks.deleteCanvasProjectAggregates).toHaveBeenCalledWith("user-one", [expect.stringMatching(/^canvas-/)]);
     });
 
     it("reuses a source handoff project through its stable primary key", async () => {
@@ -54,14 +55,11 @@ describe("canvas project service lifecycle", () => {
         expect(mocks.createCanvasProject).not.toHaveBeenCalled();
     });
 
-    it("archives linked conversations after deleting projects", async () => {
-        mocks.getCanvasProject.mockResolvedValue(project());
-        mocks.deleteCanvasProjects.mockResolvedValue(1);
-
+    it("deletes linked conversations and reclaims only unreferenced media after deleting projects", async () => {
         await deleteCanvasProjectsForUser("user-one", ["canvas-one"]);
 
-        expect(mocks.updateCreativeConversation).toHaveBeenCalledWith("conversation-one", "user-one", { status: "archived" });
-        expect(mocks.deleteUserLocalMediaAssets).toHaveBeenCalled();
+        expect(mocks.deleteCanvasProjectAggregates).toHaveBeenCalledWith("user-one", ["canvas-one"]);
+        expect(mocks.deleteUserLocalMediaAssets).toHaveBeenCalledWith("user-one", ["permanent/canvas.png"]);
     });
 });
 

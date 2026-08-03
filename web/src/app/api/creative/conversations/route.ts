@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth/session";
 import { readJsonBody } from "@/lib/auth/request";
-import { createConversationForUser, CreativeRuntimeServiceError, listConversationsForUser, listWorkbenchSessionsForUser } from "@/lib/server/creative-runtime-service";
+import { createConversationForUser, CreativeRuntimeServiceError, deleteConversationsForUser, listConversationsForUser, listWorkbenchSessionsForUser } from "@/lib/server/creative-runtime-service";
 
 export async function GET(request: Request) {
     const user = await getCurrentUser();
@@ -33,6 +33,18 @@ export async function POST(request: Request) {
     try {
         const conversation = await createConversationForUser(user.id, await readJsonBody<unknown>(request));
         return NextResponse.json({ code: 0, data: { conversation }, msg: "创作会话已创建" });
+    } catch (error) {
+        return serviceError(error);
+    }
+}
+
+export async function DELETE(request: Request) {
+    const user = await getCurrentUser();
+    if (!user) return NextResponse.json({ code: 401, data: null, msg: "请先登录" }, { status: 401 });
+    try {
+        const body = await readJsonBody<{ ids?: unknown }>(request);
+        const deleted = await deleteConversationsForUser(user.id, body.ids);
+        return NextResponse.json({ code: 0, data: { deleted }, msg: "创作会话已删除" });
     } catch (error) {
         return serviceError(error);
     }

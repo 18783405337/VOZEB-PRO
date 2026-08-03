@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { isCreativeProjectHandoff, type CreativeAsset, type CreativeConversation, type CreativeMessage, type CreativeProjectHandoff } from "@/lib/creative-runtime-contract";
 import {
-    archiveCreativeConversation,
+    deleteCreativeConversations,
     controlCreativeAgentRun,
     createCreativeAgentRun,
     createCreativeConversation,
@@ -472,13 +472,12 @@ export function useCreateAgent() {
         setConversations((current) => current.map((item) => (item.id === id ? updated : item)).sort((a, b) => b.updatedAt - a.updatedAt));
     }, []);
 
-    const archiveConversations = useCallback(
+    const deleteConversations = useCallback(
         async (ids: string[]) => {
             const uniqueIds = Array.from(new Set(ids));
-            const results = await Promise.allSettled(uniqueIds.map((id) => archiveCreativeConversation(id)));
+            await deleteCreativeConversations(uniqueIds);
             if (uniqueIds.includes(activeConversationRef.current || "")) newConversation();
             await refreshConversations();
-            if (results.some((result) => result.status === "rejected")) throw new Error("部分对话删除失败，请重试");
         },
         [newConversation, refreshConversations],
     );
@@ -509,7 +508,7 @@ export function useCreateAgent() {
         openConversation,
         newConversation,
         renameConversation,
-        archiveConversations,
+        deleteConversations,
         projectLinks,
         projectErrors,
         materializingProjectId,
