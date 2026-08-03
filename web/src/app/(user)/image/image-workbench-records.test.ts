@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { generationLogPublicPrompt } from "@/lib/generation-log-snapshot";
 import type { AiConfig } from "@/stores/use-config-store";
 import type { GenerationLog, PendingImageTask } from "./image-workbench-records";
-import { authoritativeGeneratedImageMeta, buildLogFromResults, filterCoveredLocalImageTaskLogs, imageServerLogIds, resultsFromLog, snapshotFromLog, stableResultImageUrl } from "./image-workbench-records";
+import { authoritativeGeneratedImageMeta, buildLogFromResults, filterCoveredLocalImageTaskLogs, imageServerLogIds, replaceResultWithImageOutputs, resultsFromLog, snapshotFromLog, stableResultImageUrl } from "./image-workbench-records";
 
 describe("image workbench records", () => {
     it("restores pending, failed, and success results in slot order", () => {
@@ -23,6 +23,14 @@ describe("image workbench records", () => {
             { id: "fail-1", status: "failed", error: "上游失败", canRetry: true },
             { id: "ok-1", status: "success", image: image("ok-1", { slotIndex: 2 }) },
         ]);
+    });
+
+    it("replaces one pending slot with every image returned by its upstream task", () => {
+        const results = replaceResultWithImageOutputs([{ id: "slot-1", status: "pending" }], "slot-1", [image("first"), image("second")]);
+
+        expect(results.map((item) => item.id)).toEqual(["slot-1", "slot-1:output:2"]);
+        expect(results.map((item) => item.image?.id)).toEqual(["slot-1", "slot-1:output:2"]);
+        expect(results.every((item) => item.status === "success")).toBe(true);
     });
 
     it("builds a failed log from failed generation results", () => {

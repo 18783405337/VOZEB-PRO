@@ -6,7 +6,6 @@ import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { configureServerProxyDispatcher } from "@/lib/server/proxy-dispatcher";
 import { fetchInternalApi, isInternalApiBaseUrl, resolveInternalOrigin } from "@/lib/server/internal-origin";
 import { resolveGeneratedMediaUrl } from "@/lib/media-url";
-import { isQingyanProvider } from "@/lib/provider-compatibility";
 import { buildGlobalAiOpcImageRequest } from "@/lib/globalaiopc-catalog";
 import { toSafeGenerationErrorMessage } from "@/lib/server/generation-errors";
 import { generationModelId, toSystemGenerationChannel } from "@/lib/server/generation-channel";
@@ -241,7 +240,7 @@ export async function runOpenAiJsonImageEditTask(
     const referenceMode = configuredImageEditReferenceMode(config);
     const imageUrlObjectOnlyMode = shouldUseSub2ApiImageEdit(config, apiBase);
     const allowProtocolFallback = allowsImageProtocolFallback(config);
-    const publicUrlReferenceMode = imageUrlObjectOnlyMode || referenceMode === "public-url" || (referenceMode === "auto" && isQingyanProvider({ baseUrl: apiBase, model: config.model, protocol: config.advancedConfig?.protocol }));
+    const publicUrlReferenceMode = imageUrlObjectOnlyMode || referenceMode === "public-url";
     for (const body of await buildJsonImageEditBodies(task, quality, requestSize, responseFormat, origin, publicOrigin, publicUrlReferenceMode, imageUrlObjectOnlyMode, allowProtocolFallback)) {
         const response = await imageSubmissionFetch(config, url, { method: "POST", headers, body: JSON.stringify(body), cache: "no-store" });
         if (!response.ok) {

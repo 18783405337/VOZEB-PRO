@@ -54,6 +54,7 @@ export function CreativeAgentControls({
     middle,
     modelPickerRequest = 0,
     defaultModelCapability = "image",
+    modelCapabilities,
 }: {
     skills: AgentSkillSummary[];
     skillsLoading?: boolean;
@@ -71,18 +72,22 @@ export function CreativeAgentControls({
     middle?: ReactNode;
     modelPickerRequest?: number;
     defaultModelCapability?: CreativeAgentModelOption["capability"];
+    modelCapabilities?: readonly CreativeAgentModelOption["capability"][];
 }) {
     const [skillOpen, setSkillOpen] = useState(false);
     const [modelOpen, setModelOpen] = useState(false);
     const [capability, setCapability] = useState<CreativeAgentModelOption["capability"]>(defaultModelCapability);
     const modelsByCapability = useMemo(() => groupCreativeAgentModels(models), [models]);
-    const visibleModels = modelsByCapability[capability];
+    const visibleCapabilities = resolveCreativeAgentModelCapabilities(modelCapabilities);
+    const preferredCapability = visibleCapabilities.includes(defaultModelCapability) ? defaultModelCapability : visibleCapabilities[0];
+    const activeCapability = visibleCapabilities.includes(capability) ? capability : preferredCapability;
+    const visibleModels = modelsByCapability[activeCapability];
 
     useEffect(() => {
         if (modelPickerRequest <= 0) return;
-        setCapability(defaultModelCapability);
+        setCapability(preferredCapability);
         setModelOpen(true);
-    }, [defaultModelCapability, modelPickerRequest]);
+    }, [modelPickerRequest, preferredCapability]);
 
     const skillContent = (
         <div className="w-[calc(100vw-48px)] max-w-[320px] p-1 sm:w-80">
@@ -154,29 +159,31 @@ export function CreativeAgentControls({
                     </button>
                 </div>
             ) : null}
-            <div className="mb-2 grid grid-cols-3 gap-1 rounded-lg bg-stone-100 p-1 dark:bg-stone-800" role="tablist" aria-label="模型能力分类">
-                {creativeAgentModelCapabilities.map((item) => {
-                    const Icon = item === "image" ? ImageIcon : item === "video" ? FileVideo : FileAudio;
-                    const count = modelsByCapability[item].length;
-                    return (
-                        <button
-                            key={item}
-                            type="button"
-                            role="tab"
-                            aria-selected={capability === item}
-                            className={cn(
-                                "flex h-8 min-w-0 items-center justify-center gap-1 rounded-md px-1.5 text-xs font-medium transition",
-                                capability === item ? "bg-white text-stone-950 shadow-sm dark:bg-stone-700 dark:text-white" : "text-stone-500 hover:text-stone-900 dark:text-stone-400 dark:hover:text-white",
-                            )}
-                            onClick={() => setCapability(item)}
-                        >
-                            <Icon className="size-3.5 shrink-0" />
-                            <span className="truncate">{capabilityLabel(item)}</span>
-                            {count ? <span className="shrink-0">· {count}</span> : null}
-                        </button>
-                    );
-                })}
-            </div>
+            {visibleCapabilities.length > 1 ? (
+                <div className="mb-2 grid gap-1 rounded-lg bg-stone-100 p-1 dark:bg-stone-800" style={{ gridTemplateColumns: `repeat(${visibleCapabilities.length}, minmax(0, 1fr))` }} role="tablist" aria-label="模型能力分类">
+                    {visibleCapabilities.map((item) => {
+                        const Icon = item === "image" ? ImageIcon : item === "video" ? FileVideo : FileAudio;
+                        const count = modelsByCapability[item].length;
+                        return (
+                            <button
+                                key={item}
+                                type="button"
+                                role="tab"
+                                aria-selected={activeCapability === item}
+                                className={cn(
+                                    "flex h-8 min-w-0 items-center justify-center gap-1 rounded-md px-1.5 text-xs font-medium transition",
+                                    activeCapability === item ? "bg-white text-stone-950 shadow-sm dark:bg-stone-700 dark:text-white" : "text-stone-500 hover:text-stone-900 dark:text-stone-400 dark:hover:text-white",
+                                )}
+                                onClick={() => setCapability(item)}
+                            >
+                                <Icon className="size-3.5 shrink-0" />
+                                <span className="truncate">{capabilityLabel(item)}</span>
+                                {count ? <span className="shrink-0">· {count}</span> : null}
+                            </button>
+                        );
+                    })}
+                </div>
+            ) : null}
             <div className="thin-scrollbar max-h-52 space-y-1 overflow-y-auto">
                 {visibleModels.map((model) => {
                     const selected = selectedModels.some((item) => item.id === model.id);
@@ -200,7 +207,7 @@ export function CreativeAgentControls({
                         </button>
                     );
                 })}
-                {!visibleModels.length ? <p className="px-2 py-5 text-center text-xs leading-5 text-stone-500 dark:text-stone-400">当前未配置可用的{capabilityLabel(capability)}模型</p> : null}
+                {!visibleModels.length ? <p className="px-2 py-5 text-center text-xs leading-5 text-stone-500 dark:text-stone-400">当前未配置可用的{capabilityLabel(activeCapability)}模型</p> : null}
             </div>
         </div>
     );
@@ -267,4 +274,11 @@ export function groupCreativeAgentModels(models: CreativeAgentModelOption[]) {
         video: models.filter((model) => model.capability === "video"),
         audio: models.filter((model) => model.capability === "audio"),
     };
+}
+
+export function resolveCreativeAgentModelCapabilities(capabilities?: readonly CreativeAgentModelOption["capability"][]) {
+    if (!capabilities?.length) return [...creativeAgentModelCapabilities];
+    const requested = new Set(capabilities);
+    const resolved = creativeAgentModelCapabilities.filter((capability) => requested.has(capability));
+    return resolved.length ? resolved : [...creativeAgentModelCapabilities];
 }

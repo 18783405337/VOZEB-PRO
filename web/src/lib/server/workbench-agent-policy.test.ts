@@ -31,6 +31,47 @@ describe("workbench agent policy", () => {
         expect(trusted.modelOptions).toEqual([]);
     });
 
+    it("uses model-level reference capability instead of the channel default", () => {
+        const configured = structuredClone(settings);
+        const channel = configured.systemChannels.find((item) => item.id === "basic");
+        if (!channel?.advancedConfig) throw new Error("missing test channel");
+        channel.advancedConfig.supportsReferenceImage = false;
+        channel.advancedConfig.modelConfigs = {
+            "vendor/image": {
+                capability: "image",
+                source: "manual",
+                protocol: "openai",
+                apiFormat: "openai",
+                supportsReferenceImage: true,
+            },
+        };
+
+        const trusted = buildTrustedWorkbenchBody(configured, { workspace: "image", referenceTypes: ["image"] });
+
+        expect(trusted.models).toContain("image-basic");
+    });
+
+    it("lets a model-level disabled reference capability override the channel default", () => {
+        const configured = structuredClone(settings);
+        const channel = configured.systemChannels.find((item) => item.id === "reference");
+        if (!channel?.advancedConfig) throw new Error("missing test channel");
+        channel.advancedConfig.supportsReferenceImage = true;
+        channel.advancedConfig.modelConfigs = {
+            "vendor/video-image-audio": {
+                capability: "video",
+                source: "manual",
+                protocol: "openai",
+                apiFormat: "openai",
+                supportsReferenceImage: false,
+                supportsReferenceAudio: true,
+            },
+        };
+
+        const trusted = buildTrustedWorkbenchBody(configured, { workspace: "video", referenceTypes: ["image"] });
+
+        expect(trusted.models).not.toContain("video-image-audio");
+    });
+
     it("does not let broad portrait keywords force reference editing", () => {
         expect(analyzeWorkbenchRequest(settings, "image", "生成一张自然光人像照片")).toMatchObject({ referenceRequired: false });
         expect(analyzeWorkbenchRequest(settings, "image", "给这张照片自然美颜精修")).toMatchObject({ referenceRequired: true });

@@ -62,6 +62,21 @@ describe("统一创作 Agent 事件流", () => {
         expect(terminal).toEqual([{ status: "failed", text: "视频渠道暂时不可用" }]);
     });
 
+    it("shows a persisted upstream waiting reason without closing the stream", () => {
+        vi.stubGlobal("EventSource", FakeEventSource);
+        const progress: string[] = [];
+        watchCreativeAgentRun("run-waiting", {
+            onProgress: (text) => progress.push(text),
+            onTerminal: () => undefined,
+            onConnectionError: () => undefined,
+        });
+
+        FakeEventSource.instance.emit("task.waiting", { data: { title: "西瓜海报", error: "上游创建状态待人工确认" } });
+
+        expect(progress).toEqual(["上游创建状态待人工确认"]);
+        expect(FakeEventSource.instance.url).toBe("/api/agent/runs/run-waiting/events");
+    });
+
     it("forwards a persistent project handoff before the run completes", () => {
         vi.stubGlobal("EventSource", FakeEventSource);
         const handoffs: CreativeProjectHandoff[] = [];

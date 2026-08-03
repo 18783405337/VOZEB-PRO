@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
     getSettings: vi.fn(),
     register: vi.fn(),
     refund: vi.fn(),
+    QueryContractError: class extends Error {},
 }));
 
 vi.mock("@/app/api/image-tasks/image-task-custom", () => ({ runCustomImageTask: mocks.runCustom, pollCustomImageTask: mocks.pollCustom }));
@@ -26,6 +27,7 @@ vi.mock("@/app/api/image-tasks/image-task-openai", () => ({ runOpenAiImageTask: 
 vi.mock("@/app/api/image-tasks/image-task-support", () => ({
     directRemoteImageResult: mocks.directResult,
     imageUnits: vi.fn(() => 1),
+    ImageQueryContractError: mocks.QueryContractError,
     ImageUpstreamTerminalError: class extends Error {},
     inlineRemoteImageResult: mocks.inlineResult,
     pollOpenAiImageTask: mocks.pollOpenAi,
@@ -95,6 +97,25 @@ describe("image task runtime submission safety", () => {
         expect(state.attempts?.map(({ status }) => status)).toEqual(["running"]);
     });
 
+    it("keeps an OpenAI id-only response for manual review without trying another channel", async () => {
+        state.config = { ...state.config, advancedConfig: { ...emptyAdvancedConfig(), protocol: "openai" } };
+        mocks.runOpenAi.mockResolvedValueOnce({
+            dataUrl: "",
+            needsReview: {
+                upstream: { id: "upstream-one", mediaBaseUrl: "http://internal", pollBaseUrl: "http://internal" },
+                reason: "OpenAI 图片接口未返回图片，且渠道没有声明异步查询路径",
+            },
+            pointsCost: 1,
+            pointsRecordId: "record-one",
+        });
+
+        await expect(createImageTaskUpstreamStep(state, "http://internal", "https://public.example")).resolves.toMatchObject({ state: "needs_review", status: "query_contract_missing" });
+        expect(mocks.runGemini).not.toHaveBeenCalled();
+        expect(state.upstream?.id).toBe("upstream-one");
+        expect(state.billing).toMatchObject({ pointsRecordId: "record-one", refunded: false });
+        expect(mocks.refund).not.toHaveBeenCalled();
+    });
+
     it("fails and refunds a corrupt synchronous image result without manual review", async () => {
         state = imageTask();
         state.config = { ...state.config, advancedConfig: { ...emptyAdvancedConfig(), protocol: "openai" } };
@@ -127,6 +148,41 @@ describe("image task runtime submission safety", () => {
         expect(mocks.mediaHeaders).toHaveBeenCalledWith({ userId: "user-one", taskType: "image", taskId: "image-one", channelId: "channel-one", upstreamModel: "image-one", url: remoteUrl });
         expect(mocks.inlineResult).toHaveBeenCalledWith(proxyUrl, "http://internal", "worker-context", remoteUrl, { "x-media-auth": "signed" });
         expect(mocks.directResult).not.toHaveBeenCalled();
+    });
+
+    it("persists and registers every image returned by one upstream task", async () => {
+        state.config = { ...state.config, advancedConfig: { ...emptyAdvancedConfig(), protocol: "openai" } };
+        state.candidateConfigs = [];
+        mocks.runOpenAi.mockResolvedValueOnce({
+            dataUrl: "https://provider.example/first.png",
+            remoteUrl: "https://provider.example/first.png",
+            results: [
+                { dataUrl: "https://provider.example/first.png", remoteUrl: "https://provider.example/first.png" },
+                { dataUrl: "https://provider.example/second.png", remoteUrl: "https://provider.example/second.png" },
+            ],
+        });
+        mocks.directResult.mockImplementation((url?: string) => (url ? { dataUrl: url, remoteUrl: url } : null));
+        mocks.writeLog.mockResolvedValueOnce({
+            assets: [
+                { type: "image", url: "/api/generation-log-assets/first.png", serverUrl: "/api/generation-log-assets/first.png" },
+                { type: "image", url: "/api/generation-log-assets/second.png", serverUrl: "/api/generation-log-assets/second.png" },
+            ],
+        });
+
+        const step = await createImageTaskUpstreamStep(state, "http://internal", "https://public.example");
+        if (step.state !== "result_ready") throw new Error("image result was not ready");
+        await persistImageTaskResult(state, "http://internal", step.resultUrl);
+
+        expect(state.result?.results?.map((item) => item.serverUrl)).toEqual(["/api/generation-log-assets/first.png", "/api/generation-log-assets/second.png"]);
+        expect(mocks.register).toHaveBeenCalledWith(
+            "user-one",
+            expect.objectContaining({
+                assets: [
+                    { type: "image", url: "/api/generation-log-assets/first.png" },
+                    { type: "image", url: "/api/generation-log-assets/second.png" },
+                ],
+            }),
+        );
     });
 });
 

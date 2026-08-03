@@ -6,7 +6,6 @@ import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { configureServerProxyDispatcher } from "@/lib/server/proxy-dispatcher";
 import { fetchInternalApi, isInternalApiBaseUrl, resolveInternalOrigin } from "@/lib/server/internal-origin";
 import { resolveGeneratedMediaUrl } from "@/lib/media-url";
-import { isQingyanProvider } from "@/lib/provider-compatibility";
 import { toSafeGenerationErrorMessage } from "@/lib/server/generation-errors";
 import { generationModelId, toSystemGenerationChannel } from "@/lib/server/generation-channel";
 import { finishGenerationAttempt, startGenerationAttempt } from "@/lib/server/generation-attempt";
@@ -45,14 +44,21 @@ export type ImageApiResponse = {
     code?: number;
     msg?: string;
 };
-export type ImageTaskResult = {
+export type ImageTaskMediaResult = {
     dataUrl: string;
     remoteUrl?: string;
     width?: number;
     height?: number;
     bytes?: number;
     mimeType?: string;
+};
+export type ImageTaskResult = ImageTaskMediaResult & {
+    results?: ImageTaskMediaResult[];
     pending?: { id: string; mediaBaseUrl: string; pollBaseUrl: string; explicitPollUrl?: string };
+    needsReview?: {
+        upstream: { id: string; mediaBaseUrl: string; pollBaseUrl: string; explicitPollUrl?: string };
+        reason: string;
+    };
 };
 export type ImageTaskRunResult = ImageTaskResult & { pointsRemaining?: number; pointsCost?: number; pointsRecordId?: string };
 

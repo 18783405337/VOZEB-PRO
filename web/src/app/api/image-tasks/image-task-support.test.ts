@@ -6,12 +6,17 @@ import { GenerationSubmissionSafeFailure } from "@/lib/server/generation-submiss
 import { maintenanceWorkerContext } from "@/lib/server/maintenance-auth";
 import {
     allowsImageProtocolFallback,
+    ImageQueryContractError,
     imageRequestAspectRatio,
     imageTaskPollAttempts,
     imageTaskPollUrls,
     imageTaskRequestTimeoutMs,
     openAiImageTaskPath,
+    parseImagePayloadOrPoll,
+    parseImagePayloadCompat,
+    parseImageQueryJson,
     resolveRequestSize,
+    sanitizeConfigs,
     shouldFallbackToJsonImageEdit,
     shouldRetryJsonImageEditPayload,
     taskHeaders,
@@ -95,11 +100,42 @@ describe("GlobalAiOpc image task paths", () => {
             baseUrl: "https://provider.example/v1",
             model: "gpt-image-1",
             apiFormat: "openai",
-            advancedConfig: { createPath: "/images/generations" },
+            advancedConfig: { protocol: "openai", createPath: "/images/generations" },
         } as never;
 
         await expect(openAiImageTaskPath(openAiConfig, "generation")).resolves.toBe("/images/generations");
         await expect(openAiImageTaskPath(openAiConfig, "edit")).resolves.toBe("/images/edits");
+        expect(imageTaskPollUrls(openAiConfig, "https://provider.example/v1/images/generations", "task-one")).toEqual([]);
+    });
+
+    it("keeps an OpenAI response with only an id for manual review instead of guessing a task endpoint", async () => {
+        const openAiConfig = {
+            baseUrl: "/api/ai/system/openai-image",
+            model: "gpt-image-2",
+            apiFormat: "openai",
+            advancedConfig: { protocol: "openai", createPath: "/images/generations", queryPath: "" },
+        } as never;
+
+        await expect(parseImagePayloadOrPoll(openAiConfig, { id: "upstream-one" }, "http://localhost/api/ai/system/openai-image", "", "http://localhost/api/ai/system/openai-image", true)).resolves.toMatchObject({
+            needsReview: { upstream: { id: "upstream-one" } },
+        });
+    });
+
+    it("keeps every image returned by one upstream response", () => {
+        const result = parseImagePayloadCompat({ data: [{ url: "https://cdn.example.com/first.png" }, { url: "https://cdn.example.com/second.png" }] }, "https://provider.example/v1/images/generations", {
+            baseUrl: "https://provider.example/v1",
+            model: "gpt-image-1",
+            apiFormat: "openai",
+        } as never);
+
+        expect(result?.dataUrl).toBe("https://cdn.example.com/first.png");
+        expect(result?.results?.map((item) => item.dataUrl)).toEqual(["https://cdn.example.com/first.png", "https://cdn.example.com/second.png"]);
+    });
+
+    it("classifies an HTML polling response as an invalid query contract", async () => {
+        const response = new Response("<!doctype html><html></html>", { headers: { "content-type": "text/html" } });
+
+        await expect(parseImageQueryJson(response)).rejects.toBeInstanceOf(ImageQueryContractError);
     });
 
     it("prefers the edit endpoint declared by the channel reference rule", async () => {
@@ -145,6 +181,51 @@ describe("GlobalAiOpc image task paths", () => {
         } as never;
 
         expect(allowsImageProtocolFallback(modelConfig)).toBe(false);
+    });
+
+    it("uses the model-level reference capability when the channel default is disabled", () => {
+        const [resolved] = sanitizeConfigs(
+            { model: "image-logical" } as never,
+            {
+                generationDefaults: {},
+                systemChannels: [
+                    {
+                        id: "channel-one",
+                        name: "Channel one",
+                        baseUrl: "https://provider.example/v1",
+                        apiKey: "server-key",
+                        apiFormat: "openai",
+                        enabled: true,
+                        models: ["vendor/image"],
+                        advancedConfig: {
+                            protocol: "openai",
+                            supportsReferenceImage: false,
+                            modelConfigs: {
+                                "vendor/image": {
+                                    capability: "image",
+                                    protocol: "openai",
+                                    apiFormat: "openai",
+                                    createPath: "/images/generations",
+                                    editPath: "/images/edits",
+                                    supportsReferenceImage: true,
+                                },
+                            },
+                        },
+                    },
+                ],
+                logicalModels: [
+                    {
+                        id: "image-logical",
+                        name: "Image logical",
+                        capability: "image",
+                        enabled: true,
+                        bindings: [{ id: "binding-one", channelId: "channel-one", upstreamModel: "vendor/image", enabled: true, priority: 1 }],
+                    },
+                ],
+            } as never,
+        );
+
+        expect(resolved?.advancedConfig).toMatchObject({ protocol: "openai", editPath: "/images/edits", supportsReferenceImage: true });
     });
 
     it("recognizes Pydantic dictionary errors as an incompatible edit payload", () => {

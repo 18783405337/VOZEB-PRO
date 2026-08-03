@@ -13,6 +13,10 @@ describe("Canvas Agent 消息清理", () => {
         expect(friendlyAgentError('{"error":{"message":"积分不足，当前余额 2，需要 3"}}')).toBe("积分不足");
     });
 
+    it("shows a safe fix for protocol mismatches", () => {
+        expect(formatAgentMessageText('{"error":{"message":"MetaJing video requests must use application/json"}}')).toBe("当前视频渠道要求 application/json，请在后台选择“VOZEB推荐”协议。");
+    });
+
     it("replaces legacy task internals", () => {
         expect(formatAgentMessageText("正在执行任务 task-0（第 3 次）…")).toBe("正在执行创作任务…");
         expect(friendlyAgentError("任务依赖无法继续执行")).toBe("部分创作任务未能完成，请调整需求后重试。");

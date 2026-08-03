@@ -34,6 +34,16 @@ export type ImageTaskReference = {
     serverUrl?: string;
 };
 
+export type StoredImageTaskMediaResult = {
+    dataUrl: string;
+    remoteUrl?: string;
+    serverUrl?: string;
+    width?: number;
+    height?: number;
+    bytes?: number;
+    mimeType?: string;
+};
+
 export type ImageTask = GenerationTaskContext & {
     id: string;
     userId: string;
@@ -49,7 +59,7 @@ export type ImageTask = GenerationTaskContext & {
     prompt: string;
     references: ImageTaskReference[];
     mask?: ImageTaskReference;
-    result?: { dataUrl: string; remoteUrl?: string; serverUrl?: string; width?: number; height?: number; bytes?: number; mimeType?: string };
+    result?: StoredImageTaskMediaResult & { results?: StoredImageTaskMediaResult[] };
     upstream?: { id: string; mediaBaseUrl: string; pollBaseUrl: string; explicitPollUrl?: string };
     billing?: { pointsCost: number; pointsRecordId?: string; refunded: boolean };
     error?: string;

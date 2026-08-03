@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
     updateAudioTask: vi.fn(),
     queryAudioTaskUpstreamStep: vi.fn(),
     queryCancelledImageTaskUpstreamStep: vi.fn(),
+    queryImageTaskUpstreamStep: vi.fn(),
     queryCancelledTextTaskUpstreamStep: vi.fn(),
     getTextTask: vi.fn(),
     updateTextTask: vi.fn(),
@@ -47,7 +48,7 @@ vi.mock("@/lib/server/image-task-runtime", () => ({
     markImageTaskFailed: vi.fn(),
     persistImageTaskResult: vi.fn(),
     queryCancelledImageTaskUpstreamStep: mocks.queryCancelledImageTaskUpstreamStep,
-    queryImageTaskUpstreamStep: vi.fn(),
+    queryImageTaskUpstreamStep: mocks.queryImageTaskUpstreamStep,
 }));
 vi.mock("@/lib/server/image-task-store", () => ({ getImageTask: mocks.getImageTask, updateImageTask: mocks.updateImageTask }));
 vi.mock("@/lib/server/text-task-runtime", () => ({ queryCancelledTextTaskUpstreamStep: mocks.queryCancelledTextTaskUpstreamStep, runTextTaskStep: mocks.runTextTaskStep }));
@@ -148,6 +149,30 @@ describe("generation task recovery service", () => {
         expect(mocks.queryVideoTaskUpstream).toHaveBeenCalledWith(task, "http://internal", "", task.userId);
         expect(mocks.release).toHaveBeenCalledWith("video", task.id, "worker-one", expect.objectContaining({ executionPhase: "polling", lastUpstreamStatus: "processing" }));
         expect(result).toMatchObject({ claimed: 1, pending: 1 });
+    });
+
+    it("moves an image with an invalid OpenAI query contract to manual review", async () => {
+        const task = {
+            id: "image-one",
+            userId: "user-one",
+            status: "running",
+            upstream: { id: "upstream-one" },
+            config: { channelId: "channel-one", apiFormat: "openai", advancedConfig: { protocol: "openai", queryPath: "" } },
+        };
+        mocks.claim.mockResolvedValue([{ ...lease(), id: task.id, userId: task.userId, type: "image", status: "running", executionPhase: "polling", upstreamTaskId: task.upstream.id }]);
+        mocks.getImageTask.mockResolvedValue(task);
+        mocks.queryImageTaskUpstreamStep.mockResolvedValue({ state: "needs_review", status: "query_contract_invalid", reason: "图片任务查询路径返回了网页内容" });
+
+        const result = await runGenerationTaskRecoveryBatch({ origin: "http://internal", workerId: "worker-one" });
+
+        expect(mocks.release).toHaveBeenCalledWith(
+            "image",
+            task.id,
+            "worker-one",
+            expect.objectContaining({ executionPhase: "needs_review", upstreamTaskId: "upstream-one", nextPollAt: undefined, lastUpstreamStatus: expect.stringContaining("query_contract_invalid") }),
+        );
+        expect(result).toMatchObject({ claimed: 1, needsReview: 1 });
+        expect(mocks.refundImageTask).not.toHaveBeenCalled();
     });
 
     it("persists the selected text channel before the next upstream query", async () => {

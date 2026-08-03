@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type 
 import { nanoid } from "nanoid";
 
 import type { WorkbenchAgentMessage, WorkbenchAgentSession } from "@/components/agent/workbench-agent-panel";
-import { loadOlderWorkbenchAgentSession, loadWorkbenchAgentSession, loadWorkbenchAgentSessions, mergeWorkbenchAgentSessions } from "@/components/agent/workbench-agent-session-store";
+import { loadOlderWorkbenchAgentSession, loadWorkbenchAgentSession, loadWorkbenchAgentSessions, mergeWorkbenchAgentSessions, restoreLatestWorkbenchAgentSession } from "@/components/agent/workbench-agent-session-store";
 import type { AgentSkillSummary } from "@/services/api/agent-skills";
 import { createCreativeConversation } from "@/services/api/creative";
 
@@ -15,7 +15,7 @@ export function useWorkbenchAgentSessions(workspace: "image" | "video", userId: 
     const [prompt, setPrompt] = useState("");
     const [agentMessages, setAgentMessagesState] = useState<WorkbenchAgentMessage[]>([]);
     const [agentSessions, setAgentSessions] = useState<WorkbenchAgentSession[]>([]);
-    const [activeAgentSessionId, setActiveAgentSessionId] = useState(() => nanoid());
+    const [activeAgentSessionId, setActiveAgentSessionIdState] = useState(() => nanoid());
     const [activeAgentRecordId, setActiveAgentRecordId] = useState<string>();
     const [activeCreativeConversationId, setActiveCreativeConversationId] = useState<string>();
     const [agentSessionsHydrated, setAgentSessionsHydrated] = useState(false);
@@ -26,12 +26,14 @@ export function useWorkbenchAgentSessions(workspace: "image" | "video", userId: 
     const agentMessagesContextRef = useRef(contextKey);
     const agentSessionsRef = useRef<WorkbenchAgentSession[]>([]);
     const activeConversationRef = useRef<{ key: string; id: string } | undefined>(undefined);
+    const activeSessionSelectedRef = useRef(false);
     const conversationRequestRef = useRef<(WorkbenchContext & { promise: Promise<string> }) | null>(null);
     const olderMessagesRequestRef = useRef<string | undefined>(undefined);
     if (contextRef.current.key !== contextKey) {
         contextRef.current = { key: contextKey, generation: contextRef.current.generation + 1 };
         agentMessagesContextRef.current = "";
         activeConversationRef.current = undefined;
+        activeSessionSelectedRef.current = false;
         conversationRequestRef.current = null;
         olderMessagesRequestRef.current = undefined;
     }
@@ -48,21 +50,46 @@ export function useWorkbenchAgentSessions(workspace: "image" | "video", userId: 
         agentSessionsRef.current = [];
         setPrompt("");
         setLastAgentPrompt("");
-        setActiveAgentSessionId(nanoid());
+        setActiveAgentSessionIdState(nanoid());
         setActiveAgentRecordId(undefined);
         setActiveCreativeConversationId(undefined);
         activeConversationRef.current = undefined;
+        activeSessionSelectedRef.current = false;
         conversationRequestRef.current = null;
         olderMessagesRequestRef.current = undefined;
         setOlderAgentMessagesLoading(false);
         setAgentSessionsHydrated(false);
         void loadWorkbenchAgentSessions(workspace, userId)
-            .then((sessions) => {
+            .then(async (sessions) => {
                 if (!isCurrentContext(contextRef.current, context)) return;
                 const merged = mergeWorkbenchAgentSessions(sessions, agentSessionsRef.current);
                 agentSessionsRef.current = merged;
                 setAgentSessions(merged);
-                setAgentSessionsHydrated(true);
+                if (!activeSessionSelectedRef.current && merged[0]) {
+                    activeSessionSelectedRef.current = true;
+                    const latest = merged[0];
+                    const conversationId = latest.creativeConversationId || latest.id;
+                    setActiveAgentSessionIdState(latest.id);
+                    setActiveAgentRecordId(latest.recordId);
+                    activeConversationRef.current = { key: context.key, id: conversationId };
+                    setActiveCreativeConversationId(conversationId);
+                    setLastAgentPrompt(latest.lastPrompt);
+                    try {
+                        const loaded = await restoreLatestWorkbenchAgentSession(workspace, merged);
+                        if (loaded && isCurrentContext(contextRef.current, context) && activeConversationRef.current?.id === conversationId) {
+                            const next = agentSessionsRef.current.map((item) => (item.id === loaded.id ? loaded : item));
+                            agentSessionsRef.current = next;
+                            setAgentSessions(next);
+                            setActiveAgentRecordId(loaded.recordId);
+                            agentMessagesContextRef.current = context.key;
+                            setAgentMessagesState(loaded.messages);
+                            setLastAgentPrompt(loaded.lastPrompt);
+                        }
+                    } catch {
+                        // The summary identity is enough to keep later turns in the same conversation.
+                    }
+                }
+                if (isCurrentContext(contextRef.current, context)) setAgentSessionsHydrated(true);
             })
             .catch(() => {
                 if (isCurrentContext(contextRef.current, context)) setAgentSessionsHydrated(true);
@@ -117,8 +144,14 @@ export function useWorkbenchAgentSessions(workspace: "image" | "video", userId: 
     }, [agentSessions]);
 
     const updateActiveCreativeConversationId = useCallback((id: string | undefined) => {
+        activeSessionSelectedRef.current = true;
         activeConversationRef.current = id ? { key: contextRef.current.key, id } : undefined;
         setActiveCreativeConversationId(id);
+    }, []);
+
+    const setActiveAgentSessionId = useCallback((id: string) => {
+        activeSessionSelectedRef.current = true;
+        setActiveAgentSessionIdState(id);
     }, []);
 
     const loadAgentSession = useCallback(
@@ -160,6 +193,7 @@ export function useWorkbenchAgentSessions(workspace: "image" | "video", userId: 
         const context = { ...contextRef.current };
         const active = activeConversationRef.current;
         if (active?.key === context.key) return active.id;
+        activeSessionSelectedRef.current = true;
         const pending = conversationRequestRef.current;
         if (pending && isCurrentContext(pending, context)) return pending.promise;
         const request = createCreativeConversation({ surface: "chat", source: `${workspace}-workbench`, title: workspace === "image" ? "图片工作台对话" : "视频工作台对话" }).then((conversation) => {

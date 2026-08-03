@@ -8,7 +8,7 @@ import { useRef, useState } from "react";
 import { compileDramaAssetReferencePrompt } from "@/lib/drama-prompt-compiler";
 import type { DramaAssetReference, DramaCharacter, DramaNamedAsset, DramaProject } from "@/lib/drama-project-contract";
 import { imagePreviewUrl } from "@/lib/media-image-url";
-import { createImageGenerationTask, waitForImageGenerationTask } from "@/services/api/image";
+import { createImageGenerationTask, waitForImageGenerationTask, type ImageGenerationResult } from "@/services/api/image";
 import { uploadImage } from "@/services/image-storage";
 import { useEffectiveConfig } from "@/stores/use-config-store";
 import { useDramaStore } from "../stores/use-drama-store";
@@ -76,13 +76,15 @@ export function DramaAssetsPanel({ project }: { project: DramaProject }) {
         });
     };
 
-    const appendReference = (item: DramaNamedAsset, reference: DramaAssetReference) => {
-        const references = [...assetReferences(item), reference].slice(-12);
+    const appendReferences = (item: DramaNamedAsset, added: DramaAssetReference[]) => {
+        const primary = added[0];
+        if (!primary) return;
+        const references = [...assetReferences(item), ...added].slice(-12);
         updateAsset(project.id, activeKind, item.id, {
             references,
-            primaryReferenceId: reference.id,
-            referenceImageUrl: reference.url,
-            referenceStorageKey: reference.storageKey,
+            primaryReferenceId: primary.id,
+            referenceImageUrl: primary.url,
+            referenceStorageKey: primary.storageKey,
         });
     };
 
@@ -103,7 +105,7 @@ export function DramaAssetsPanel({ project }: { project: DramaProject }) {
         setUploadingId(item.id);
         try {
             const stored = await uploadImage(file);
-            appendReference(item, { id: `reference-${nanoid()}`, url: stored.serverUrl || stored.url, storageKey: stored.storageKey, source: "upload", label: file.name, width: stored.width, height: stored.height, createdAt: new Date().toISOString() });
+            appendReferences(item, [{ id: `reference-${nanoid()}`, url: stored.serverUrl || stored.url, storageKey: stored.storageKey, source: "upload", label: file.name, width: stored.width, height: stored.height, createdAt: new Date().toISOString() }]);
             message.success("参考图已上传并设为基准");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "参考图上传失败");
@@ -129,10 +131,10 @@ export function DramaAssetsPanel({ project }: { project: DramaProject }) {
                 clientRequestId: `drama-reference:${project.id}:${item.id}:${nanoid()}`,
             });
             const result = await waitForImageGenerationTask(imageConfig, task);
-            const url = stableTaskUrl(result.remoteUrl, result.serverUrl, result.dataUrl);
-            if (!url) throw new Error("生成结果没有可持久化地址");
-            appendReference(item, { id: `reference-${nanoid()}`, url, source: "generated", label: "AI 候选图", width: result.width, height: result.height, createdAt: new Date().toISOString() });
-            message.success("候选图已生成并设为基准");
+            const references = imageResultsToReferences(result);
+            if (!references.length) throw new Error("生成结果没有可持久化地址");
+            appendReferences(item, references);
+            message.success(references.length > 1 ? `已生成 ${references.length} 张候选图，首张设为基准` : "候选图已生成并设为基准");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "候选图生成失败");
         } finally {
@@ -407,4 +409,25 @@ function assetReferences(item: DramaNamedAsset): DramaAssetReference[] {
               },
           ]
         : [];
+}
+
+export function imageResultsToReferences(result: ImageGenerationResult & { results?: ImageGenerationResult[] }): DramaAssetReference[] {
+    const images = result.results?.length ? result.results : [result];
+    const createdAt = new Date().toISOString();
+    return images.flatMap((image, index) => {
+        const url = stableTaskUrl(image.remoteUrl, image.serverUrl, image.dataUrl);
+        return url
+            ? [
+                  {
+                      id: `reference-${nanoid()}`,
+                      url,
+                      source: "generated" as const,
+                      label: images.length > 1 ? `AI 候选图 ${index + 1}` : "AI 候选图",
+                      width: image.width,
+                      height: image.height,
+                      createdAt,
+                  },
+              ]
+            : [];
+    });
 }

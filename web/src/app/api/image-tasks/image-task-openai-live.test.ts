@@ -3,10 +3,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/server/proxy-dispatcher", () => ({ configureServerProxyDispatcher: vi.fn() }));
 
 import { createProtocolFixtureServer } from "../../../../scripts/protocol-fixture-server.mjs";
+import { runGeminiImageTask } from "./image-task-gemini";
 import { runOpenAiImageTask } from "./image-task-openai";
 import { runCustomImageTask } from "./image-task-custom";
 import type { ImageTask } from "@/lib/server/image-task-store";
 import { emptyAdvancedConfig } from "@/lib/channel-protocol-registry";
+
+const PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEUlEQVR4nGPQq/3/H4QZYAwAWewKpRUlAtEAAAAASUVORK5CYII=";
+const PNG_DATA_URL = `data:image/png;base64,${PNG_BASE64}`;
 
 afterEach(() => {
     vi.restoreAllMocks();
@@ -128,6 +132,109 @@ describe("OpenAI image provider over a live compatible fixture", () => {
             expect(body.image_urls).toEqual(["https://cdn.example.com/reference.png"]);
             expect(body.images).toBeUndefined();
             expect(fixture.requests[0]?.headers["idempotency-key"]).toBe("image-task:image-sub2api-live:attempt:1");
+        } finally {
+            await new Promise<void>((resolve, reject) => fixture.server.close((error?: Error) => (error ? reject(error) : resolve())));
+        }
+    });
+
+    it("sends standard OpenAI edits as multipart with the reference image file", async () => {
+        const fixture = createProtocolFixtureServer();
+        await new Promise<void>((resolve) => fixture.server.listen(0, "127.0.0.1", resolve));
+        const address = fixture.server.address();
+        if (!address || typeof address === "string") throw new Error("Protocol fixture did not bind a TCP port");
+        const origin = `http://127.0.0.1:${address.port}`;
+        const task = liveImageTask(origin, {
+            id: "image-openai-edit-live",
+            kind: "edit",
+            references: [{ name: "reference.png", type: "image/png", dataUrl: PNG_DATA_URL }],
+            config: {
+                baseUrl: origin,
+                apiKey: "fixture-key",
+                apiFormat: "openai",
+                model: "gpt-image-1",
+                channelId: "fixture-openai",
+                advancedConfig: { ...emptyAdvancedConfig(), protocol: "openai", createPath: "/images/generations", editPath: "/images/edits", supportsReferenceImage: true },
+            },
+        });
+
+        try {
+            await expect(runOpenAiImageTask(task, origin, "", "", true)).resolves.toMatchObject({ dataUrl: expect.stringMatching(/^data:image\/png;base64,/) });
+            expect(fixture.requests).toHaveLength(1);
+            expect(fixture.requests[0]?.path).toBe("/v1/images/edits");
+            expect(fixture.requests[0]?.contentType).toMatch(/^multipart\/form-data; boundary=/);
+            const body = fixture.requests[0]?.body.toString("latin1") || "";
+            expect(body).toContain('name="image"; filename="reference.png"');
+            expect(body).toContain("Content-Type: image/png");
+        } finally {
+            await new Promise<void>((resolve, reject) => fixture.server.close((error?: Error) => (error ? reject(error) : resolve())));
+        }
+    });
+
+    it("sends Stable Diffusion img2img references as inline base64", async () => {
+        const fixture = createProtocolFixtureServer();
+        await new Promise<void>((resolve) => fixture.server.listen(0, "127.0.0.1", resolve));
+        const address = fixture.server.address();
+        if (!address || typeof address === "string") throw new Error("Protocol fixture did not bind a TCP port");
+        const origin = `http://127.0.0.1:${address.port}`;
+        const task = liveImageTask(origin, {
+            id: "image-stable-diffusion-edit-live",
+            kind: "edit",
+            references: [{ name: "reference.png", type: "image/png", dataUrl: PNG_DATA_URL }],
+            config: {
+                baseUrl: origin,
+                apiKey: "",
+                apiFormat: "openai",
+                model: "mock-image",
+                channelId: "fixture-stable-diffusion",
+                size: "1024x1024",
+                advancedConfig: {
+                    ...emptyAdvancedConfig(),
+                    protocol: "stable-diffusion",
+                    createPath: "/sdapi/v1/txt2img",
+                    editPath: "/sdapi/v1/img2img",
+                    requestTemplate: '{"prompt":"{{prompt}}","width":"{{width}}","height":"{{height}}","batch_size":1,"init_images":"{{images}}","override_settings":{"sd_model_checkpoint":"{{model}}"},"override_settings_restore_afterwards":true}',
+                    resultField: "images[0]",
+                    supportsReferenceImage: true,
+                },
+            },
+        });
+
+        try {
+            await expect(runCustomImageTask(task, origin, "", "", true)).resolves.toMatchObject({ dataUrl: expect.stringMatching(/^data:image\/png;base64,/) });
+            expect(fixture.requests).toHaveLength(1);
+            expect(fixture.requests[0]?.path).toBe("/sdapi/v1/img2img");
+            expect(JSON.parse(fixture.requests[0]?.body.toString("utf8") || "{}")).toMatchObject({ init_images: [PNG_DATA_URL] });
+        } finally {
+            await new Promise<void>((resolve, reject) => fixture.server.close((error?: Error) => (error ? reject(error) : resolve())));
+        }
+    });
+
+    it("sends Gemini image references as inlineData", async () => {
+        const fixture = createProtocolFixtureServer();
+        await new Promise<void>((resolve) => fixture.server.listen(0, "127.0.0.1", resolve));
+        const address = fixture.server.address();
+        if (!address || typeof address === "string") throw new Error("Protocol fixture did not bind a TCP port");
+        const origin = `http://127.0.0.1:${address.port}`;
+        const task = liveImageTask(origin, {
+            id: "image-gemini-edit-live",
+            kind: "edit",
+            references: [{ name: "reference.png", type: "image/png", dataUrl: PNG_DATA_URL }],
+            config: {
+                baseUrl: origin,
+                apiKey: "fixture-key",
+                apiFormat: "gemini",
+                model: "gemini-image",
+                channelId: "fixture-gemini",
+                advancedConfig: { ...emptyAdvancedConfig(), protocol: "compatible", createPath: "/models/:model:generateContent", supportsReferenceImage: true },
+            },
+        });
+
+        try {
+            await expect(runGeminiImageTask(task, origin, "")).resolves.toMatchObject({ dataUrl: expect.stringMatching(/^data:image\/png;base64,/) });
+            expect(fixture.requests).toHaveLength(1);
+            expect(fixture.requests[0]?.path).toBe("/v1beta/models/gemini-image:generateContent");
+            const body = JSON.parse(fixture.requests[0]?.body.toString("utf8") || "{}");
+            expect(body.contents[0].parts[1]).toEqual({ inlineData: { mimeType: "image/png", data: PNG_BASE64 } });
         } finally {
             await new Promise<void>((resolve, reject) => fixture.server.close((error?: Error) => (error ? reject(error) : resolve())));
         }

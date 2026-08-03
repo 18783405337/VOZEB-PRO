@@ -3,10 +3,32 @@ import { getLatestCanvasProjectOverview } from "@/lib/server/canvas-project-stor
 import { createPostgresRepositories, ensurePostgresSchema, isPostgresDatabaseEnabled } from "@/lib/server/database";
 import { readGenerationLogDb, stableAssetUrl } from "@/lib/server/generation-log-repository";
 import type { StoredGenerationLog } from "@/lib/server/generation-log-types";
+import { listAgentRuns, type AgentRun } from "@/lib/server/agent-run-store";
 
 export async function getCreateWorkbenchOverview(userId: string): Promise<CreateWorkbenchOverviewPayload> {
-    const [latestProject, generation] = await Promise.all([getLatestCanvasProjectOverview(userId), getCreateGenerationOverview(userId)]);
-    return { latestProject, ...generation };
+    const [latestProject, generation, agentRuns] = await Promise.all([getLatestCanvasProjectOverview(userId), getCreateGenerationOverview(userId), listAgentRuns(userId, 20)]);
+    const runningTasks = [...buildCreateAgentRunOverview(agentRuns), ...generation.runningTasks]
+        .filter((task, index, tasks) => tasks.findIndex((candidate) => candidate.id === task.id) === index)
+        .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))
+        .slice(0, 4);
+    return { latestProject, runningTasks, recentAssets: generation.recentAssets };
+}
+
+export function buildCreateAgentRunOverview(runs: AgentRun[]): CreateOverviewTask[] {
+    return runs.flatMap((run): CreateOverviewTask[] => {
+        if (run.surface !== "chat" || (run.status !== "planning" && run.status !== "running" && run.status !== "paused")) return [];
+        return [
+            {
+                id: run.id,
+                kind: run.tasks.some((task) => task.type === "video") ? "video" : run.tasks.some((task) => task.type === "image") ? "image" : "agent",
+                source: "agent",
+                title: run.prompt.trim().slice(0, 80) || "Agent 创作任务",
+                createdAt: new Date(run.createdAt).toISOString(),
+                conversationId: run.conversationId,
+                status: run.status,
+            },
+        ];
+    });
 }
 
 export function buildCreateGenerationOverview(logs: StoredGenerationLog[]): Pick<CreateWorkbenchOverviewPayload, "runningTasks" | "recentAssets"> {

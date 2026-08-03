@@ -23,10 +23,10 @@ const advanced: SystemChannelAdvancedConfig = {
 };
 
 describe("parseChannelExampleConfig", () => {
-    it("recognizes Qingyan as an explicit provider protocol", () => {
+    it("keeps non-standard video examples in the generic compatible protocol", () => {
         const channel = { id: "one", name: "测试", baseUrl: "", apiKey: "", apiFormat: "openai", models: [], enabled: false } satisfies SystemModelChannel;
-        const result = parseChannelExampleConfig('curl https://api2.qingyanzhiying.top/v1/video/generations -d {"model":"video-v1","prompt":"test","duration":5}', channel, advanced);
-        expect(result?.patch.advancedConfig?.protocol).toBe("qingyan");
+        const result = parseChannelExampleConfig('curl https://api.example.com/v1/video/generations -d {"model":"video-v1","prompt":"test","duration":5}', channel, advanced);
+        expect(result?.patch.advancedConfig?.protocol).toBe("compatible");
         expect(result?.patch.advancedConfig?.createPath).toBe("/video/generations");
     });
 

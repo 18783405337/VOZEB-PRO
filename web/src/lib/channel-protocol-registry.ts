@@ -76,6 +76,22 @@ const seedanceSpecialOperation: ProtocolOperation = {
     supportsReferenceAudio: true,
 };
 
+const vozebRecommendedVideoOperation: ProtocolOperation = {
+    capability: "video",
+    createPath: "/v1/videos/generations",
+    imageToVideoPath: "/v1/videos/generations",
+    queryPath: "/v1/videos/generations/:task_id",
+    requestTemplate:
+        '{"model":"{{model}}","prompt":"{{prompt}}","duration":"{{duration}}","resolution":"{{resolution}}","generate_audio":"{{generate_audio}}","aspect_ratio":"{{aspect_ratio}}","images":"{{images}}","videos":"{{videos}}","audios":"{{audios}}"}',
+    resultField: "metadata.url",
+    statusField: "status",
+    durationRange: "5-15 秒",
+    referenceRule: "使用 application/json；参考图片、视频和音频分别写入 images、videos、audios 字符串数组。Seedance 2.0-fast-720p 仅支持参考图片且不支持声音生成。",
+    supportsReferenceImage: true,
+    supportsReferenceVideo: true,
+    supportsReferenceAudio: true,
+};
+
 const stableDiffusionOperation: ProtocolOperation = {
     capability: "image",
     createPath: "/sdapi/v1/txt2img",
@@ -163,6 +179,18 @@ const definitions: ChannelProtocolDefinition[] = [
         strict: true,
     },
     {
+        id: "vozeb-recommended",
+        label: "VOZEB推荐",
+        description: "VOZEB 推荐的 JSON 异步视频协议，支持多模态参考素材与持久结果地址。",
+        apiFormat: "openai",
+        authMode: "bearer",
+        defaultBaseUrl: "https://new.aiym.ink/v1",
+        modelCatalogPaths: ["/v1/models"],
+        capabilities: ["video"],
+        operations: { video: vozebRecommendedVideoOperation },
+        strict: true,
+    },
+    {
         id: "seedance-special",
         label: "Seedance 2.0 特价版",
         description: "按特价版接口文档固定模型、参数、素材与轮询路径。",
@@ -183,17 +211,6 @@ const definitions: ChannelProtocolDefinition[] = [
         authMode: "bearer",
         modelCatalogPaths: [],
         capabilities: ["text", "image", "video", "audio"],
-        operations: {},
-        advanced: true,
-    },
-    {
-        id: "qingyan",
-        label: "青衍智影",
-        description: "保留现有青衍图片与视频兼容适配。",
-        apiFormat: "openai",
-        authMode: "bearer",
-        modelCatalogPaths: ["/v1/models"],
-        capabilities: ["image", "video"],
         operations: {},
         advanced: true,
     },

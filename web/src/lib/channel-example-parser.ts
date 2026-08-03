@@ -1,5 +1,4 @@
 import type { SystemChannelAdvancedConfig, SystemChannelProtocol, SystemModelChannel } from "@/lib/auth/store";
-import { isQingyanProvider } from "@/lib/provider-compatibility";
 
 type ChannelExampleParseResult = {
     patch: Partial<SystemModelChannel>;
@@ -278,7 +277,6 @@ function inferProtocol(raw: string, endpoint: EndpointMatch | null, requestBody:
     if (source.includes("/sdapi/v1/txt2img") || source.includes("/sdapi/v1/img2img") || source.includes("alwayson_scripts")) return "custom";
     if (source.includes("sub2api") || source.includes("code2alita.com")) return "sub2api";
     if (/\bnew\s*api\b|new-api|one-api/i.test(source)) return "newapi";
-    if (isQingyanProvider({ baseUrl: endpoint?.requestUrl || "" }) || source.includes("qingyanzhiying")) return "qingyan";
     if (source.includes("globalaiopc.com") || source.includes("/videos/videos") || source.includes("referenceimages")) return "globalaiopc";
     if (source.includes("ark.cn-beijing.volces.com/api/v3")) return "volcengine-video";
     if (source.includes("seedance") || source.includes("/contents/generations/tasks") || source.includes("/api/plan/v3")) return "seedance";
@@ -437,7 +435,7 @@ function formatPath(path: Array<string | number>) {
 function protocolLabel(protocol: SystemChannelProtocol) {
     if (protocol === "sub2api") return "sub2api";
     if (protocol === "newapi") return "New API";
-    if (protocol === "qingyan") return "青衍智影";
+    if (protocol === "vozeb-recommended") return "VOZEB推荐";
     if (protocol === "globalaiopc") return "GlobalAiOpc";
     if (protocol === "seedance") return "Seedance";
     if (protocol === "volcengine-video") return "火山方舟视频";

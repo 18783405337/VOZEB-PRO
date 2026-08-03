@@ -26,13 +26,50 @@ const channel = {
 describe("channel protocol registry", () => {
     it("exposes SD2 video and Stable Diffusion image as separate protocols", () => {
         const protocols = channelProtocolOptions().map((item) => item.value);
-        expect(protocols).toEqual(expect.arrayContaining(["openai", "seedance", "stable-diffusion", "volcengine-video", "sub2api", "newapi", "seedance-special", "custom"]));
+        expect(protocols).toEqual(expect.arrayContaining(["openai", "seedance", "stable-diffusion", "volcengine-video", "sub2api", "newapi", "vozeb-recommended", "seedance-special", "custom"]));
         expect(channelProtocolDefinition("openai").modelCatalogPaths).toEqual(["/v1/models"]);
         expect(channelProtocolDefinition("sub2api").modelCatalogPaths).toEqual(["/v1/models"]);
         expect(channelProtocolDefinition("newapi").modelCatalogPaths).toEqual(["/v1/models"]);
+        expect(channelProtocolDefinition("vozeb-recommended").modelCatalogPaths).toEqual(["/v1/models"]);
         expect(channelProtocolDefinition("seedance").modelCatalogPaths).toEqual(["/models"]);
         expect(channelProtocolDefinition("volcengine-video").modelCatalogPaths).toEqual(["/api/v3/models"]);
         expect(channelProtocolDefinition("stable-diffusion").modelCatalogPaths).toEqual(["/sdapi/v1/sd-models"]);
+    });
+
+    it("keeps strict protocol paths and request contracts isolated", () => {
+        expect(channelProtocolDefinition("openai").operations).toMatchObject({
+            text: { createPath: "/chat/completions" },
+            image: { createPath: "/images/generations", editPath: "/images/edits" },
+            video: { createPath: "/videos", queryPath: "/videos/:task_id", requestTemplate: expect.stringContaining("multipart/form-data") },
+            audio: { createPath: "/audio/speech" },
+        });
+        expect(channelProtocolDefinition("sub2api").operations.image).toMatchObject({ createPath: "/images/generations", editPath: "/images/generations", requestTemplate: expect.stringContaining("image_urls") });
+        expect(channelProtocolDefinition("newapi").operations).toEqual(channelProtocolDefinition("openai").operations);
+        expect(channelProtocolDefinition("seedance").operations.video).toMatchObject({ createPath: "/contents/generations/tasks", queryPath: "/contents/generations/tasks/:task_id", resultField: "content.video_url" });
+        expect(channelProtocolDefinition("volcengine-video").operations.video).toEqual(channelProtocolDefinition("seedance").operations.video);
+        expect(channelProtocolDefinition("stable-diffusion").operations.image).toMatchObject({ createPath: "/sdapi/v1/txt2img", editPath: "/sdapi/v1/img2img", resultField: "images[0]" });
+        expect(channelProtocolDefinition("seedance-special").operations.video).toMatchObject({ createPath: "/v1/seedance-special/videos", queryPath: "/v1/videos/:task_id" });
+        expect(channelProtocolDefinition("vozeb-recommended").operations.video).toMatchObject({
+            createPath: "/v1/videos/generations",
+            imageToVideoPath: "/v1/videos/generations",
+            queryPath: "/v1/videos/generations/:task_id",
+            resultField: "metadata.url",
+            statusField: "status",
+        });
+    });
+
+    it("applies the VOZEB recommended preset to frontend channel drafts", () => {
+        const configured = applyChannelProtocol({ ...channel, models: ["Seedance 2.0-fast-720p"] }, "vozeb-recommended");
+
+        expect(configured).toMatchObject({ baseUrl: "https://new.aiym.ink/v1", apiFormat: "openai" });
+        expect(configured.advancedConfig).toMatchObject({
+            protocol: "vozeb-recommended",
+            createPath: "/v1/videos/generations",
+            queryPath: "/v1/videos/generations/:task_id",
+            modelCatalogPaths: ["/v1/models"],
+        });
+        expect(configured.advancedConfig?.modelCapabilities?.["seedance 2.0-fast-720p"]).toBe("video");
+        expect(channelProtocolValidationErrors(configured)).toEqual([]);
     });
 
     it("applies independent image edit and image-to-video paths", () => {

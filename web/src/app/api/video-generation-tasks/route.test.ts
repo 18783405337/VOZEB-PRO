@@ -366,8 +366,8 @@ describe("video generation candidate failover", () => {
         expect(mocks.fetchInternalApi).not.toHaveBeenCalled();
     });
 
-    it("sends a Qingyan image-to-video request with the real reference and current parameters", async () => {
-        mocks.getAuthSettings.mockResolvedValue(qingyanSettings());
+    it("sends a compatible image-to-video request with the real reference and current parameters", async () => {
+        mocks.getAuthSettings.mockResolvedValue(publicUrlCompatibleSettings());
         mocks.fetchInternalApi.mockResolvedValue(json({ id: "upstream-image-video", status: "queued" }));
 
         const response = await POST(request({ model: "video", videoSeconds: "10", size: "9:16", vquality: "1080" }, [{ type: "image", url: "https://cdn.example.com/reference.jpg" }]));
@@ -379,11 +379,11 @@ describe("video generation candidate failover", () => {
         expect(upstreamBody.prompt).toContain("A test video");
         expect(upstreamBody.prompt).toContain("将参考图作为首帧、主体身份、外观和场景的主要依据");
         expect(upstreamBody.prompt).toContain("禁止替换主体");
-        expect(upstreamBody).not.toHaveProperty("images");
+        expect(upstreamBody.images).toEqual(["https://cdn.example.com/reference.jpg"]);
     });
 
-    it("sends a Qingyan text-to-video request without empty reference fields", async () => {
-        mocks.getAuthSettings.mockResolvedValue(qingyanSettings());
+    it("sends a compatible text-to-video request without empty reference fields", async () => {
+        mocks.getAuthSettings.mockResolvedValue(publicUrlCompatibleSettings());
         mocks.fetchInternalApi.mockResolvedValue(json({ id: "upstream-text-video", status: "queued" }));
 
         const response = await POST(request({ model: "video", videoSeconds: "5", size: "16:9", vquality: "720" }));
@@ -399,7 +399,7 @@ describe("video generation candidate failover", () => {
     });
 
     it("converts workbench pixel sizes into the provider ratio field", async () => {
-        mocks.getAuthSettings.mockResolvedValue(qingyanSettings());
+        mocks.getAuthSettings.mockResolvedValue(publicUrlCompatibleSettings());
         mocks.fetchInternalApi.mockResolvedValue(json({ id: "upstream-pixel-ratio", status: "queued" }));
 
         const response = await POST(request({ model: "video", size: "1280x720" }));
@@ -545,7 +545,7 @@ describe("video generation candidate failover", () => {
     });
 
     it("rejects local reference URLs before creating a public-URL provider task", async () => {
-        mocks.getAuthSettings.mockResolvedValue(qingyanSettings());
+        mocks.getAuthSettings.mockResolvedValue(publicUrlCompatibleSettings());
 
         const response = await POST(request({ model: "video" }, [{ type: "image", url: "http://127.0.0.1:3000/api/reference-assets/reference.jpg" }]));
 
@@ -588,14 +588,14 @@ function request(config: Record<string, unknown> = { model: "video" }, reference
     });
 }
 
-function qingyanSettings() {
+function publicUrlCompatibleSettings() {
     return {
         ...settings,
         systemChannels: [
             {
                 ...channels[0],
                 advancedConfig: {
-                    protocol: "qingyan",
+                    protocol: "compatible",
                     supportsReferenceImage: true,
                     supportsReferenceVideo: false,
                     supportsReferenceAudio: false,

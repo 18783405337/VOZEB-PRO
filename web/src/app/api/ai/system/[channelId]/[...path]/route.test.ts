@@ -479,6 +479,68 @@ describe("Stable Diffusion proxy", () => {
     });
 });
 
+describe("VOZEB recommended video proxy", () => {
+    beforeEach(() => {
+        vi.restoreAllMocks();
+        mocks.consumeUserPoints.mockReset().mockResolvedValue(undefined);
+        mocks.refundUserPoints.mockReset();
+        mocks.safeUrl.mockResolvedValue(true);
+        mocks.taskAccess.mockReset().mockResolvedValue(true);
+        mocks.getAuthSettings.mockResolvedValue({
+            generationPointMultipliers: {},
+            logicalModels: [logicalModel("vozeb-video", "video", "Seedance 2.0-fast-720p")],
+            systemChannels: [
+                {
+                    id: "channel-one",
+                    enabled: true,
+                    baseUrl: "https://new.aiym.ink/v1",
+                    apiKey: "secret",
+                    apiFormat: "openai",
+                    models: ["Seedance 2.0-fast-720p"],
+                    advancedConfig: {
+                        protocol: "vozeb-recommended",
+                        createPath: "/v1/videos/generations",
+                        imageToVideoPath: "/v1/videos/generations",
+                        queryPath: "/v1/videos/generations/:task_id",
+                        modelConfigs: {
+                            "seedance 2.0-fast-720p": {
+                                capability: "video",
+                                protocol: "vozeb-recommended",
+                                createPath: "/v1/videos/generations",
+                                queryPath: "/v1/videos/generations/:task_id",
+                            },
+                        },
+                    },
+                },
+            ],
+        });
+    });
+
+    it("keeps one v1 prefix for JSON creation and polling", async () => {
+        const fetchMock = vi
+            .spyOn(globalThis, "fetch")
+            .mockResolvedValueOnce(Response.json({ id: "video-one", task_id: "video-one", status: "queued" }))
+            .mockResolvedValueOnce(Response.json({ id: "video-one", status: "completed", metadata: { url: "https://new.aiym.ink/v1/video-media/video-one.mp4" } }));
+        const headers = { "content-type": "application/json", ...systemModelHeaders("vozeb-video", "Seedance 2.0-fast-720p") };
+        const createResponse = await POST(
+            new Request("http://localhost/api/ai/system/channel-one/v1/videos/generations", {
+                method: "POST",
+                headers,
+                body: JSON.stringify({ model: "Seedance 2.0-fast-720p", prompt: "test", duration: 5, generate_audio: false }),
+            }),
+            { params: Promise.resolve({ channelId: "channel-one", path: ["v1", "videos", "generations"] }) },
+        );
+        const queryResponse = await GET(new Request("http://localhost/api/ai/system/channel-one/v1/videos/generations/video-one", { headers }), {
+            params: Promise.resolve({ channelId: "channel-one", path: ["v1", "videos", "generations", "video-one"] }),
+        });
+
+        expect(createResponse.status).toBe(200);
+        expect(queryResponse.status).toBe(200);
+        expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(["https://new.aiym.ink/v1/videos/generations", "https://new.aiym.ink/v1/videos/generations/video-one"]);
+        expect(new Headers(fetchMock.mock.calls[0][1]?.headers).get("content-type")).toBe("application/json");
+    });
+});
+
 describe("custom protocol model routing", () => {
     beforeEach(() => {
         vi.restoreAllMocks();

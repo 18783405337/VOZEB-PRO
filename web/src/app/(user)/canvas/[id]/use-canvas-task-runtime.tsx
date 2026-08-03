@@ -10,10 +10,8 @@ import { waitForTextGenerationTask, type TextGenerationTask } from "@/services/a
 import { storeGeneratedVideo, waitForVideoGenerationTask } from "@/services/api/video";
 import type { AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
-import { NODE_DEFAULT_SIZE } from "../constants";
 import { CanvasNodeType, type CanvasNodeMetadata } from "../types";
 import { fitNodeSize } from "../utils/canvas-node-size";
-import { PANORAMA_IMAGE_SIZE } from "../utils/canvas-panorama";
 
 const CanvasAssistantPanel = dynamic(() => import("../components/canvas-assistant-panel").then((mod) => mod.CanvasAssistantPanel), { ssr: false });
 const loadAssetPickerModal = () => import("../components/asset-picker-modal").then((mod) => mod.AssetPickerModal);
@@ -21,6 +19,7 @@ const AssetPickerModal = dynamic(loadAssetPickerModal, { ssr: false, loading: ()
 
 import { CanvasHistoryEntry, NODE_STATUS_IDLE, NODE_STATUS_LOADING, NODE_STATUS_SUCCESS, VIDEO_NODE_MAX_HEIGHT, VIDEO_NODE_MAX_WIDTH } from "./canvas-page-elements";
 import { audioMetadata, imageMetadata, uploadGeneratedCanvasImage, videoMetadata } from "./canvas-page-utils";
+import { applyCanvasImageTaskResults } from "./canvas-image-task-results";
 
 import type { CanvasPageState } from "./use-canvas-page-state";
 
@@ -252,37 +251,19 @@ export function useCanvasTaskRuntime({ state }: { state: CanvasPageState }) {
     }, []);
 
     const completeImageTask = useCallback(async (nodeId: string, generationConfig: AiConfig, task: NonNullable<CanvasNodeMetadata["imageTask"]> | ImageGenerationTask, controller: AbortController, prompt?: string) => {
-        const image = await waitForImageGenerationTask(generationConfig, task, { signal: controller.signal });
-        const uploaded = await uploadGeneratedCanvasImage(image.dataUrl, image.remoteUrl, image.serverUrl);
-        setNodes((prev) => {
-            const target = prev.find((node) => node.id === nodeId);
-            const batchRootId = target?.metadata?.batchRootId;
-            return prev.map((node) => {
-                const shouldUpdateTarget = node.id === nodeId;
-                const shouldUpdateEmptyRoot = Boolean(batchRootId && node.id === batchRootId && (!node.metadata?.content || node.metadata.primaryImageId === nodeId));
-                if (!shouldUpdateTarget && !shouldUpdateEmptyRoot) return node;
-                const isPanorama = node.type === CanvasNodeType.Panorama;
-                const imageSize = isPanorama
-                    ? NODE_DEFAULT_SIZE[CanvasNodeType.Panorama]
-                    : fitNodeSize(uploaded.width, uploaded.height, node.width || NODE_DEFAULT_SIZE[CanvasNodeType.Image].width, node.height || NODE_DEFAULT_SIZE[CanvasNodeType.Image].height);
-                const center = { x: node.position.x + node.width / 2, y: node.position.y + node.height / 2 };
-                return {
-                    ...node,
-                    position: { x: center.x - imageSize.width / 2, y: center.y - imageSize.height / 2 },
-                    width: imageSize.width,
-                    height: imageSize.height,
-                    metadata: {
-                        ...node.metadata,
-                        ...imageMetadata(uploaded),
-                        ...(isPanorama ? { size: PANORAMA_IMAGE_SIZE, panoramaProjection: "equirectangular" as const } : {}),
-                        prompt: prompt || node.metadata?.prompt,
-                        imageTask: undefined,
-                        primaryImageId: shouldUpdateEmptyRoot ? nodeId : node.metadata?.primaryImageId,
-                        errorDetails: undefined,
-                    },
-                };
-            });
-        });
+        const result = await waitForImageGenerationTask(generationConfig, task, { signal: controller.signal });
+        const outputs = result.results?.length ? result.results : [result];
+        const uploaded = await Promise.all(outputs.map((image) => uploadGeneratedCanvasImage(image.dataUrl, image.remoteUrl, image.serverUrl)));
+        setNodes((prev) =>
+            applyCanvasImageTaskResults(prev, {
+                nodeId,
+                taskId: task.id,
+                images: uploaded.map((image) => ({ width: image.width, height: image.height, metadata: imageMetadata(image) })),
+                prompt,
+                model: generationConfig.model,
+                size: generationConfig.size,
+            }),
+        );
     }, []);
 
     const startAndCompleteImageTask = useCallback(

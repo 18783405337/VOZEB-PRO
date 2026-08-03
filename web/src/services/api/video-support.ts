@@ -3,7 +3,6 @@ import axios from "axios";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { browserReadableMediaUrl } from "@/lib/browser-media-url";
 import { resolveGeneratedMediaUrl } from "@/lib/media-url";
-import { isQingyanProvider } from "@/lib/provider-compatibility";
 import { getMediaBlob, readStoredMediaFile, uploadGeneratedMediaFile, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
 import { refreshUserPointsIfSystem, syncUserPointsFromHeaders } from "@/services/api/points";

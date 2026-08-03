@@ -9,6 +9,7 @@ import {
     imagePointsIdempotencyKey,
     imageSubmissionFetch,
     imageSubmissionResponseError,
+    imageReferenceToDataUrl,
     imageTaskPollAttempts,
     imageTaskPollUrls,
     isPendingImageStatus,
@@ -31,7 +32,12 @@ export async function runCustomImageTask(task: ImageTask, origin: string, public
     const size = resolveDeclarativeImageSize(config);
     const [width, height] = /^\d+x\d+$/.test(size) ? size.split("x").map(Number) : [undefined, undefined];
     const context = { ownerUserId: task.userId, taskId: task.id };
-    const images = (await Promise.all(task.references.map((reference) => publicImageReferenceRequestUrl(reference, origin, publicOrigin, context)))).filter(Boolean);
+    const inlineReferences = advanced.protocol === "stable-diffusion" || /\bbase64\b|data:image|\binline\b/i.test(advanced.referenceRule || "");
+    const images = (
+        await Promise.all(
+            task.references.map((reference, index) => (inlineReferences ? imageReferenceToDataUrl(reference, reference.name || `reference-${index + 1}.png`, origin, cookie) : publicImageReferenceRequestUrl(reference, origin, publicOrigin, context))),
+        )
+    ).filter(Boolean);
     const values = {
         model: config.model,
         prompt: withSystemPrompt(config, task.prompt),

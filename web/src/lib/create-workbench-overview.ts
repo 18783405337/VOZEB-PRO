@@ -16,10 +16,12 @@ export type CreateOverviewProject = {
 
 export type CreateOverviewTask = {
     id: string;
-    kind: "image" | "video";
+    kind: "agent" | "image" | "video";
     source: string;
     title: string;
     createdAt: string;
+    conversationId?: string;
+    status?: "planning" | "running" | "paused";
 };
 
 export type CreateOverviewAsset = CreateOverviewMedia & {

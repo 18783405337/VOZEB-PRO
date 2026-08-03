@@ -5,19 +5,16 @@ import { useEffect, useMemo, useState } from "react";
 import type { CreativeAgentModelOption } from "@/components/agent/creative-agent-controls";
 import type { AgentSkillWorkspace } from "@/lib/auth/store-types";
 import { listAgentSkills, type AgentSkillSummary } from "@/services/api/agent-skills";
-import { useConfigStore } from "@/stores/use-config-store";
+import { modelOptionLabel, selectableModelsByCapability, type AiConfig, useConfigStore } from "@/stores/use-config-store";
 
 export function useCreativeAgentModels(capabilities: CreativeAgentModelOption["capability"][] = ["image", "video", "audio"]) {
-    const logicalModels = useConfigStore((state) => state.config.logicalModels);
+    const config = useConfigStore((state) => state.config);
     const capabilityKey = capabilities.join(",");
-    return useMemo(() => {
-        const allowed = new Set(capabilityKey.split(","));
-        return logicalModels.flatMap((model) =>
-            model.enabled && model.capability !== "text" && allowed.has(model.capability) && model.bindings.some((binding) => binding.enabled)
-                ? [{ id: model.id, name: model.name, capability: model.capability as CreativeAgentModelOption["capability"] }]
-                : [],
-        );
-    }, [capabilityKey, logicalModels]);
+    return useMemo(() => creativeAgentModelsFromConfig(config, capabilityKey.split(",") as CreativeAgentModelOption["capability"][]), [capabilityKey, config]);
+}
+
+export function creativeAgentModelsFromConfig(config: AiConfig, capabilities: CreativeAgentModelOption["capability"][] = ["image", "video", "audio"]) {
+    return Array.from(new Set(capabilities)).flatMap((capability) => selectableModelsByCapability(config, capability).map((id) => ({ id, name: modelOptionLabel(config, id), capability })));
 }
 
 export function useCreativeAgentOptions(workspace: AgentSkillWorkspace, capabilities: CreativeAgentModelOption["capability"][] = ["image", "video", "audio"]) {

@@ -9,6 +9,7 @@ export type CreativeAgentRun = {
     inputMessageId: string;
     assistantMessageId: string;
     status: "planning" | "running" | "paused" | "completed" | "failed" | "cancelled";
+    updatedAt?: number;
     assetIds: string[];
     tasks: Array<{ id: string; title: string; status: "ready" | "running" | "completed" | "failed"; error?: string }>;
 };
@@ -74,6 +75,11 @@ export function controlCreativeAgentRun(runId: string, action: "cancel" | "pause
 
 export function getCreativeAgentRun(runId: string) {
     return request<{ run: CreativeAgentRun }>(`/api/agent/runs/${encodeURIComponent(runId)}`).then((data) => data.run);
+}
+
+export function listCreativeAgentRuns(surface: CreativeRunRequest["surface"] = "chat") {
+    const query = new URLSearchParams({ surface });
+    return request<{ runs: CreativeAgentRun[] }>(`/api/agent/runs?${query}`).then((data) => data.runs);
 }
 
 export function retryCreativeAgentTask(runId: string, taskId: string) {
@@ -142,6 +148,7 @@ export function watchCreativeAgentRun(runId: string, handlers: CreativeRunHandle
         handlers.onProgress(text(data?.reply) || "方案已确定，正在创建任务");
     });
     listen("task.running", ({ data }) => handlers.onProgress(`正在处理「${text(data?.title) || "创作任务"}」`));
+    listen("task.waiting", ({ data }) => handlers.onProgress(text(data?.error) || `「${text(data?.title) || "创作任务"}」仍在上游处理中，系统会继续恢复`));
     listen("task.child.completed", ({ data }) => {
         void refreshUserPointsIfSystem("system");
         const progress = taskProgress(data);

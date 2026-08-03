@@ -3,7 +3,6 @@ import axios from "axios";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { browserReadableMediaUrl } from "@/lib/browser-media-url";
 import { resolveGeneratedMediaUrl } from "@/lib/media-url";
-import { isQingyanProvider } from "@/lib/provider-compatibility";
 import { hasProviderReadSignatureShape, isReferenceAssetUrl } from "@/lib/reference-asset-url";
 import { getMediaBlob, readStoredMediaFile, uploadGeneratedMediaFile, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
@@ -221,8 +220,8 @@ export function uniquePayloads(payloads: Array<Record<string, unknown>>) {
     });
 }
 
-export function shouldUsePublicVideoReferenceUrls(config: AiConfig, path: string, qingyanVideoConfig: boolean) {
-    if (path === GLOBAL_AIOPC_VIDEO_CREATE_PATH || qingyanVideoConfig) return true;
+export function shouldUsePublicVideoReferenceUrls(config: AiConfig, path: string) {
+    if (path === GLOBAL_AIOPC_VIDEO_CREATE_PATH) return true;
     const rule = (config.advancedConfig?.referenceRule || "").trim().toLowerCase();
     return /\u516c\u7f51|public|next_public_site_url|localhost|must.*\burl\b|\burl\b.*only|\u5fc5\u987b.*\burl\b|\u4ec5.*\burl\b|\u53ea.*\burl\b/i.test(rule);
 }
@@ -268,11 +267,6 @@ export function buildGlobalAiOpcVideoMediaPayloads(images: string[]) {
     return [{ referenceImages: images }];
 }
 
-export function buildQingyanVideoMediaPayloads(images: string[]) {
-    if (!images.length) return [{}];
-    return images.length === 1 ? [{ image: images[0] }] : [{ images }, { image: images[0], images }];
-}
-
 export async function resolveCompatibleImageSources(image: ReferenceImage) {
     const sources: string[] = [];
     const dataUrl = (await imageToDataUrl(image)).trim();
@@ -282,7 +276,7 @@ export async function resolveCompatibleImageSources(image: ReferenceImage) {
     return uniqueStrings(sources);
 }
 
-export async function resolveQingyanImageSources(image: ReferenceImage) {
+export async function resolvePublicImageSources(image: ReferenceImage) {
     const directUrls = uniqueStrings([...externalPublicImageSourceCandidates(image.url), ...externalPublicImageSourceCandidates(image.dataUrl)]);
     if (directUrls.length) return directUrls;
 
@@ -339,10 +333,6 @@ export function externalPublicImageSourceCandidates(value?: string) {
         return [];
     }
     return [];
-}
-
-export function isQingyanVideoConfig(config: AiConfig, model: string) {
-    return isQingyanProvider({ baseUrl: config.baseUrl, model: modelOptionName(model), protocol: config.advancedConfig?.protocol });
 }
 
 export async function publishReferenceImage(dataUrl: string) {

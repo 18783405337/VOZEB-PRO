@@ -6,8 +6,12 @@ export function stableMediaUrl(value?: string) {
     return value && !value.startsWith("data:") && !value.startsWith("blob:") ? value : "";
 }
 
-export async function writeImageGenerationLog(task: ImageTask, status: "success" | "failed", result: { dataUrl?: string; remoteUrl?: string } | string, durationMs: number, error?: string) {
-    const resultUrl = typeof result === "string" ? result : result.remoteUrl || result.dataUrl || "";
+export async function writeImageGenerationLog(task: ImageTask, status: "success" | "failed", result: Array<{ dataUrl?: string; remoteUrl?: string }> | { dataUrl?: string; remoteUrl?: string } | string, durationMs: number, error?: string) {
+    const results = Array.isArray(result) ? result : [result];
+    const assets = results.flatMap((item) => {
+        const resultUrl = typeof item === "string" ? item : item.remoteUrl || item.dataUrl || "";
+        return resultUrl ? [{ type: "image" as const, url: resultUrl, remoteUrl: typeof item === "string" ? undefined : item.remoteUrl, targetSize: task.config.size }] : [];
+    });
     return recordGenerationTaskLogResult({
         logId: task.generationLogId,
         slotId: task.generationSlotId,
@@ -24,7 +28,7 @@ export async function writeImageGenerationLog(task: ImageTask, status: "success"
         model: generationModelId(task.config),
         summary: status === "success" ? (task.kind === "edit" ? "图生图调用完成" : "文生图调用完成") : "图片生成失败",
         durationMs,
-        asset: resultUrl ? { type: "image", url: resultUrl, remoteUrl: typeof result === "string" ? undefined : result.remoteUrl, targetSize: task.config.size } : undefined,
+        assets,
         error,
         canRetry: status === "failed" && task.retryable === true,
         taskKind: task.kind,

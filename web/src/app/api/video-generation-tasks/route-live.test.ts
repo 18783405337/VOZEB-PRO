@@ -6,7 +6,7 @@ import { queryVideoTaskUpstream } from "@/lib/server/video-task-runtime";
 import type { VideoTask } from "@/lib/server/video-task-store";
 import { emptyAdvancedConfig } from "@/lib/channel-protocol-registry";
 
-describe("GlobalAiOpc video creation over a live fixture", () => {
+describe("video creation protocols over a live fixture", () => {
     let close: (() => Promise<void>) | undefined;
 
     afterEach(async () => {
@@ -104,5 +104,67 @@ describe("GlobalAiOpc video creation over a live fixture", () => {
         const result = await queryVideoTaskUpstream({ config, upstream, userId: "user-live" } as unknown as VideoTask, "", "");
         expect(result).toMatchObject({ state: "result_ready", status: "completed", resultUrl: expect.stringContaining("/media/fixture.mp4") });
         expect(fixture.requests.map((request) => request.path)).toEqual(["/custom/videos", "/custom/results/" + upstream.id]);
+    });
+
+    it("uses the VOZEB recommended JSON contract and reads metadata.url", async () => {
+        const fixture = createProtocolFixtureServer();
+        await new Promise<void>((resolve) => fixture.server.listen(0, "127.0.0.1", resolve));
+        const address = fixture.server.address();
+        if (!address || typeof address === "string") throw new Error("Protocol fixture did not bind a TCP port");
+        const baseUrl = "http://127.0.0.1:" + address.port;
+        close = () => new Promise<void>((resolve, reject) => fixture.server.close((error?: Error) => (error ? reject(error) : resolve())));
+        const config = {
+            apiSource: "system" as const,
+            baseUrl,
+            apiKey: "system" as const,
+            apiFormat: "openai" as const,
+            model: "Seedance 2.0-fast-720p",
+            logicalModel: "video",
+            channelId: "vozeb-video",
+            advancedConfig: {
+                ...emptyAdvancedConfig(),
+                protocol: "vozeb-recommended" as const,
+                createPath: "/v1/videos/generations",
+                imageToVideoPath: "/v1/videos/generations",
+                queryPath: "/v1/videos/generations/:task_id",
+                requestTemplate: '{"model":"{{model}}","prompt":"{{prompt}}"}',
+                resultField: "metadata.url",
+                statusField: "status",
+                durationRange: "5-15 秒",
+                supportsReferenceImage: true,
+                supportsReferenceVideo: true,
+                supportsReferenceAudio: true,
+            },
+        };
+        const referenceUrl = "https://cdn.example.com/reference.png";
+
+        const upstream = await createUpstream(
+            "user-live",
+            "",
+            "",
+            config,
+            "animate a blue logo",
+            { videoSeconds: 5, size: "16:9", vquality: "720", videoGenerateAudio: true },
+            [{ type: "image", url: referenceUrl }],
+            { imageQuality: {}, videoQuality: { "720": 1 }, videoSeconds: { "5": 1 } },
+            "vozeb-video-request-live",
+        );
+
+        expect(upstream).toMatchObject({ model: config.model, pollPath: "/v1/videos/generations" });
+        expect(fixture.requests[0]).toMatchObject({ method: "POST", path: "/v1/videos/generations" });
+        expect(fixture.requests[0]?.contentType).toContain("application/json");
+        expect(JSON.parse(fixture.requests[0]?.body.toString("utf8") || "{}")).toEqual({
+            model: config.model,
+            prompt: "animate a blue logo",
+            duration: 5,
+            resolution: "720p",
+            generate_audio: false,
+            aspect_ratio: "16:9",
+            images: [referenceUrl],
+        });
+
+        const result = await queryVideoTaskUpstream({ config, upstream, userId: "user-live" } as unknown as VideoTask, "", "");
+        expect(result).toMatchObject({ state: "result_ready", status: "completed", resultUrl: expect.stringContaining("/media/fixture.mp4") });
+        expect(fixture.requests.map((request) => request.path)).toEqual(["/v1/videos/generations", "/v1/videos/generations/" + upstream.id]);
     });
 });

@@ -41,16 +41,17 @@ export async function recordGenerationLogDraft(input: GenerationLogInput) {
     return mutateOwnedGenerationLog(id, input.userId, (existing) => buildGenerationLogDraft({ ...input, requestSnapshot }, id, existing));
 }
 
-export async function recordGenerationTaskLogResult(input: GenerationTaskLogResultInput): Promise<{ log?: StoredGenerationLog; asset?: GenerationLogAsset }> {
+export async function recordGenerationTaskLogResult(input: GenerationTaskLogResultInput): Promise<{ log?: StoredGenerationLog; asset?: GenerationLogAsset; assets?: GenerationLogAsset[] }> {
     const logId = optionalText(input.logId, 120);
     const slotId = optionalText(input.slotId, 200);
     if (!logId || !slotId) {
         const log = await recordStandaloneGenerationTaskLog(input);
-        return { log, asset: log.assets[0] };
+        return { log, asset: log.assets[0], assets: log.assets };
     }
 
     let missing = false;
     let asset: GenerationLogAsset | undefined;
+    let assets: GenerationLogAsset[] = [];
     const log = await mutateOwnedGenerationLog(logId, input.userId, async (current) => {
         if (!current) {
             missing = true;
@@ -62,11 +63,15 @@ export async function recordGenerationTaskLogResult(input: GenerationTaskLogResu
             if (slot.taskId === input.taskId && slot.assetIndex !== undefined) asset = current.assets[slot.assetIndex];
             return current;
         }
-        [asset] = await normalizeTaskResultAsset(input, current);
-        return applyGenerationTaskLogResult(current, input, slot.id, asset);
+        assets = await normalizeTaskResultAssets(input, current);
+        [asset] = assets;
+        return applyGenerationTaskLogResult(current, input, slot.id, assets);
     });
-    if (missing) [asset] = await normalizeTaskResultAsset(input);
-    return { log: log || undefined, asset };
+    if (missing) {
+        assets = await normalizeTaskResultAssets(input);
+        [asset] = assets;
+    }
+    return { log: log || undefined, asset, assets };
 }
 
 export function renameGenerationLogForUser(userId: string, id: string, title: string) {
@@ -190,8 +195,9 @@ function mergeGenerationLogDraftSnapshot(existing: StoredGenerationLog["requestS
     };
 }
 
-function normalizeTaskResultAsset(input: GenerationTaskLogResultInput, existing?: StoredGenerationLog) {
-    return normalizeAssets(input.asset?.url ? [input.asset] : [], {
+function normalizeTaskResultAssets(input: GenerationTaskLogResultInput, existing?: StoredGenerationLog) {
+    const assets = input.assets?.length ? input.assets : input.asset?.url ? [input.asset] : [];
+    return normalizeAssets(assets, {
         ownerUserId: input.userId,
         source: input.source,
         conversationId: existing?.conversationId,
@@ -216,17 +222,17 @@ function recordStandaloneGenerationTaskLog(input: GenerationTaskLogResultInput) 
         model: input.model,
         summary: input.summary,
         durationMs: input.durationMs,
-        count: 1,
-        successCount: input.status === "success" ? 1 : 0,
+        count: Math.max(1, input.assets?.length || (input.asset?.url ? 1 : 0)),
+        successCount: input.status === "success" ? Math.max(1, input.assets?.length || (input.asset?.url ? 1 : 0)) : 0,
         failCount: input.status === "failed" ? 1 : 0,
-        assets: input.asset?.url ? [input.asset] : [],
+        assets: input.assets?.length ? input.assets : input.asset?.url ? [input.asset] : [],
         error: input.error,
         createdAt: input.createdAt,
         completedAt: Date.now(),
     });
 }
 
-function applyGenerationTaskLogResult(current: StoredGenerationLog | undefined, input: GenerationTaskLogResultInput, slotId: string, asset?: GenerationLogAsset) {
+function applyGenerationTaskLogResult(current: StoredGenerationLog | undefined, input: GenerationTaskLogResultInput, slotId: string, resultAssets: GenerationLogAsset[]) {
     if (!current?.requestSnapshot) return current;
     const snapshot = current.requestSnapshot;
     const slotIndex = snapshot.slots.findIndex((slot) => slot.id === slotId || (input.clientRequestId && slot.clientRequestId === input.clientRequestId));
@@ -236,16 +242,23 @@ function applyGenerationTaskLogResult(current: StoredGenerationLog | undefined, 
 
     const assets = [...current.assets];
     let assetIndex = previous.assetIndex;
-    if (input.status === "success" && asset) {
-        const existingAssetIndex = assets.findIndex((candidate) => stableAssetUrl(candidate) === stableAssetUrl(asset));
-        if (existingAssetIndex >= 0) assetIndex = existingAssetIndex;
-        else if (assetIndex !== undefined && assets[assetIndex]) assets[assetIndex] = asset;
-        else {
-            assetIndex = assets.length;
-            assets.push(asset);
+    const resultAssetIndexes: number[] = [];
+    if (input.status === "success") {
+        for (const [resultIndex, asset] of resultAssets.entries()) {
+            const existingAssetIndex = assets.findIndex((candidate) => stableAssetUrl(candidate) === stableAssetUrl(asset));
+            let nextIndex = existingAssetIndex;
+            if (nextIndex < 0 && resultIndex === 0 && assetIndex !== undefined && assets[assetIndex]) {
+                assets[assetIndex] = asset;
+                nextIndex = assetIndex;
+            } else if (nextIndex < 0) {
+                nextIndex = assets.length;
+                assets.push(asset);
+            }
+            resultAssetIndexes.push(nextIndex);
         }
+        assetIndex = resultAssetIndexes[0];
     }
-    const slots = snapshot.slots.map((slot, index) =>
+    let slots = snapshot.slots.map((slot, index) =>
         index === slotIndex
             ? {
                   ...slot,
@@ -263,6 +276,24 @@ function applyGenerationTaskLogResult(current: StoredGenerationLog | undefined, 
               }
             : slot,
     );
+    if (input.status === "success" && resultAssetIndexes.length > 1) {
+        const nextIndex = Math.max(-1, ...slots.map((slot) => slot.index)) + 1;
+        const extraSlots = resultAssetIndexes.slice(1).map((resultAssetIndex, offset) => ({
+            ...previous,
+            id: `${previous.id}:output:${offset + 2}`,
+            index: nextIndex + offset,
+            status: "success" as const,
+            assetIndex: resultAssetIndex,
+            clientRequestId: undefined,
+            taskId: input.taskId,
+            taskModel: input.model || previous.taskModel,
+            startedAt: previous.startedAt,
+            error: undefined,
+            canRetry: undefined,
+        }));
+        const extraIds = new Set(extraSlots.map((slot) => slot.id));
+        slots = [...slots.filter((slot) => !extraIds.has(slot.id)), ...extraSlots].sort((left, right) => left.index - right.index);
+    }
     return finalizeGenerationLog(
         { ...current, assets, taskId: current.taskId || input.taskId, durationMs: Math.max(current.durationMs, input.durationMs), requestSnapshot: { ...snapshot, slots }, updatedAt: new Date().toISOString() },
         slots,

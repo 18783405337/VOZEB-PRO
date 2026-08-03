@@ -508,7 +508,7 @@ export async function runTaskWithRetry(runId: string, task: AgentRunTask, origin
     const resumeExisting = task.childTasks?.some((child) => child.status === "pending") || (task.status === "running" && task.taskId && !task.childTasks?.length);
     const attempt = resumeExisting ? Math.max(1, task.attempts) : task.attempts + 1;
     if (!(await canContinue(runId, executionId))) return;
-    if (!(await patchTask(runId, task.id, { status: "running", attempts: attempt, error: undefined }, "task.running", executionId))) return;
+    if (!resumeExisting && !(await patchTask(runId, task.id, { status: "running", attempts: attempt, error: undefined }, "task.running", executionId))) return;
     try {
         const activeRun = await getAgentRun(runId);
         if (!activeRun || activeRun.executionId !== executionId) return;
@@ -539,7 +539,14 @@ export async function runTaskWithRetry(runId: string, task: AgentRunTask, origin
         );
         return "completed" as const;
     } catch (error) {
-        if (error instanceof AgentChildTaskDeferredError) return "deferred" as const;
+        if (error instanceof AgentChildTaskDeferredError) {
+            const latest = await getAgentRun(runId);
+            const latestTask = latest?.tasks.find((item) => item.id === task.id);
+            if (latestTask && latestTask.error !== error.message && (await canContinue(runId, executionId))) {
+                await patchTask(runId, task.id, { error: error.message }, "task.waiting", executionId);
+            }
+            return "deferred" as const;
+        }
         const message = toSafeGenerationErrorMessage(error, "生成任务失败");
         if (await canContinue(runId, executionId)) {
             const latest = await getAgentRun(runId);

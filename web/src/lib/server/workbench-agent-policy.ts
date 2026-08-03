@@ -2,6 +2,7 @@ import type { getAuthSettings } from "@/lib/auth/store";
 import { normalizeCreativeDeliverables, normalizeCreativeFoundation, withCreativeFoundation } from "@/lib/creative-agent-contract";
 import { extractImageSizeFromPrompt, normalizeImageSizeValue, parseImageDimensions } from "@/lib/image-size";
 import { normalizeWorkbenchAgentAttachments, type WorkbenchAgentAttachment } from "@/lib/workbench-agent-attachment";
+import { resolveModelAdvancedConfig } from "@/lib/server/generation-channel";
 import { resolveLogicalModelCandidates } from "@/lib/server/logical-model-router";
 import type { WorkbenchPlan, WorkbenchPlanChoice, WorkbenchPlanDecision } from "./workbench-agent-plan";
 
@@ -181,7 +182,7 @@ function workbenchModelOptions(settings: AuthSettings, workspace: WorkbenchWorks
                 model.enabled &&
                 model.capability === workspace &&
                 resolveLogicalModelCandidates(settings, workspace, model.id).some(
-                    (candidate) => channelSupportsReferenceTypes(candidate.channel.advancedConfig, referenceTypes) && profileSupportsReferenceTypes(candidate.capabilityProfile, referenceTypes),
+                    (candidate) => channelSupportsReferenceTypes(resolveModelAdvancedConfig(candidate.channel.advancedConfig, candidate.upstreamModel), referenceTypes) && profileSupportsReferenceTypes(candidate.capabilityProfile, referenceTypes),
                 ),
         )
         .map((model) => ({ id: model.id, name: model.name }));

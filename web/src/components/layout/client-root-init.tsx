@@ -8,7 +8,7 @@ import { usePathname } from "next/navigation";
 import { SiteAnnouncementPopup } from "@/components/layout/site-announcement-popup";
 import { applyPublicSystemSettings, useConfigStore } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
-import { loadPublicSession } from "@/stores/use-public-session-store";
+import { loadPublicSession, PUBLIC_SETTINGS_CHANGED_EVENT } from "@/stores/use-public-session-store";
 
 export function ClientRootInit({ children }: { children: ReactNode }) {
     const { message } = App.useApp();
@@ -20,15 +20,26 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
     useEffect(() => {
         if (installRoute) return;
         let cancelled = false;
-        void loadPublicSession()
-            .then((payload) => {
-                if (cancelled) return;
-                setUser(payload.user || null);
-                setConfig(applyPublicSystemSettings(useConfigStore.getState().config, payload.settings));
-            })
-            .catch(() => undefined);
+        const hydrate = (force = false) => {
+            void loadPublicSession({ force })
+                .then((payload) => {
+                    if (cancelled) return;
+                    setUser(payload.user || null);
+                    setConfig(applyPublicSystemSettings(useConfigStore.getState().config, payload.settings));
+                })
+                .catch(() => undefined);
+        };
+        const handleSettingsChanged = () => hydrate(true);
+        const handleVisibilityChange = () => {
+            if (document.visibilityState === "visible") hydrate(true);
+        };
+        hydrate();
+        window.addEventListener(PUBLIC_SETTINGS_CHANGED_EVENT, handleSettingsChanged);
+        document.addEventListener("visibilitychange", handleVisibilityChange);
         return () => {
             cancelled = true;
+            window.removeEventListener(PUBLIC_SETTINGS_CHANGED_EVENT, handleSettingsChanged);
+            document.removeEventListener("visibilitychange", handleVisibilityChange);
         };
     }, [installRoute, setConfig, setUser]);
 

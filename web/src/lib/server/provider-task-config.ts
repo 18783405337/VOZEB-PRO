@@ -23,8 +23,8 @@ export function resolvedProviderCreatePaths(config: SystemChannelAdvancedConfig 
 }
 
 export function providerQueryPaths(config: SystemChannelAdvancedConfig | undefined, taskId: string, fallbacks: string[]) {
-    const configured = config?.queryPath ? [providerTaskPath(config.queryPath, taskId)] : [];
-    return uniquePaths([...configured, ...fallbacks]);
+    const configured = config?.queryPath?.trim();
+    return uniquePaths(configured ? [providerTaskPath(configured, taskId)] : fallbacks);
 }
 
 export function buildProviderRequest(template: string | undefined, defaults: Record<string, unknown>, values: TemplateValues) {

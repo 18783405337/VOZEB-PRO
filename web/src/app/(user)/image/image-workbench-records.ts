@@ -85,6 +85,19 @@ export function updateResultAt(results: GenerationResult[], index: number, next:
     return results.map((item, itemIndex) => (itemIndex === index ? { ...item, ...next } : item));
 }
 
+export function replaceResultWithImageOutputs(results: GenerationResult[], resultId: string, images: GeneratedImage[]) {
+    if (!images.length) return results;
+    const outputPrefix = `${resultId}:output:`;
+    const retained = results.filter((item) => !item.id.startsWith(outputPrefix));
+    const targetIndex = retained.findIndex((item) => item.id === resultId);
+    const insertAt = targetIndex >= 0 ? targetIndex : retained.length;
+    const outputs = images.map((image, index): GenerationResult => {
+        const id = index ? `${outputPrefix}${index + 1}` : resultId;
+        return { id, status: "success", image: { ...image, id } };
+    });
+    return [...retained.slice(0, insertAt), ...outputs, ...retained.slice(targetIndex >= 0 ? insertAt + 1 : insertAt)];
+}
+
 export async function readStoredLogs(userId: string) {
     return (await readServerImageLogs()).map((log) => withLogOwner(log, userId));
 }

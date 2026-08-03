@@ -8,7 +8,6 @@ import { configureServerProxyDispatcher } from "@/lib/server/proxy-dispatcher";
 import { fetchInternalApi, isInternalApiBaseUrl, resolveInternalOrigin } from "@/lib/server/internal-origin";
 import { resolveGeneratedMediaUrl } from "@/lib/media-url";
 import { closestImageAspectRatio, parseImageDimensions } from "@/lib/image-size";
-import { isQingyanProvider } from "@/lib/provider-compatibility";
 import { resolveGlobalAiOpcPreset } from "@/lib/globalaiopc-catalog";
 import { toSafeGenerationErrorMessage } from "@/lib/server/generation-errors";
 import { generationModelId, toSystemGenerationChannel } from "@/lib/server/generation-channel";
@@ -33,6 +32,7 @@ import { GenerationSubmissionSafeFailure, GenerationSubmissionUncertainError, ge
 import {
     type CreateImageTaskBody,
     type ImageApiResponse,
+    type ImageTaskMediaResult,
     type ImageTaskResult,
     type ImageTaskRunResult,
     type GeminiPart,
@@ -109,8 +109,7 @@ export function textOrEmpty(value: unknown) {
 }
 
 export async function preferredImageResponseFormat(config: ImageTaskConfig): Promise<(typeof IMAGE_RESPONSE_FORMATS)[number]> {
-    const apiBase = await resolveConfiguredApiBaseUrl(config.baseUrl).catch(() => config.baseUrl);
-    return isQingyanProvider({ baseUrl: apiBase, model: config.model, protocol: config.advancedConfig?.protocol }) ? "b64_json" : "url";
+    return "url";
 }
 
 export async function openAiImageTaskPath(config: ImageTaskConfig, kind: ImageTask["kind"]) {
@@ -124,10 +123,10 @@ export async function openAiImageTaskPath(config: ImageTaskConfig, kind: ImageTa
 
     const ruleEditPath = configuredImageEditPath(config);
     if (ruleEditPath) return ruleEditPath;
-    if (!configuredPath) return isQingyanProvider({ baseUrl: apiBase, model: config.model, protocol: config.advancedConfig?.protocol }) ? "/images/generations" : "/images/edits";
+    if (!configuredPath) return "/images/edits";
 
     const referenceMode = configuredImageEditReferenceMode(config);
-    if (referenceMode === "json" || referenceMode === "public-url" || globalAiOpcImagePreset(config) || isQingyanProvider({ baseUrl: apiBase, model: config.model, protocol: config.advancedConfig?.protocol })) return configuredPath;
+    if (referenceMode === "json" || referenceMode === "public-url" || globalAiOpcImagePreset(config)) return configuredPath;
     if (isStandardOpenAiImageGenerationPath(configuredPath)) return configuredPath.replace(/\/generations$/i, "/edits");
     return configuredPath;
 }
@@ -148,12 +147,12 @@ export function isStandardOpenAiImageGenerationPath(path: string) {
 
 export async function shouldUseJsonImageEdit(config: ImageTaskConfig) {
     if (globalAiOpcImagePreset(config)) return true;
-    const apiBase = await resolveConfiguredApiBaseUrl(config.baseUrl).catch(() => config.baseUrl);
     const referenceMode = configuredImageEditReferenceMode(config);
+    const apiBase = await resolveConfiguredApiBaseUrl(config.baseUrl).catch(() => config.baseUrl);
     if (shouldUseSub2ApiImageEdit(config, apiBase)) return true;
     if (referenceMode === "json" || referenceMode === "public-url") return true;
     if (referenceMode === "multipart") return false;
-    return isQingyanProvider({ baseUrl: apiBase, model: config.model, protocol: config.advancedConfig?.protocol });
+    return false;
 }
 
 export function configuredImageEditReferenceMode(config: ImageTaskConfig): ImageEditReferenceMode {
@@ -293,6 +292,7 @@ export function imageTaskPollAttempts(config: ImageTaskConfig) {
 }
 
 export class ImageUpstreamTerminalError extends Error {}
+export class ImageQueryContractError extends Error {}
 
 export function geminiHeaders(config: ImageTaskConfig, cookie: string, pointsIdempotencyKey?: string) {
     const headers = taskHeaders(config, cookie, pointsIdempotencyKey);
@@ -317,18 +317,23 @@ export function withSystemPrompt(config: ImageTaskConfig, prompt: string) {
 export async function parseImagePayloadOrPoll(config: ImageTaskConfig, payload: ImageApiResponse, mediaBaseUrl: string, cookie: string, pollBaseUrl = mediaBaseUrl, singleStep = false): Promise<ImageTaskResult> {
     const payloadError = readImagePayloadError(payload);
     if (payloadError) throw new GenerationSubmissionSafeFailure(payloadError);
-    const image = findImageResult(payload, mediaBaseUrl, config);
-    if (image) return image;
+    const images = findImageResults(payload, mediaBaseUrl, config);
+    if (images.length) return imageTaskResultFromMedia(images);
 
     const taskId = readImageTaskId(payload);
     if (!taskId) throw new GenerationSubmissionUncertainError("图片接口没有返回图片或任务 ID，创建结果待确认");
     const explicitPollUrl = readImagePollUrl(config, payload, mediaBaseUrl, pollBaseUrl);
-    if (singleStep) return { dataUrl: "", pending: { id: taskId, mediaBaseUrl, pollBaseUrl, explicitPollUrl: explicitPollUrl || undefined } };
+    const upstream = { id: taskId, mediaBaseUrl, pollBaseUrl, explicitPollUrl: explicitPollUrl || undefined };
+    if (!imageTaskPollUrls(config, pollBaseUrl, taskId, explicitPollUrl).length) {
+        return { dataUrl: "", needsReview: { upstream, reason: "OpenAI 图片接口未返回图片，且渠道没有声明异步查询路径" } };
+    }
+    if (singleStep) return { dataUrl: "", pending: upstream };
     return pollOpenAiImageTask(config, taskId, mediaBaseUrl, pollBaseUrl, cookie, explicitPollUrl);
 }
 
 export async function pollOpenAiImageTask(config: ImageTaskConfig, taskId: string, mediaBaseUrl: string, pollBaseUrl: string, cookie: string, explicitPollUrl = "", singleStep = false): Promise<ImageTaskResult> {
     const pollUrls = imageTaskPollUrls(config, pollBaseUrl, taskId, explicitPollUrl);
+    if (!pollUrls.length) throw new ImageQueryContractError("OpenAI 图片任务缺少明确的异步查询路径");
     let lastError = "";
     for (let attempt = 0; attempt < (singleStep ? 1 : imageTaskPollAttempts(config)); attempt += 1) {
         for (const pollUrl of pollUrls) {
@@ -339,7 +344,7 @@ export async function pollOpenAiImageTask(config: ImageTaskConfig, taskId: strin
                 if (response.status === 404 || response.status === 405) continue;
                 throw new Error(message);
             }
-            const payload = (await response.json()) as ImageApiResponse;
+            const payload = await parseImageQueryJson(response);
             const baseUrl = response.headers.get("x-vozeb-pro-upstream-url") || mediaBaseUrl || pollUrl;
             const image = parseImagePayloadCompat(payload, baseUrl, config);
             if (image) return image;
@@ -354,42 +359,71 @@ export async function pollOpenAiImageTask(config: ImageTaskConfig, taskId: strin
     throw new Error(lastError || "图片生成超时，请稍后重试");
 }
 
+export async function parseImageQueryJson(response: Response): Promise<ImageApiResponse> {
+    const text = await response.text();
+    const contentType = response.headers.get("content-type") || "";
+    if (/^\s*(?:<!doctype\s+html|<html\b)/i.test(text)) {
+        throw new ImageQueryContractError(`图片任务查询路径返回了网页内容${contentType ? `（${contentType}）` : ""}`);
+    }
+    try {
+        return JSON.parse(text) as ImageApiResponse;
+    } catch {
+        throw new ImageQueryContractError("图片任务查询接口返回了无效 JSON");
+    }
+}
+
 export function parseImagePayloadCompat(payload: ImageApiResponse, baseUrl: string, config: ImageTaskConfig): ImageTaskResult | null {
     const error = readImagePayloadError(payload);
     if (error) throw new Error(error);
-    return findImageResult(payload, baseUrl, config);
+    const images = findImageResults(payload, baseUrl, config);
+    return images.length ? imageTaskResultFromMedia(images) : null;
 }
 
 export function findImageResult(value: unknown, baseUrl: string, config: ImageTaskConfig, depth = 0): ImageTaskResult | null {
+    const images = findImageResults(value, baseUrl, config, depth);
+    return images.length ? imageTaskResultFromMedia(images) : null;
+}
+
+export function findImageResults(value: unknown, baseUrl: string, config: ImageTaskConfig, depth = 0): ImageTaskMediaResult[] {
+    const images: ImageTaskMediaResult[] = [];
+    collectImageResults(value, baseUrl, config, depth, images);
+    const seen = new Set<string>();
+    return images.filter((image) => {
+        const key = image.remoteUrl || image.dataUrl;
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+}
+
+function collectImageResults(value: unknown, baseUrl: string, config: ImageTaskConfig, depth: number, images: ImageTaskMediaResult[]) {
     if (!value || depth > 6) return null;
     if (typeof value === "string") {
         const url = resolveImageUrlLike(value, baseUrl, config, false);
-        if (url) return url;
+        if (url) images.push(url);
         const dataUrl = resolveImageBase64Like(value);
-        return dataUrl ? { dataUrl } : null;
+        if (!url && dataUrl) images.push({ dataUrl });
+        return;
     }
     if (Array.isArray(value)) {
-        for (const item of value) {
-            const image = findImageResult(item, baseUrl, config, depth + 1);
-            if (image) return image;
-        }
-        return null;
+        for (const item of value) collectImageResults(item, baseUrl, config, depth + 1, images);
+        return;
     }
-    if (typeof value !== "object") return null;
+    if (typeof value !== "object") return;
     const record = value as Record<string, unknown>;
     for (const key of IMAGE_BASE64_KEYS) {
         const dataUrl = resolveImageBase64Like(stringField(record, key));
-        if (dataUrl) return { dataUrl };
+        if (dataUrl) images.push({ dataUrl });
     }
     for (const key of IMAGE_URL_KEYS) {
         const image = resolveImageUrlLike(stringField(record, key), baseUrl, config, true);
-        if (image) return image;
+        if (image) images.push(image);
     }
-    for (const key of IMAGE_CONTAINER_KEYS) {
-        const image = findImageResult(record[key], baseUrl, config, depth + 1);
-        if (image) return image;
-    }
-    return null;
+    for (const key of IMAGE_CONTAINER_KEYS) collectImageResults(record[key], baseUrl, config, depth + 1, images);
+}
+
+function imageTaskResultFromMedia(images: ImageTaskMediaResult[]): ImageTaskResult {
+    return { ...images[0], results: images };
 }
 
 export function resolveImageUrlLike(value: string, baseUrl: string, config: ImageTaskConfig, fromNamedField: boolean) {
@@ -468,7 +502,9 @@ export function isPendingImageStatus(status?: string) {
 export function imageTaskPollUrls(config: ImageTaskConfig, requestUrl: string, taskId: string, explicitPollUrl = "") {
     const cleanUrl = requestUrl.split("?")[0].replace(/\/+$/, "");
     const encodedTaskId = encodeURIComponent(taskId);
-    const pollUrls = [configuredImageTaskPollUrl(config, taskId, requestUrl), explicitPollUrl, `${cleanUrl}/${encodedTaskId}`];
+    const declared = [configuredImageTaskPollUrl(config, taskId, requestUrl), explicitPollUrl].filter(Boolean);
+    if (declared.length || !allowsImageProtocolFallback(config)) return Array.from(new Set(declared));
+    const pollUrls = [`${cleanUrl}/${encodedTaskId}`];
     const generationsUrl = cleanUrl.replace(/\/images\/(?:generations|edits)$/i, "/images/generations");
     if (generationsUrl !== cleanUrl) pollUrls.push(`${generationsUrl}/${encodedTaskId}`);
     return Array.from(new Set(pollUrls.filter(Boolean)));
@@ -688,6 +724,13 @@ export async function imageReferenceToFile(reference: ImageTaskReference, name: 
         }
     }
     throw lastError instanceof Error ? lastError : new Error("参考图读取失败");
+}
+
+export async function imageReferenceToDataUrl(reference: ImageTaskReference, name: string, origin: string, cookie: string) {
+    const inline = rawReferenceRequestUrlCandidates(reference).find((value) => /^data:image\//i.test(value));
+    if (inline) return inline;
+    const file = await imageReferenceToFile(reference, name, origin, cookie);
+    return `data:${file.type || reference.type || "image/png"};base64,${Buffer.from(await file.arrayBuffer()).toString("base64")}`;
 }
 
 export function dataUrlToFile(dataUrl: string, name: string, fallbackType?: string) {

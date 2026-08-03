@@ -7,7 +7,6 @@ import { finishGenerationAttempt, startGenerationAttempt, type GenerationAttempt
 import { fetchInternalApi, resolveInternalOrigin } from "@/lib/server/internal-origin";
 import { resolveLogicalModelCandidates } from "@/lib/server/logical-model-router";
 import { assertReferenceCapabilities, assertReferenceUrls, buildVideoProviderRequest, isProviderBusinessError, readProviderError, readProviderString, resolvedProviderCreatePaths } from "@/lib/server/provider-task-config";
-import { isQingyanProvider } from "@/lib/provider-compatibility";
 import { buildGlobalAiOpcVideoRequest, resolveGlobalAiOpcPreset } from "@/lib/globalaiopc-catalog";
 import { createVideoTask, transitionVideoTask, updateVideoTask, type VideoTask } from "@/lib/server/video-task-store";
 import { toSafeGenerationErrorMessage } from "@/lib/server/generation-errors";
@@ -22,6 +21,7 @@ import { runGenerationTaskRecoveryBatch } from "@/lib/server/generation-task-rec
 import { scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
 import { VIDEO_PROVIDER_MEDIA_KEYS, parseVideoProviderJson, readVideoProviderHttpError, readVideoProviderId, readVideoProviderUrl } from "@/lib/server/video-provider-response";
 import { buildSeedanceSpecialRequest } from "@/lib/seedance-special";
+import { assertVozebRecommendedVideoReferences, buildVozebRecommendedVideoRequest } from "@/lib/vozeb-recommended-video";
 import { systemAiBillingHeaders } from "@/lib/server/system-ai-billing";
 import { maintenanceWorkerContextHeaders, requestRuntimeCredential } from "@/lib/server/maintenance-auth";
 import { writeVideoGenerationLog } from "@/lib/server/video-task-log";
@@ -103,7 +103,8 @@ export async function POST(request: Request) {
                         : channel.advancedConfig,
                     references,
                 );
-                assertReferenceUrls(channel.advancedConfig, references, isQingyanProvider({ model: channel.model, protocol: channel.advancedConfig?.protocol }) || Boolean(globalPreset));
+                if (channel.advancedConfig?.protocol === "vozeb-recommended") assertVozebRecommendedVideoReferences(channel.model, references);
+                assertReferenceUrls(channel.advancedConfig, references, Boolean(globalPreset));
             } catch (error) {
                 capabilityError = error;
                 continue;
@@ -211,10 +212,10 @@ export async function createUpstream(
     const images = referenceUrls(references, "image");
     const videos = referenceUrls(references, "video");
     const audios = referenceUrls(references, "audio");
-    const qingyan = isQingyanProvider({ model: channel.model, protocol: channel.advancedConfig?.protocol });
-    const requestImage = qingyan && images.length > 1 ? "" : images[0] || "";
-    const requestImages = qingyan && images.length === 1 ? [] : images;
+    const requestImage = images[0] || "";
+    const requestImages = images;
     const dimensions = videoDimensions(raw.size, raw.vquality);
+    const generateAudio = raw.videoGenerateAudio !== false && raw.videoGenerateAudio !== "false";
     const values = {
         model: channel.model,
         prompt,
@@ -227,6 +228,7 @@ export async function createUpstream(
         quality: resolution(raw.vquality),
         width: dimensions.width,
         height: dimensions.height,
+        generate_audio: generateAudio,
         images: requestImages,
         videos,
         audios,
@@ -244,7 +246,7 @@ export async function createUpstream(
         aspect_ratio: values.aspect_ratio,
         resolution: values.resolution,
         quality: values.quality,
-        generate_audio: raw.videoGenerateAudio !== "false",
+        generate_audio: generateAudio,
         watermark: raw.videoWatermark === "true",
         ...(requestImage ? { image: requestImage } : {}),
         ...(requestImages.length ? { images: requestImages, image_urls: requestImages, reference_images: requestImages } : {}),
@@ -256,28 +258,40 @@ export async function createUpstream(
     const multipart = channel.advancedConfig?.requestTemplate?.trim().toLowerCase().startsWith("multipart/form-data") === true;
     const payload = multipart
         ? undefined
-        : channel.advancedConfig?.protocol === "seedance-special"
-          ? buildSeedanceSpecialRequest({
+        : channel.advancedConfig?.protocol === "vozeb-recommended"
+          ? buildVozebRecommendedVideoRequest({
                 model: channel.model,
                 prompt,
-                duration: values.duration === -1 ? 5 : (values.duration as number),
-                ratio: values.ratio as string,
-                generateAudio: raw.videoGenerateAudio !== "false",
-                references: { images, videos, audios },
+                duration: values.duration as number,
+                aspectRatio: values.aspect_ratio as string,
+                resolution: values.resolution as string,
+                generateAudio,
+                images,
+                videos,
+                audios,
             })
-          : globalPreset
-            ? buildGlobalAiOpcVideoRequest(globalPreset, {
+          : channel.advancedConfig?.protocol === "seedance-special"
+            ? buildSeedanceSpecialRequest({
                   model: channel.model,
                   prompt,
-                  duration: values.duration as number,
+                  duration: values.duration === -1 ? 5 : (values.duration as number),
                   ratio: values.ratio as string,
-                  resolution: values.resolution as string,
-                  images: requestImages.length ? requestImages : requestImage ? [requestImage] : [],
-                  videos,
-                  audios,
-                  generateAudio: raw.videoGenerateAudio !== "false",
+                  generateAudio,
+                  references: { images, videos, audios },
               })
-            : buildVideoProviderRequest(channel.advancedConfig?.requestTemplate, defaults, values);
+            : globalPreset
+              ? buildGlobalAiOpcVideoRequest(globalPreset, {
+                    model: channel.model,
+                    prompt,
+                    duration: values.duration as number,
+                    ratio: values.ratio as string,
+                    resolution: values.resolution as string,
+                    images: requestImages.length ? requestImages : requestImage ? [requestImage] : [],
+                    videos,
+                    audios,
+                    generateAudio,
+                })
+              : buildVideoProviderRequest(channel.advancedConfig?.requestTemplate, defaults, values);
     const requestBody = multipart ? await buildOpenAiVideoFormData({ model: channel.model, prompt, seconds: values.seconds as number, width: dimensions.width, height: dimensions.height, imageUrls: images, origin, cookie }) : JSON.stringify(payload);
     const imageToVideoPath = images.length ? channel.advancedConfig?.imageToVideoPath?.trim() : "";
     const createPaths = globalPreset ? [globalPreset.createPath] : imageToVideoPath ? [imageToVideoPath] : resolvedProviderCreatePaths(channel.advancedConfig, "video", CREATE_PATHS);

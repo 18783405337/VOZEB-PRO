@@ -17,6 +17,7 @@ import {
     matchesWorkbenchHistoryQuery,
     normalizeWorkbenchAgentSessions,
     removeWorkbenchAgentSessionsForRecords,
+    restoreLatestWorkbenchAgentSession,
 } from "./workbench-agent-session-store";
 
 const sessions: WorkbenchAgentSession[] = [
@@ -82,6 +83,21 @@ describe("工作台会话与生成记录", () => {
         expect(result).toMatchObject({ recordId: "record-1", loaded: true });
         expect(result.messages).toEqual([expect.objectContaining({ role: "user", text: "生成产品视频" }), expect.objectContaining({ role: "assistant", text: "已收到生成需求。" })]);
         expect(result.messages[0].attachments).toEqual([expect.objectContaining({ storageKey: "permanent/product.png", width: 1200, height: 800 })]);
+    });
+
+    it("restores the latest server conversation instead of creating another conversation", async () => {
+        mocks.getCreativeWorkbenchSession.mockResolvedValue({
+            id: "conversation-1",
+            recordId: "image-workbench:record-2",
+            hasMore: false,
+            messages: [{ id: "user-message", role: "user", status: "completed", content: "继续调整画面", metadata: { workspace: "image", contentVisibility: "public" } }],
+        });
+
+        const restored = await restoreLatestWorkbenchAgentSession("image", sessions);
+
+        expect(mocks.getCreativeWorkbenchSession).toHaveBeenCalledWith("conversation-1", "image");
+        expect(restored).toMatchObject({ id: "linked", creativeConversationId: "conversation-1", recordId: "record-2", loaded: true });
+        expect(restored?.messages).toEqual([expect.objectContaining({ role: "user", text: "继续调整画面" })]);
     });
 
     it("prepends an older page without duplicating messages", async () => {

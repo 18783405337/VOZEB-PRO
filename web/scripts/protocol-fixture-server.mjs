@@ -36,12 +36,14 @@ const GLOBAL_AIOPC_VIDEO_PATHS = new Set([
 export function createProtocolFixtureServer(options = {}) {
     const tasks = new Map();
     const requests = [];
+    let taskSequence = 0;
+    const nextTaskId = (kind) => `fixture-${kind}-${++taskSequence}`;
     const server = createServer(async (request, response) => {
         try {
             const url = new URL(request.url || "/", `http://${request.headers.host || "127.0.0.1"}`);
             const body = await readRequestBody(request);
             requests.push({ method: request.method || "GET", path: url.pathname, headers: request.headers, contentType: request.headers["content-type"] || "", body });
-            await handleFixtureRequest({ request, response, url, body, tasks, requests, options });
+            await handleFixtureRequest({ request, response, url, body, tasks, requests, nextTaskId, options });
         } catch (error) {
             sendJson(response, 500, { error: { message: error instanceof Error ? error.message : "fixture failed" } });
         }
@@ -49,7 +51,7 @@ export function createProtocolFixtureServer(options = {}) {
     return { server, requests, tasks };
 }
 
-async function handleFixtureRequest({ request, response, url, body, tasks, requests, options }) {
+async function handleFixtureRequest({ request, response, url, body, tasks, requests, nextTaskId, options }) {
     const path = fixturePath(url.pathname);
     const responseDelayMs = Math.max(0, Number(options.responseDelayMs) || 0);
     if (request.method === "POST" && responseDelayMs) await delay(responseDelayMs);
@@ -101,6 +103,9 @@ async function handleFixtureRequest({ request, response, url, body, tasks, reque
 
     if (request.method === "POST" && /\/models\/[^/]+:generateContent$/.test(path)) {
         const payload = jsonBody(body);
+        if (payload.generationConfig?.responseModalities?.includes("IMAGE")) {
+            return sendJson(response, 200, { candidates: [{ content: { parts: [{ inlineData: { mimeType: "image/png", data: PNG_BASE64 } }] } }] });
+        }
         const toolName = selectedToolName(payload);
         const text = toolName ? JSON.stringify(toolArguments(toolName, payload)) : "协议测试文本返回成功";
         return sendJson(response, 200, { candidates: [{ content: { parts: [{ text }] } }], usageMetadata: { promptTokenCount: 8, candidatesTokenCount: 8, totalTokenCount: 16 } });
@@ -108,7 +113,7 @@ async function handleFixtureRequest({ request, response, url, body, tasks, reque
     if (request.method === "POST" && path === "/planner/run") return sendJson(response, 200, { data: { plan: JSON.stringify({}) } });
 
     if (request.method === "POST" && GLOBAL_AIOPC_IMAGE_PATHS.has(path)) {
-        const id = `fixture-image-${tasks.size + 1}`;
+        const id = nextTaskId("image");
         tasks.set(id, { kind: "image", status: "completed" });
         return sendJson(response, 200, { task_id: id, status: "queued" });
     }
@@ -127,18 +132,36 @@ async function handleFixtureRequest({ request, response, url, body, tasks, reque
     if (request.method === "POST" && (GLOBAL_AIOPC_VIDEO_PATHS.has(path) || ["/videos", "/contents/generations/tasks", "/seedance-special/videos"].includes(path))) {
         const model = requestedModel(body, request.headers["content-type"] || "");
         if (shouldFailRequest(request, model)) return sendJson(response, model.includes("-fail") ? 400 : 503, { error: { message: "fixture video failure" } });
-        const id = `fixture-video-${tasks.size + 1}`;
+        const id = nextTaskId("video");
         tasks.set(id, { kind: "video", status: model.includes("-slow") ? "pending" : "completed" });
         return sendJson(response, 200, { id, task_id: id, status: "queued" });
     }
+    if (request.method === "POST" && path === "/videos/generations") {
+        if (
+            !String(request.headers["content-type"] || "")
+                .toLowerCase()
+                .includes("application/json")
+        )
+            return sendJson(response, 415, { code: "invalid_content_type", message: "VOZEB recommended video requests must use application/json", data: null });
+        const payload = jsonBody(body);
+        if (payload.model === "Seedance 2.0-fast-720p" && payload.generate_audio !== false) return sendJson(response, 400, { code: "invalid_request", message: "generate_audio must be false", data: null });
+        const id = nextTaskId("vozeb-video");
+        tasks.set(id, { kind: "vozeb-video", status: "completed" });
+        return sendJson(response, 200, { id, task_id: id, object: "video", model: payload.model, status: "queued", progress: 0, created_at: 0 });
+    }
     if (request.method === "POST" && path === "/custom/videos") {
-        const id = `fixture-custom-video-${tasks.size + 1}`;
+        const id = nextTaskId("custom-video");
         tasks.set(id, { kind: "custom-video", status: "completed" });
         return sendJson(response, 200, { data: { task_id: id, status: "queued" } });
     }
     const customVideoId = path.match(/^\/custom\/results\/([^/]+)$/)?.[1];
     if (request.method === "GET" && customVideoId) {
         return sendJson(response, 200, { data: { task_id: decodeURIComponent(customVideoId), status: "completed", video_url: `${url.origin}/media/fixture.mp4` } });
+    }
+    const vozebVideoId = path.match(/^\/videos\/generations\/([^/]+)$/)?.[1];
+    if (request.method === "GET" && vozebVideoId) {
+        const id = decodeURIComponent(vozebVideoId);
+        return sendJson(response, 200, { id, task_id: id, object: "video", status: "completed", progress: 100, metadata: { url: `${url.origin}/media/fixture.mp4` } });
     }
     const videoId = videoTaskId(path);
     if (request.method === "GET" && videoId) {
@@ -278,7 +301,7 @@ function videoTaskId(path) {
 
 function fixturePath(pathname) {
     const internal = pathname.replace(/^\/api\/ai\/system\/[^/]+(?=\/)/, "");
-    return internal.replace(/^\/v1(?=\/)/, "");
+    return internal.replace(/^\/(?:v1beta|v1)(?=\/)/, "");
 }
 
 function createWave() {

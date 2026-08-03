@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { StoredGenerationLog } from "@/lib/server/generation-log-types";
 
-import { buildCreateGenerationOverview } from "./create-workbench-overview-service";
+import { buildCreateAgentRunOverview, buildCreateGenerationOverview } from "./create-workbench-overview-service";
 
 describe("create workbench overview service", () => {
     it("returns four running tasks and six latest unique stable assets", () => {
@@ -23,6 +23,15 @@ describe("create workbench overview service", () => {
         expect(overview.recentAssets[0]).toMatchObject({ id: "success-new-0", url: "/api/media/image-one.webp" });
         expect(overview.recentAssets.filter((asset) => asset.url === "/api/media/image-one.webp")).toHaveLength(1);
         expect(overview.recentAssets.some((asset) => asset.url.startsWith("data:"))).toBe(false);
+    });
+
+    it("keeps active Agent runs linked to their original conversation", () => {
+        const tasks = buildCreateAgentRunOverview([
+            { id: "run-one", surface: "chat", status: "running", prompt: "生成西瓜海报", conversationId: "conversation-one", createdAt: 100, tasks: [{ type: "image" }] },
+            { id: "run-two", surface: "chat", status: "completed", prompt: "已完成", conversationId: "conversation-two", createdAt: 200, tasks: [] },
+        ] as never);
+
+        expect(tasks).toEqual([expect.objectContaining({ id: "run-one", kind: "image", source: "agent", conversationId: "conversation-one", status: "running" })]);
     });
 });
 

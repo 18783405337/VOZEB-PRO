@@ -49,6 +49,10 @@ describe("provider task config", () => {
         expect(readProviderString({ result: { data: [{ url: "/api/v1/gen/cached/generated/result.mp4" }] } }, "result.data[0].url / video_url / url", ["video_url", "url"])).toBe("/api/v1/gen/cached/generated/result.mp4");
     });
 
+    it("uses an explicit query path without appending guessed fallbacks", () => {
+        expect(providerQueryPaths({ queryPath: "/tasks/:task_id" } as never, "task-one", ["/videos/task-one", "/result/task-one"])).toEqual(["/tasks/task-one"]);
+    });
+
     it("renders documented cancellation paths with encoded task ids", () => {
         expect(providerTaskPath("/jobs/:task_id/cancel", "task 1")).toBe("/jobs/task%201/cancel");
         expect(providerTaskPath("/jobs?task_id={{taskId}}", "task 1")).toBe("/jobs?task_id=task%201");

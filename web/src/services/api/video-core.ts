@@ -3,7 +3,6 @@ import axios from "axios";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { browserReadableMediaUrl } from "@/lib/browser-media-url";
 import { resolveGeneratedMediaUrl } from "@/lib/media-url";
-import { isQingyanProvider } from "@/lib/provider-compatibility";
 import { getMediaBlob, readStoredMediaFile, uploadGeneratedMediaFile, type UploadedFile } from "@/services/file-storage";
 import { GENERATION_TASK_NEEDS_REVIEW_MESSAGE, GenerationTaskNeedsReviewError, type GenerationTaskExecutionState } from "@/services/api/generation-task-state";
 import { GenerationTaskRequestError } from "@/services/api/generation-task-request-error";
@@ -229,7 +228,7 @@ export async function createUpstreamVideoGenerationTask(
     if (protocol === "seedance" || protocol === "volcengine-video" || (protocol === "auto" && isSeedanceVideoConfig(requestConfig))) {
         return createSeedanceTask(requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options);
     }
-    if (protocol === "globalaiopc" || protocol === "qingyan" || protocol === "compatible") {
+    if (protocol === "globalaiopc" || protocol === "compatible") {
         return createCompatibleVideoTask(requestConfig, selectedModel, prompt, references, options, videoReferences, audioReferences);
     }
     if (videoReferences.length || audioReferences.length) {

@@ -3,7 +3,6 @@ import axios from "axios";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { browserReadableMediaUrl } from "@/lib/browser-media-url";
 import { resolveGeneratedMediaUrl } from "@/lib/media-url";
-import { isQingyanProvider } from "@/lib/provider-compatibility";
 import { buildGlobalAiOpcVideoRequest, resolveGlobalAiOpcPreset } from "@/lib/globalaiopc-catalog";
 import { getMediaBlob, readStoredMediaFile, uploadGeneratedMediaFile, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
@@ -49,14 +48,12 @@ import {
     isRecord,
     buildCompatibleVideoMediaPayloads,
     buildGlobalAiOpcVideoMediaPayloads,
-    buildQingyanVideoMediaPayloads,
     resolveCompatibleImageSources,
-    resolveQingyanImageSources,
+    resolvePublicImageSources,
     resolveGlobalAiOpcImageSources,
     resolveGlobalAiOpcMediaReferenceSources,
     compatibleImageSourceCandidates,
     externalPublicImageSourceCandidates,
-    isQingyanVideoConfig,
     publishReferenceImage,
     uniqueStrings,
     normalizeCompatibleVideoDuration,
@@ -383,14 +380,11 @@ export function seedanceApiUrl(config: AiConfig, taskId?: string) {
 }
 
 export async function buildCompatibleVideoPayloadVariants(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], path: string, videoReferences: ReferenceVideo[] = [], audioReferences: ReferenceAudio[] = []) {
-    const qingyanVideoConfig = isQingyanVideoConfig(config, model);
     const globalPreset = globalAiOpcVideoPreset(config, model);
     const legacyGlobalAiOpc = !globalPreset && path === GLOBAL_AIOPC_VIDEO_CREATE_PATH;
-    const publicUrlReferenceMode = Boolean(globalPreset) || shouldUsePublicVideoReferenceUrls(config, path, qingyanVideoConfig);
+    const publicUrlReferenceMode = Boolean(globalPreset) || shouldUsePublicVideoReferenceUrls(config, path);
     const imageSources = await Promise.all(
-        references
-            .slice(0, 9)
-            .map((reference) => (globalPreset || legacyGlobalAiOpc ? Promise.resolve(resolveGlobalAiOpcImageSources(reference)) : publicUrlReferenceMode ? resolveQingyanImageSources(reference) : resolveCompatibleImageSources(reference))),
+        references.slice(0, 9).map((reference) => (globalPreset || legacyGlobalAiOpc ? Promise.resolve(resolveGlobalAiOpcImageSources(reference)) : publicUrlReferenceMode ? resolvePublicImageSources(reference) : resolveCompatibleImageSources(reference))),
     );
     const images = uniqueStrings(imageSources.flat());
     if ((globalPreset || legacyGlobalAiOpc) && references.length && !images.length) {
@@ -429,7 +423,7 @@ export async function buildCompatibleVideoPayloadVariants(config: AiConfig, mode
             }),
         ];
     }
-    const mediaPayloads = path === GLOBAL_AIOPC_VIDEO_CREATE_PATH ? buildGlobalAiOpcVideoMediaPayloads(images) : qingyanVideoConfig ? buildQingyanVideoMediaPayloads(images) : buildCompatibleVideoMediaPayloads(images);
+    const mediaPayloads = path === GLOBAL_AIOPC_VIDEO_CREATE_PATH ? buildGlobalAiOpcVideoMediaPayloads(images) : buildCompatibleVideoMediaPayloads(images);
     const templatePayloads = buildAdvancedVideoTemplatePayloads(config, model, prompt, {
         duration,
         ratio,

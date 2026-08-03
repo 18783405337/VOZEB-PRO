@@ -41,6 +41,7 @@ import {
     imageServerLogIds,
     normalizeGeneratedImage,
     readStoredLogs,
+    replaceResultWithImageOutputs,
     removeStoredImageLogs,
     resultsFromLog,
     saveStoredImageLog,
@@ -357,24 +358,33 @@ export function useImageWorkbenchController() {
 
     async function completeGenerationTask(logId: string, resultId: string, index: number, snapshot: GenerationSnapshot, pendingTask: PendingImageTask & { taskId: string }, controller?: AbortController) {
         const result = await waitForImageGenerationTask(snapshot.config, { id: pendingTask.taskId, kind: pendingTask.kind, model: pendingTask.model }, { signal: controller?.signal });
-        const imageMeta = await normalizeGeneratedImage(result.dataUrl, result.remoteUrl, result.serverUrl, result);
         const durationMs = Date.now() - pendingTask.startedAt;
-        const nextImage: GeneratedImage = {
-            id: resultId,
-            dataUrl: imageMeta.url,
-            remoteUrl: imageMeta.remoteUrl,
-            serverUrl: imageMeta.serverUrl,
-            storageKey: imageMeta.storageKey,
-            taskId: pendingTask.taskId,
-            slotIndex: index,
-            durationMs,
-            width: imageMeta.width,
-            height: imageMeta.height,
-            bytes: imageMeta.bytes,
-            mimeType: imageMeta.mimeType,
-        };
-        patchLogResult(logId, resultId, { status: "success", image: nextImage, error: undefined, canRetry: undefined, task: undefined }, snapshot, durationMs);
-        return nextImage;
+        const outputs = result.results?.length ? result.results : [result];
+        const images = await Promise.all(
+            outputs.map(async (output, outputIndex): Promise<GeneratedImage> => {
+                const imageMeta = await normalizeGeneratedImage(output.dataUrl, output.remoteUrl, output.serverUrl, output);
+                return {
+                    id: outputIndex ? `${resultId}:output:${outputIndex + 1}` : resultId,
+                    dataUrl: imageMeta.url,
+                    remoteUrl: imageMeta.remoteUrl,
+                    serverUrl: imageMeta.serverUrl,
+                    storageKey: imageMeta.storageKey,
+                    taskId: pendingTask.taskId,
+                    slotIndex: index + outputIndex,
+                    durationMs,
+                    width: imageMeta.width,
+                    height: imageMeta.height,
+                    bytes: imageMeta.bytes,
+                    mimeType: imageMeta.mimeType,
+                };
+            }),
+        );
+        const log = getLatestLog(logId);
+        if (!log || deletedResultIdsRef.current.has(`${logId}:${resultId}`)) return images[0];
+        const nextResults = replaceResultWithImageOutputs(getLogResults(log), resultId, images);
+        setLogResults(logId, nextResults);
+        persistLogResults(logId, snapshot, nextResults, durationMs);
+        return images[0];
     }
 
     const generate = async ({ promptOverride, userPrompt, signal, parameterPatch, conversationId }: { promptOverride?: string; userPrompt?: string; signal?: AbortSignal; parameterPatch?: WorkbenchAgentParameterPatch; conversationId?: string } = {}) => {

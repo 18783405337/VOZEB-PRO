@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUpRight, CheckCircle2, FileImage, LoaderCircle, Maximize2, Paperclip, RefreshCw, Video } from "lucide-react";
+import { ArrowUpRight, CheckCircle2, FileImage, LoaderCircle, Maximize2, Paperclip, RefreshCw, Sparkles, Video } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
@@ -11,6 +11,7 @@ import { imagePreviewUrl } from "@/lib/media-image-url";
 import { cn } from "@/lib/utils";
 
 import { useCreateWorkbenchOverview } from "../use-create-workbench-overview";
+import { createConversationHref } from "../create-conversation-navigation";
 
 const sectionTitleClass = "text-[15px] font-semibold text-[#20242a] dark:text-[#f3f5f7]";
 const sectionHintClass = "mt-1 text-xs text-[#8b949f] dark:text-[#7f8996]";
@@ -210,8 +211,9 @@ function RunningTasksCard({ tasks, loading, error, onRetry }: { tasks: CreateOve
 
 function TaskRow({ task }: { task: CreateOverviewTask }) {
     const isImage = task.kind === "image";
-    const href = task.source === "canvas" ? "/canvas" : isImage ? "/image" : "/video";
-    const Icon = isImage ? FileImage : Video;
+    const href = task.conversationId ? createConversationHref(task.conversationId) : task.source === "canvas" ? "/canvas" : isImage ? "/image" : "/video";
+    const Icon = task.kind === "agent" ? Sparkles : isImage ? FileImage : Video;
+    const status = task.status === "paused" ? "已暂停" : task.status === "planning" ? "规划中" : "运行中";
     return (
         <Link href={href} className="group flex min-w-0 items-center gap-3 py-3 first:pt-0 last:pb-0">
             <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-[#f1f3f5] text-[#697381] dark:bg-[#252a31] dark:text-[#aab2bd]">
@@ -219,7 +221,9 @@ function TaskRow({ task }: { task: CreateOverviewTask }) {
             </span>
             <span className="min-w-0 flex-1">
                 <span className="block truncate text-xs font-medium text-[#343b44] group-hover:text-[#20242a] dark:text-[#dce1e7] dark:group-hover:text-white">{task.title || (isImage ? "图片生成" : "视频生成")}</span>
-                <span className="mt-1 block truncate text-[11px] text-[#9aa2ad] dark:text-[#737d89]">{formatRecentTime(task.createdAt)} · 运行中</span>
+                <span className="mt-1 block truncate text-[11px] text-[#9aa2ad] dark:text-[#737d89]">
+                    {formatRecentTime(task.createdAt)} · {status}
+                </span>
             </span>
             <LoaderCircle className="size-4 shrink-0 animate-spin text-[#6e87db]" />
         </Link>

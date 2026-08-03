@@ -78,6 +78,7 @@ export type GenerationTaskLogResultInput = {
     summary: string;
     durationMs: number;
     asset?: Partial<GenerationLogAsset> & { url?: string; targetSize?: string };
+    assets?: Array<Partial<GenerationLogAsset> & { url?: string; targetSize?: string }>;
     error?: string;
     canRetry?: boolean;
     taskKind?: "generation" | "edit";

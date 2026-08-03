@@ -116,7 +116,7 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
         }
         if (!plan) throw latestPlanningError instanceof Error ? latestPlanningError : new Error("没有可用的文本模型渠道");
         if (claimed.surface === "canvas") plan = normalizeCanvasPlanForSelection(plan, claimed.snapshot, claimed.prompt);
-        const skills = selectAgentSkills(settings, claimed.surface, claimed.selectedSkillIds, plan.skillIds);
+        const skills = selectAgentSkills(settings, claimed.surface, claimed.selectedSkillIds);
         await updateAgentRunById(run.id, {}, { type: "skills.selected", data: { skills: skills.map((skill) => ({ id: skill.id, name: skill.name })) } }, ["running"], executionId);
         if (!(await canContinue(run.id, executionId))) {
             await refundAcceptedPlan();

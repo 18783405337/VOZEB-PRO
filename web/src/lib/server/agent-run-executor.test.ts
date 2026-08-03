@@ -368,12 +368,14 @@ describe("executeAgentRun backend settings", () => {
         expect(mocks.fetchInternalApi.mock.calls.filter((call) => call[1]?.method === "POST")).toHaveLength(1);
         expect(polls).toBe(1);
         expect(mocks.run?.status).toBe("running");
-        expect(mocks.run?.tasks[0]).toMatchObject({ status: "running", taskId: "child-transient", childTasks: [{ id: "child-transient", status: "pending" }] });
+        expect(mocks.run?.tasks[0]).toMatchObject({ status: "running", taskId: "child-transient", childTasks: [{ id: "child-transient", status: "pending" }], error: "生成任务查询暂时不可用" });
+        expect(mocks.events.filter((event) => event.type === "task.waiting")).toHaveLength(1);
 
         await executeAgentRun(mocks.run!, "http://localhost", "session=test");
 
         expect(mocks.fetchInternalApi.mock.calls.filter((call) => call[1]?.method === "POST")).toHaveLength(1);
         expect(polls).toBe(2);
+        expect(mocks.events.filter((event) => event.type === "task.running")).toHaveLength(1);
         expect(mocks.run?.status).toBe("completed");
     });
 

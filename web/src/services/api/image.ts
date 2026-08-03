@@ -37,11 +37,21 @@ export type ImageGenerationTask = {
 type ImageTaskPayload = {
     task?: ImageGenerationTask &
         GenerationTaskExecutionState & {
-            result?: { dataUrl?: string; remoteUrl?: string; serverUrl?: string; width?: number; height?: number; bytes?: number; mimeType?: string };
+            result?: ImageGenerationResult & { results?: ImageGenerationResult[] };
             error?: string;
             canRetry?: boolean;
         };
     error?: string;
+};
+
+export type ImageGenerationResult = {
+    dataUrl?: string;
+    remoteUrl?: string;
+    serverUrl?: string;
+    width?: number;
+    height?: number;
+    bytes?: number;
+    mimeType?: string;
 };
 
 const IMAGE_TASK_POLL_INTERVAL_MS = 1800;
@@ -154,15 +164,28 @@ export async function waitForImageGenerationTask(config: AiConfig, task: ImageGe
         if (current.status === "success") {
             if (!current.result?.dataUrl) throw new ImageGenerationTaskTerminalError("图片任务没有返回结果", true);
             await refreshUserPointsIfSystem(config.apiSource);
+            const media = current.result.results?.length ? current.result.results : [current.result];
+            const results = media.flatMap((item) =>
+                item.dataUrl
+                    ? [
+                          {
+                              id: nanoid(),
+                              dataUrl: item.dataUrl,
+                              remoteUrl: item.remoteUrl,
+                              serverUrl: item.serverUrl,
+                              width: item.width,
+                              height: item.height,
+                              bytes: item.bytes,
+                              mimeType: item.mimeType,
+                          },
+                      ]
+                    : [],
+            );
+            const first = results[0];
+            if (!first) throw new ImageGenerationTaskTerminalError("图片任务没有返回结果", true);
             return {
-                id: nanoid(),
-                dataUrl: current.result.dataUrl,
-                remoteUrl: current.result.remoteUrl,
-                serverUrl: current.result.serverUrl,
-                width: current.result.width,
-                height: current.result.height,
-                bytes: current.result.bytes,
-                mimeType: current.result.mimeType,
+                ...first,
+                results,
             };
         }
         if (current.status === "error") {

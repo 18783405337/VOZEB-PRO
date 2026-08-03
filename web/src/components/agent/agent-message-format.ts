@@ -54,5 +54,8 @@ function objectMessage(value: unknown) {
 
 function normalizeActionableError(message: string) {
     if (/积分不足|余额不足/.test(message)) return "积分不足";
+    if (/must use application\/json|requires? application\/json|content[- ]type[^\n]*application\/json/i.test(message)) return "当前视频渠道要求 application/json，请在后台选择“VOZEB推荐”协议。";
+    if (/\b(?:unauthorized|forbidden|permission denied)\b|未授权|权限不足|无权调用/i.test(message)) return "当前渠道拒绝了请求，请管理员检查 API Key 和模型权限。";
+    if (/\b(?:invalid|unsupported) (?:request|parameter|field|argument)\b|参数(?:错误|无效|不支持)|不支持的参数/i.test(message)) return "当前渠道拒绝了请求参数，请管理员核对所选协议与模型能力。";
     return ACTIONABLE_ERROR_PATTERN.test(message) ? message : "";
 }

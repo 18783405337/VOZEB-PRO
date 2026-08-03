@@ -269,6 +269,7 @@ export default function ImagePage() {
                             smartPlanning={smartPlanning}
                             modelPickerRequest={modelPickerRequest}
                             defaultModelCapability="image"
+                            modelCapabilities={["image"]}
                             onSmartPlanningChange={(enabled) => (enabled ? enableSmartPlanning() : setSmartPlanning(false))}
                             models={agentModelOptions}
                             selectedModels={selectedAgentModels}

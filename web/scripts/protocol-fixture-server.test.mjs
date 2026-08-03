@@ -51,11 +51,30 @@ describe("protocol fixture server", () => {
         expect(media.headers.get("content-type")).toBe("video/mp4");
     });
 
+    it("serves the VOZEB recommended JSON video contract", async () => {
+        const body = { model: "Seedance 2.0-fast-720p", prompt: "test", duration: 5, resolution: "720p", generate_audio: false, aspect_ratio: "16:9" };
+        const created = await fetch(`${origin}/v1/videos/generations`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).then((response) => response.json());
+        const completed = await fetch(`${origin}/v1/videos/generations/${created.task_id}`).then((response) => response.json());
+
+        expect(created).toMatchObject({ id: "fixture-vozeb-video-1", task_id: "fixture-vozeb-video-1", status: "queued" });
+        expect(completed).toMatchObject({ status: "completed", metadata: { url: `${origin}/media/fixture.mp4` } });
+        expect(fixture.requests[0]).toMatchObject({ contentType: "application/json" });
+    });
+
     it("serves synchronous audio bytes", async () => {
         const response = await fetch(`${origin}/v1/audio/speech`, { method: "POST" });
         const bytes = Buffer.from(await response.arrayBuffer());
         expect(response.headers.get("content-type")).toBe("audio/wav");
         expect(bytes.subarray(0, 4).toString()).toBe("RIFF");
+    });
+
+    it("does not reuse upstream task ids after resetting assertion state", async () => {
+        const first = await fetch(`${origin}/v1/videos`, { method: "POST" }).then((response) => response.json());
+        await fetch(`${origin}/v1/__reset`, { method: "POST" });
+        const second = await fetch(`${origin}/v1/videos`, { method: "POST" }).then((response) => response.json());
+
+        expect(first.task_id).toBe("fixture-video-1");
+        expect(second.task_id).toBe("fixture-video-2");
     });
 
     it("can delay POST responses for task-control regression", async () => {

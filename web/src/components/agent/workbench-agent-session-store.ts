@@ -39,6 +39,10 @@ export async function loadWorkbenchAgentSession(workspace: WorkbenchWorkspace, s
     ])[0];
 }
 
+export function restoreLatestWorkbenchAgentSession(workspace: WorkbenchWorkspace, sessions: WorkbenchAgentSession[]) {
+    return sessions[0] ? loadWorkbenchAgentSession(workspace, sessions[0]) : Promise.resolve(null);
+}
+
 export async function loadOlderWorkbenchAgentSession(workspace: WorkbenchWorkspace, session: WorkbenchAgentSession) {
     if (!session.loaded || !session.hasOlderMessages || !session.oldestSequence) return session;
     const detail = await getCreativeWorkbenchSession(session.creativeConversationId || session.id, workspace, session.oldestSequence);

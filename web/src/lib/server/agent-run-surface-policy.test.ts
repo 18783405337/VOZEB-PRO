@@ -11,9 +11,8 @@ describe("selectAgentSkills", () => {
         expect(skills.map((skill) => skill.id)).toContain("character-design");
     });
 
-    it("uses the text model skill selection when the user did not select one", () => {
-        expect(selectAgentSkills(DEFAULT_SETTINGS, "chat", [], ["character-design"]).map((skill) => skill.id)).toEqual(["character-design"]);
-        expect(selectAgentSkills(DEFAULT_SETTINGS, "chat", [], ["missing-skill"])).toEqual([]);
+    it("does not allow a planner response to enable an unselected Skill", () => {
+        expect(selectAgentSkills(DEFAULT_SETTINGS, "chat", [])).toEqual([]);
     });
 
     it("does not allow disabled or incompatible skills to be forced", () => {
@@ -112,9 +111,8 @@ describe("agentPlannerInput", () => {
         expect(filterAgentPlannerModels(models, { surface: "chat", prompt: "让这张图动起来，生成视频" }).map((item) => item.capability)).toEqual(["text", "image", "video"]);
     });
 
-    it("prefilters planner Skills by surface and request without dropping explicit choices", () => {
-        expect(plannerAgentSkills(DEFAULT_SETTINGS, { surface: "chat", prompt: "生成商品主图", selectedSkillIds: [] }).map((skill) => skill.id)).toContain("ecommerce-image");
-        expect(plannerAgentSkills(DEFAULT_SETTINGS, { surface: "chat", prompt: "你好", selectedSkillIds: [] })).toEqual([]);
-        expect(plannerAgentSkills(DEFAULT_SETTINGS, { surface: "chat", prompt: "普通请求", selectedSkillIds: ["image-motion"] }).map((skill) => skill.id)).toEqual(["image-motion"]);
+    it("only exposes explicitly selected Skills to the planner", () => {
+        expect(plannerAgentSkills(DEFAULT_SETTINGS, { surface: "chat", selectedSkillIds: [] })).toEqual([]);
+        expect(plannerAgentSkills(DEFAULT_SETTINGS, { surface: "chat", selectedSkillIds: ["image-motion"] }).map((skill) => skill.id)).toEqual(["image-motion"]);
     });
 });

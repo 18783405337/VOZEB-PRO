@@ -390,6 +390,20 @@ async function processImageLease(lease: GenerationTaskLease, workerId: string, o
             await releaseGenerationTaskLease("image", task.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastPollAt: now, lastUpstreamStatus: step.status });
             return "failed";
         }
+        if (step.state === "needs_review") {
+            const latest = (await getImageTask(task.id)) || task;
+            await releaseGenerationTaskLease("image", task.id, workerId, {
+                executionPhase: "needs_review",
+                upstreamTaskId: latest.upstream?.id || lease.upstreamTaskId,
+                channelId: latest.config.channelId,
+                provider: latest.config.advancedConfig?.protocol || latest.config.apiFormat,
+                queryPath: latest.config.advancedConfig?.queryPath,
+                nextPollAt: undefined,
+                lastPollAt: now,
+                lastUpstreamStatus: `${step.status}:${step.reason}`.slice(0, 500),
+            });
+            return "needs_review";
+        }
         if (step.state === "completed") {
             await releaseGenerationTaskLease("image", task.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "persisted" });
             return "completed";

@@ -94,6 +94,11 @@ export default function CreatePage() {
         message.success("已填入作品提示词");
     }, [message, router]);
 
+    useEffect(() => {
+        if (!agent.conversationId || createConversationIdFromSearch(window.location.search) === agent.conversationId) return;
+        router.replace(createConversationHref(agent.conversationId), { scroll: false });
+    }, [agent.conversationId, router]);
+
     const openConversation = (id: string) => {
         router.push(createConversationHref(id));
         void openAgentConversation(id).catch((error) => {

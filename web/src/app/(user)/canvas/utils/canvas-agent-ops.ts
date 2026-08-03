@@ -107,7 +107,7 @@ function isCanvasVisualMedia(type: CanvasNodeType) {
     return type === CanvasNodeType.Image || type === CanvasNodeType.Video || type === CanvasNodeType.Panorama;
 }
 
-function findFreeNodePosition(nodes: CanvasNodeData[], start: { x: number; y: number }, width: number, height: number) {
+export function findFreeNodePosition(nodes: CanvasNodeData[], start: { x: number; y: number }, width: number, height: number) {
     const gap = 36;
     for (let step = 0; step < 200; step += 1) {
         const column = step % 5;

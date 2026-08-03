@@ -180,6 +180,7 @@ export default function VideoPage() {
                             smartPlanning={smartPlanning}
                             modelPickerRequest={modelPickerRequest}
                             defaultModelCapability="video"
+                            modelCapabilities={["video", "audio"]}
                             onSmartPlanningChange={(enabled) => (enabled ? enableSmartPlanning() : setSmartPlanning(false))}
                             models={agentModelOptions}
                             selectedModels={selectedAgentModels}

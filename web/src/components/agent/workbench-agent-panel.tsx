@@ -241,6 +241,7 @@ export function WorkbenchComposerFrame({
     onClearModels,
     modelPickerRequest,
     defaultModelCapability,
+    modelCapabilities,
     submit,
 }: {
     children: ReactNode;
@@ -260,6 +261,7 @@ export function WorkbenchComposerFrame({
     onClearModels: () => void;
     modelPickerRequest?: number;
     defaultModelCapability: CreativeAgentModelOption["capability"];
+    modelCapabilities?: readonly CreativeAgentModelOption["capability"][];
     submit: ReactNode;
 }) {
     const addMenu = (
@@ -296,6 +298,7 @@ export function WorkbenchComposerFrame({
                     onSmartPlanningChange={onSmartPlanningChange}
                     modelPickerRequest={modelPickerRequest}
                     defaultModelCapability={defaultModelCapability}
+                    modelCapabilities={modelCapabilities}
                     middle={
                         <Popover
                             trigger="click"

@@ -11,6 +11,7 @@ import {
     createCreativeConversation,
     getCreativeConversation,
     getCreativeAgentRun,
+    listCreativeAgentRuns,
     listCreativeAssets,
     listCreativeConversationPage,
     listCreativeMessages,
@@ -22,6 +23,8 @@ import {
 } from "@/services/api/creative";
 import { getMaterializedCreativeProject, materializeCreativeProjectHandoff, type MaterializedCreativeProject } from "@/services/creative-project-handoff";
 import { agentRequirementAcknowledgement } from "@/lib/agent-requirement-acknowledgement";
+
+import { createConversationIdFromSearch, latestResumableAgentRun } from "./create-conversation-navigation";
 
 type PendingCreateSubmission = {
     clientRequestId: string;
@@ -143,11 +146,6 @@ export function useCreateAgent() {
         }
     }, [hasOlderMessages, messages, olderMessagesLoading]);
 
-    useEffect(() => {
-        void refreshConversations();
-        return stopWatching;
-    }, [refreshConversations, stopWatching]);
-
     const newConversation = useCallback(() => {
         stopWatching();
         conversationGenerationRef.current += 1;
@@ -190,6 +188,25 @@ export function useCreateAgent() {
         },
         [newConversation, refreshConversation, stopWatching],
     );
+
+    useEffect(() => {
+        let active = true;
+        const requestedConversationId = createConversationIdFromSearch(window.location.search);
+        const conversationsRequest = refreshConversations().catch(() => undefined);
+        if (!requestedConversationId) {
+            void Promise.all([conversationsRequest, listCreativeAgentRuns("chat")])
+                .then(([, runs]) => {
+                    if (!active || activeConversationRef.current) return;
+                    const resumable = latestResumableAgentRun(runs);
+                    if (resumable) return openConversation(resumable.conversationId);
+                })
+                .catch(() => undefined);
+        }
+        return () => {
+            active = false;
+            stopWatching();
+        };
+    }, [openConversation, refreshConversations, stopWatching]);
 
     const updateAssistant = useCallback((id: string, content?: string, status: CreativeMessage["status"] = "running") => {
         setMessages((current) => current.map((item) => (item.id === id ? { ...item, content: content?.trim() || item.content, status, updatedAt: Date.now() } : item)));

@@ -86,6 +86,41 @@ describe("generation log task service", () => {
         expect(replay.asset).toEqual(first.asset);
     });
 
+    it("stores every output returned by one image task in the original record", async () => {
+        await createDraft("log-multiple", ["slot-a"]);
+
+        const result = await service.recordGenerationTaskLogResult({
+            logId: "log-multiple",
+            slotId: "slot-a",
+            clientRequestId: "request-slot-a",
+            taskId: "task-a",
+            userId: "user-one",
+            username: "user",
+            displayName: "User",
+            kind: "image",
+            source: "image-workbench",
+            status: "success",
+            title: "测试记录",
+            prompt: "执行提示词",
+            model: "image-model",
+            summary: "图片生成完成",
+            durationMs: 100,
+            assets: [
+                { type: "image", url: assetUrl("first") },
+                { type: "image", url: assetUrl("second") },
+            ],
+            taskKind: "generation",
+            createdAt: Date.now(),
+        });
+
+        expect(result.log?.assets.map((asset) => asset.url)).toEqual([assetUrl("first"), assetUrl("second")]);
+        expect(result.log?.requestSnapshot?.slots.map((slot) => [slot.id, slot.assetIndex])).toEqual([
+            ["slot-a", 0],
+            ["slot-a:output:2", 1],
+        ]);
+        expect(result.log).toMatchObject({ count: 2, successCount: 2, failCount: 0, status: "success" });
+    });
+
     it("rejects mutations when the record belongs to another user", async () => {
         await createDraft("log-owned", ["slot-a"]);
 

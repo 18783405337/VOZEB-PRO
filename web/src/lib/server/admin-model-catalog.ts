@@ -314,7 +314,7 @@ function isChannelProtocol(value: unknown): value is SystemChannelProtocol {
         value === "openai" ||
         value === "sub2api" ||
         value === "newapi" ||
-        value === "qingyan" ||
+        value === "vozeb-recommended" ||
         value === "globalaiopc" ||
         value === "seedance" ||
         value === "stable-diffusion" ||
