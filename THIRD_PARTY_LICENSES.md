@@ -380,9 +380,6 @@
 | sharp | 0.35.3 | Apache-2.0 | [链接](https://sharp.pixelplumbing.com) |
 | source-map-js | 1.2.1 | BSD-3-Clause | [链接](https://github.com/7rulnik/source-map-js) |
 | space-separated-tokens | 2.0.2 | MIT | [链接](https://github.com/wooorm/space-separated-tokens#readme) |
-| spdx-exceptions | 2.5.0 | CC-BY-3.0 | [链接](https://github.com/kemitchell/spdx-exceptions.json#readme) |
-| spdx-expression-parse | 5.0.0 | MIT | [链接](https://github.com/jslicense/spdx-expression-parse.js#readme) |
-| spdx-license-ids | 3.0.23 | CC0-1.0 | [链接](https://github.com/jslicense/spdx-license-ids#readme) |
 | split2 | 4.2.0 | ISC | [链接](https://github.com/mcollina/split2#readme) |
 | string-convert | 0.2.1 | MIT | [链接](https://github.com/akiran/string-convert#readme) |
 | stringify-entities | 4.0.4 | MIT | [链接](https://github.com/wooorm/stringify-entities#readme) |

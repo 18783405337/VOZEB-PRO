@@ -101,7 +101,7 @@ describe("github agent skill import", () => {
         expect(result.skill?.sourceCommit).toBe(commit);
     });
 
-    it("rejects an import without a valid SPDX license", async () => {
+    it("imports a pinned public Skill without requiring a license declaration", async () => {
         vi.stubGlobal(
             "fetch",
             vi.fn(async (input: string | URL) => {
@@ -114,7 +114,10 @@ describe("github agent skill import", () => {
             }),
         );
 
-        await expect(importAgentSkillFromGithub({ url: "https://github.com/acme/unlicensed" })).rejects.toThrow("SPDX");
+        const result = await importAgentSkillFromGithub({ url: "https://github.com/acme/unlicensed" });
+
+        expect(result.skill).toMatchObject({ sourceCommit: commit, enabled: false });
+        expect(result.skill?.license).toBeUndefined();
     });
 
     it("rejects non-GitHub and non-SKILL.md input", () => {

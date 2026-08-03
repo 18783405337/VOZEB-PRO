@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 
-import parseSpdxExpression from "spdx-expression-parse";
 import { parseDocument } from "yaml";
 
 import type { AgentSkillWorkspace } from "@/lib/auth/store-types";
@@ -160,7 +159,7 @@ function parseSkillMarkdown(markdown: string, source: { id: string; repository: 
     const action = firstText(frontmatter.values.action, metadata.action) === "edit" ? "edit" : "generate";
     const keywords = parseKeywords(frontmatter.values.keywords ?? metadata.keywords);
     const defaultConfig = parseDefaultConfig(frontmatter.values.defaultConfig ?? metadata.defaultConfig);
-    const license = requireSpdxLicense(firstText(frontmatter.values.license, metadata.license) || source.repositoryLicense);
+    const license = firstText(frontmatter.values.license, metadata.license, source.repositoryLicense)?.slice(0, 120);
 
     return {
         id: source.id,
@@ -178,7 +177,7 @@ function parseSkillMarkdown(markdown: string, source: { id: string; repository: 
         sourceVersion: source.ref,
         sourceCommit: source.ref,
         sourceContentHash: createHash("sha256").update(markdown, "utf8").digest("hex"),
-        license,
+        ...(license ? { license } : {}),
         repository: source.repository,
         sourcePath: source.sourcePath,
     };
@@ -189,17 +188,6 @@ async function resolveCommit(location: GitHubLocation, ref: string) {
     const sha = commit.sha?.trim().toLowerCase() || "";
     if (!/^[a-f0-9]{40}$/.test(sha)) throw new GithubSkillImportError("GitHub 没有返回可固定的 commit，无法安全导入", 502);
     return sha;
-}
-
-function requireSpdxLicense(value: string | undefined) {
-    const license = value?.trim() || "";
-    if (!license) throw new GithubSkillImportError("Skill 必须声明有效的 SPDX 许可证后才能导入");
-    try {
-        parseSpdxExpression(license);
-    } catch {
-        throw new GithubSkillImportError("Skill 的许可证不是有效的 SPDX 标识或表达式");
-    }
-    return license.slice(0, 120);
 }
 
 function readFrontmatter(markdown: string): { values: SkillFrontmatter; body: string } {

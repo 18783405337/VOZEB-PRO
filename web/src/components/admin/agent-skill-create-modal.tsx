@@ -198,7 +198,8 @@ export function AgentSkillCreateModal({ open, existingSkills, onClose, onCreate 
                                 message={<span>已提取：{importedSkill.name}</span>}
                                 description={
                                     <span className="break-all">
-                                        {importedSkill.sourcePath} · {importedSkill.license} · 导入后默认停用
+                                        {importedSkill.sourcePath}
+                                        {importedSkill.license ? ` · ${importedSkill.license}` : ""} · 导入后默认停用
                                     </span>
                                 }
                             />

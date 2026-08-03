@@ -10,7 +10,7 @@ export type ImportedAgentSkill = AgentSkill & {
     sourcePath: string;
     sourceCommit: string;
     sourceContentHash: string;
-    license: string;
+    license?: string;
 };
 
 export type AgentSkillImportResult = {
