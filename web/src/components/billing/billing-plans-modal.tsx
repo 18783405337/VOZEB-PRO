@@ -26,53 +26,47 @@ export function BillingPlansModal({ open, onClose, onSelect }: { open: boolean; 
             rootClassName="billing-plans-modal profile-page-scroll"
             title={null}
             open={open}
-            width="min(94vw, 1180px)"
+            width={modalWidth(products.length)}
             centered
             footer={null}
             closable={false}
             onCancel={onClose}
-            styles={{ body: { padding: 0, maxHeight: "calc(100dvh - 56px)", overflowY: "auto" } }}
+            styles={{ container: { padding: 0, overflow: "hidden" }, body: { padding: 0, maxHeight: "calc(100dvh - 32px)", overflowY: "auto" } }}
         >
             <div className="bg-[#f7f7f5] text-stone-950 dark:bg-[#101113] dark:text-stone-100">
-                <div className="relative overflow-hidden bg-stone-950 px-4 py-3 text-white sm:px-6 sm:py-4 dark:bg-black">
-                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(102,117,142,0.42),transparent_34%),radial-gradient(circle_at_82%_0%,rgba(255,255,255,0.14),transparent_30%)]" />
+                <div className="relative border-b border-stone-200 bg-white px-4 py-3 sm:px-5 dark:border-stone-800 dark:bg-stone-950">
                     <button
                         type="button"
-                        className="absolute right-2.5 top-2.5 z-10 grid size-8 place-items-center rounded-full border border-white/15 bg-white/10 text-white transition hover:bg-white/20 sm:right-3 sm:top-3 sm:size-9"
+                        className="absolute right-3 top-3 z-10 grid size-8 place-items-center rounded-lg border border-stone-200 bg-stone-50 text-stone-600 transition hover:border-stone-300 hover:bg-stone-100 hover:text-stone-950 disabled:text-stone-300 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-300 dark:hover:border-stone-600 dark:hover:bg-stone-800 dark:hover:text-white"
                         aria-label="关闭套餐选择"
                         title="关闭"
                         onClick={onClose}
                     >
                         <X className="size-4" />
                     </button>
-                    <div className="relative mx-auto flex max-w-[1040px] items-center justify-between gap-4 pr-12">
-                        <div className="flex items-start gap-3">
-                            <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-[#d8dee8] text-[#252b33] sm:size-9 sm:rounded-xl">
-                                <Sparkles className="size-4.5" />
+                    <div className="mx-auto flex max-w-[1060px] items-center justify-between gap-4 pr-11">
+                        <div className="flex min-w-0 items-center gap-2.5">
+                            <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-stone-950 text-white dark:bg-white dark:text-stone-950">
+                                <Sparkles className="size-4" />
                             </span>
-                            <div>
+                            <div className="min-w-0">
                                 <div className="text-sm font-semibold">升级创作套餐</div>
-                                <div className="mt-0.5 hidden text-xs leading-5 text-stone-300 sm:block">按实际创作频率选择方案，价格与权益实时同步后台商品。</div>
+                                <div className="mt-0.5 truncate text-xs text-stone-500 dark:text-stone-400">选择方案后进入安全结算</div>
                             </div>
                         </div>
-                        <span className="hidden items-center gap-1.5 rounded-full border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-medium text-white sm:inline-flex">
-                            <BadgeCheck className="size-4 text-[#d8dee8]" /> 支付成功自动到账
+                        <span className="hidden items-center gap-1.5 text-xs font-medium text-emerald-700 sm:inline-flex dark:text-emerald-300">
+                            <BadgeCheck className="size-4" /> 支付成功自动到账
                         </span>
                     </div>
                 </div>
 
-                <div className="px-2 pb-2 pt-2 sm:px-6 sm:pb-6 sm:pt-5">
-                    <div className="mx-auto max-w-[1040px]">
-                        <h2 className="text-lg font-semibold tracking-tight sm:text-2xl">选择适合您的套餐</h2>
-                        <p className="mt-0.5 text-xs leading-5 text-stone-500 sm:mt-1 sm:text-sm sm:leading-6 dark:text-stone-400">确认方案后进入独立安全结算页。</p>
-                    </div>
-
+                <div className="px-2.5 py-2.5 sm:px-4 sm:py-4">
                     {loading ? (
-                        <div className="grid min-h-20 place-items-center sm:min-h-60">
+                        <div className="grid min-h-32 place-items-center">
                             <Spin />
                         </div>
                     ) : products.length ? (
-                        <div className="mx-auto mt-2.5 max-w-[1040px] sm:mt-4">
+                        <div className="mx-auto max-w-[1060px]">
                             <BillingPlanGrid
                                 variant="modal"
                                 products={products}
@@ -83,7 +77,7 @@ export function BillingPlansModal({ open, onClose, onSelect }: { open: boolean; 
                             />
                         </div>
                     ) : (
-                        <div className="mx-auto mt-3 max-w-3xl rounded-xl border border-dashed border-stone-300 bg-white py-6 sm:rounded-2xl sm:py-12 dark:border-stone-700 dark:bg-stone-950">
+                        <div className="mx-auto max-w-3xl rounded-xl border border-dashed border-stone-300 bg-white py-8 dark:border-stone-700 dark:bg-stone-950">
                             <Empty description="暂无已上架套餐" />
                         </div>
                     )}
@@ -91,4 +85,11 @@ export function BillingPlansModal({ open, onClose, onSelect }: { open: boolean; 
             </div>
         </Modal>
     );
+}
+
+function modalWidth(productCount: number) {
+    if (productCount <= 1) return "min(94vw, 520px)";
+    if (productCount === 2) return "min(94vw, 860px)";
+    if (productCount === 3) return "min(96vw, 1040px)";
+    return "min(96vw, 1180px)";
 }
