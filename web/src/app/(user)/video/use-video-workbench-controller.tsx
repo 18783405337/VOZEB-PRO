@@ -9,7 +9,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { InsertAssetPayload } from "@/app/(user)/canvas/components/asset-picker-modal";
 import { type WorkbenchAgentMessage } from "@/components/agent/workbench-agent-panel";
 import { workbenchAttachmentsFromReferences } from "@/components/agent/workbench-agent-references";
-import { findWorkbenchAgentSessionForRecord, removeWorkbenchAgentSessionsForRecords } from "@/components/agent/workbench-agent-session-store";
+import { expandWorkbenchConversationSelection, findWorkbenchAgentSessionForRecord, removeWorkbenchAgentSessionsForRecords } from "@/components/agent/workbench-agent-session-store";
 import { preloadWorkbenchResourceDialogs } from "@/components/agent/workbench-resource-dialogs";
 import { requestCreditCost } from "@/constant/credits";
 import { useWorkbenchAgentRun, type WorkbenchAgentParameterPatch } from "@/hooks/use-workbench-agent-run";
@@ -23,7 +23,8 @@ import { originalMediaDownloadUrl } from "@/lib/media-image-url";
 import { preloadOnIdle } from "@/lib/preload-on-idle";
 import { SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
 import { referenceImageFromAsset, referenceVideoFromAsset, videoAssetData } from "@/lib/workbench-asset-reference";
-import { deleteGenerationLogResults as deleteServerGenerationLogResults, deleteGenerationLogs as deleteServerGenerationLogs, renameGenerationLog as renameServerGenerationLog } from "@/services/api/generation-logs";
+import { deleteCreativeConversations, updateCreativeConversation } from "@/services/api/creative";
+import { deleteGenerationLogResults as deleteServerGenerationLogResults, renameGenerationLog as renameServerGenerationLog } from "@/services/api/generation-logs";
 import type { AgentSkillSummary } from "@/services/api/agent-skills";
 import { cancelServerVideoGenerationTask, createServerVideoGenerationTask, pollVideoGenerationTask, storeGeneratedVideo } from "@/services/api/video";
 import { GenerationTaskRequestError, isDefinitiveGenerationTaskRequestFailure } from "@/services/api/generation-task-request-error";
@@ -108,7 +109,6 @@ export function useVideoWorkbenchController() {
         lastAgentPrompt,
         setLastAgentPrompt,
         availableSkills,
-        agentSessionByRecordId,
         loadAgentSession,
         hasOlderAgentMessages,
         olderAgentMessagesLoading,
@@ -606,17 +606,18 @@ export function useVideoWorkbenchController() {
     };
 
     const deleteSelectedLogs = async () => {
-        const deleteIds = selectedLogIds.filter((id) => logsRef.current.some((log) => log.id === id));
+        const selectedLogs = expandWorkbenchConversationSelection(logsRef.current, selectedLogIds);
+        const deleteIds = selectedLogs.map((log) => log.id);
         if (!deleteIds.length) {
             setDeleteConfirmOpen(false);
             return;
         }
         const deleteIdSet = new Set(deleteIds);
+        const conversationIds = Array.from(new Set(selectedLogs.map((log) => log.creativeConversationId).filter((id): id is string => Boolean(id))));
+        const conversationIdSet = new Set(conversationIds);
+        const standaloneLogs = selectedLogs.filter((log) => !log.creativeConversationId);
         const deletingActiveLog = Boolean(previewLog && deleteIdSet.has(previewLog.id));
-        const mediaKeys = logs
-            .filter((log) => deleteIdSet.has(log.id))
-            .map((log) => log.video?.storageKey)
-            .filter((key): key is string => Boolean(key));
+        const mediaKeys = standaloneLogs.map((log) => log.video?.storageKey).filter((key): key is string => Boolean(key));
         deleteIds.forEach((id) => {
             deletedResultLogIdsRef.current.add(id);
             blockedVideoLogIdsRef.current.add(id);
@@ -626,7 +627,7 @@ export function useVideoWorkbenchController() {
         logsRef.current = logsRef.current.filter((log) => !deleteIdSet.has(log.id));
         setLogs(logsRef.current);
         setAgentSessions((current) => {
-            const next = removeWorkbenchAgentSessionsForRecords(current, deleteIdSet).filter((session) => !deletingActiveLog || session.id !== activeAgentSessionId);
+            const next = removeWorkbenchAgentSessionsForRecords(current, deleteIdSet).filter((session) => !conversationIdSet.has(session.creativeConversationId || session.id) && (!deletingActiveLog || session.id !== activeAgentSessionId));
             return next;
         });
         if (deletingActiveLog) {
@@ -648,7 +649,8 @@ export function useVideoWorkbenchController() {
         }
         setSelectedLogIds([]);
         setDeleteConfirmOpen(false);
-        const results = await Promise.allSettled([deleteStoredMedia(mediaKeys), deleteServerGenerationLogs(deleteIds.map((id) => `video-workbench:${id}`)), removeStoredVideoLogs(deleteIds)]);
+        const standaloneIds = standaloneLogs.map((log) => log.id);
+        const results = await Promise.allSettled([conversationIds.length ? deleteCreativeConversations(conversationIds) : Promise.resolve(), deleteStoredMedia(mediaKeys), standaloneIds.length ? removeStoredVideoLogs(standaloneIds) : Promise.resolve()]);
         const failed = results.filter((result) => result.status === "rejected");
         if (failed.length) {
             message.warning("记录已移除，部分关联资源删除失败，请稍后重试");
@@ -908,7 +910,10 @@ export function useVideoWorkbenchController() {
         const nextTitle = title.trim();
         if (!nextTitle || nextTitle === log.title) return;
         const latestLog = getLatestLog(log.id) || log;
-        await renameServerGenerationLog(`video-workbench:${log.id}`, nextTitle);
+        await Promise.all([renameServerGenerationLog(`video-workbench:${log.id}`, nextTitle), log.creativeConversationId ? updateCreativeConversation(log.creativeConversationId, { title: nextTitle }) : Promise.resolve()]);
+        if (log.creativeConversationId) {
+            setAgentSessions((sessions) => sessions.map((session) => (session.creativeConversationId === log.creativeConversationId || session.id === log.creativeConversationId ? { ...session, title: nextTitle } : session)));
+        }
         const nextLog = { ...latestLog, title: nextTitle };
         logsRef.current = [nextLog, ...logsRef.current.filter((item) => item.id !== nextLog.id)];
         setLogs(logsRef.current);
@@ -924,6 +929,7 @@ export function useVideoWorkbenchController() {
         prompt,
         setPrompt,
         agentMessages,
+        agentSessions,
         availableSkills,
         selectedSkill,
         setSelectedSkill,
@@ -934,7 +940,6 @@ export function useVideoWorkbenchController() {
         enableSmartPlanning,
         selectSkill,
         selectVideoModelOption,
-        agentSessionByRecordId,
         hasOlderAgentMessages,
         olderAgentMessagesLoading,
         loadOlderAgentMessages,

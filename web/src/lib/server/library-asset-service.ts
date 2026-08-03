@@ -1,7 +1,7 @@
 import { nanoid } from "nanoid";
 
 import type { Asset, CreateLibraryAssetInput } from "@/lib/library-asset-contract";
-import { createLibraryAsset, deleteLibraryAsset, getLibraryAsset, listLibraryAssetPage, listLibraryAssets, updateLibraryAsset } from "@/lib/server/library-asset-store";
+import { createLibraryAsset, deleteLibraryAsset, getLibraryAsset, listLibraryAssetPage, updateLibraryAsset } from "@/lib/server/library-asset-store";
 import { deleteUserLocalMediaAssets } from "@/lib/server/local-media-storage";
 
 export class LibraryAssetServiceError extends Error {
@@ -11,10 +11,6 @@ export class LibraryAssetServiceError extends Error {
     ) {
         super(message);
     }
-}
-
-export function listLibraryAssetsForUser(userId: string) {
-    return listLibraryAssets(userId);
 }
 
 export function listLibraryAssetPageForUser(userId: string, input: { page?: unknown; pageSize?: unknown; kind?: unknown; keyword?: unknown }) {

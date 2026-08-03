@@ -115,6 +115,7 @@ function WorkbenchHistoryCard<T extends WorkbenchHistoryItem>({
 
     return (
         <div
+            data-testid="workbench-history-card"
             role="button"
             tabIndex={0}
             className={`block w-full rounded-lg border p-2 text-left transition ${active ? "border-stone-900 bg-blue-50 dark:border-stone-100 dark:bg-blue-950/20" : "border-stone-200 bg-background hover:bg-stone-50 dark:border-stone-800 dark:hover:bg-stone-900"}`}

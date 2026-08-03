@@ -15,6 +15,7 @@ import type { AiTextMessage } from "@/types/ai";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 2400;
 
 type CreateTextTaskBody = {
     config?: TextTaskConfig;

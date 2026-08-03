@@ -6,6 +6,7 @@ import { resolveInternalOrigin } from "@/lib/server/internal-origin";
 import { waitForCreativeRunEvent } from "@/lib/server/creative-run-event-signal";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 2400;
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
     const user = await getCurrentUser();

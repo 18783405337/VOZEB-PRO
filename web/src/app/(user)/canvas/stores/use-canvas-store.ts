@@ -1,7 +1,7 @@
 import { create } from "zustand";
 
 import { createClientSessionEpoch, type ClientSessionStamp } from "@/lib/client-session-epoch";
-import type { CanvasProject, CanvasProjectSummary, CreateCanvasProjectInput } from "@/lib/canvas-project-contract";
+import type { CanvasProject, CanvasProjectSummary } from "@/lib/canvas-project-contract";
 import { summarizeCanvasProjectRecord } from "@/lib/canvas-project-summary";
 import { createCanvasProject, deleteCanvasProjects as deleteCanvasProjectsRequest, getCanvasProject, listCanvasProjectSummaries, saveCanvasProject } from "@/services/api/canvas-projects";
 import { useUserStore } from "@/stores/use-user-store";
@@ -15,8 +15,11 @@ type CanvasStore = {
     hydratedUserId: string;
     syncError?: string;
     summaries: CanvasProjectSummary[];
+    summaryTotal: number;
+    summaryPage: number;
+    summaryPageSize: number;
     projects: CanvasProject[];
-    hydrate: (force?: boolean) => Promise<void>;
+    hydrate: (force?: boolean, page?: number) => Promise<void>;
     loadProject: (id: string, force?: boolean) => Promise<CanvasProject>;
     createProject: (title?: string) => Promise<string>;
     importProject: (project: Partial<CanvasProject>, sourceHandoffId?: string) => Promise<string>;
@@ -29,6 +32,7 @@ type CanvasStore = {
 const saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const saveQueues = new Map<string, Promise<void>>();
 const latestProjectTimes = new Map<string, number>();
+const persistedProjectVersions = new Map<string, string>();
 const projectRequests = new Map<string, Promise<CanvasProject>>();
 const sessionEpoch = createClientSessionEpoch(() => useUserStore.getState().user?.id || "");
 let hydrateRequestId = 0;
@@ -38,23 +42,28 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     hydrated: false,
     hydratedUserId: "",
     summaries: [],
+    summaryTotal: 0,
+    summaryPage: 1,
+    summaryPageSize: 12,
     projects: [],
-    hydrate: async (force = false) => {
+    hydrate: async (force = false, requestedPage) => {
         const userId = useUserStore.getState().user?.id || "";
         if (!userId) {
             invalidateSession();
-            set({ hydrated: true, hydratedUserId: "", summaries: [], projects: [], syncError: undefined });
+            set({ hydrated: true, hydratedUserId: "", summaries: [], summaryTotal: 0, summaryPage: 1, projects: [], syncError: undefined });
             return;
         }
-        if (!force && get().hydrated && get().hydratedUserId === userId) return;
+        const page = requestedPage || (get().hydratedUserId === userId ? get().summaryPage : 1);
+        const pageSize = get().summaryPageSize;
+        if (!force && get().hydrated && get().hydratedUserId === userId && get().summaryPage === page) return;
         const session = sessionEpoch.capture();
         if (!force && hydrateRequest?.userId === session.userId && hydrateRequest.epoch === session.epoch) return hydrateRequest.promise;
         const requestId = ++hydrateRequestId;
         set((state) => ({ hydrated: false, hydratedUserId: userId, summaries: state.hydratedUserId === userId ? state.summaries : [], projects: state.hydratedUserId === userId ? state.projects : [], syncError: undefined }));
-        const promise = listCanvasProjectSummaries()
-            .then((summaries) => {
+        const promise = loadSummaryPage(page, pageSize)
+            .then((result) => {
                 if (!isActiveHydrate(session, requestId)) return;
-                set({ summaries, hydrated: true, hydratedUserId: userId });
+                set({ summaries: result.projects, summaryTotal: result.total, summaryPage: result.page, summaryPageSize: result.pageSize, hydrated: true, hydratedUserId: userId });
             })
             .catch((error) => {
                 if (isActiveHydrate(session, requestId)) set({ summaries: [], hydrated: false, hydratedUserId: userId, syncError: error instanceof Error ? error.message : "画布项目加载失败" });
@@ -76,6 +85,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
             .then((project) => {
                 assertCurrent(session);
                 latestProjectTimes.set(key, Date.parse(project.updatedAt) || Date.now());
+                persistedProjectVersions.set(key, project.updatedAt);
                 set((state) => ({ projects: [project, ...state.projects.filter((item) => item.id !== project.id)], summaries: upsertSummary(state.summaries, project), syncError: undefined }));
                 return project;
             })
@@ -89,14 +99,26 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
         const session = requireSession();
         const project = await createCanvasProject({ title });
         assertCurrent(session);
-        set((state) => ({ projects: [project, ...state.projects.filter((item) => item.id !== project.id)], summaries: upsertSummary(state.summaries, project), syncError: undefined }));
+        set((state) => ({
+            projects: [project, ...state.projects.filter((item) => item.id !== project.id)],
+            summaries: state.summaryPage === 1 ? upsertSummary(state.summaries, project).slice(0, state.summaryPageSize) : state.summaries,
+            summaryTotal: state.summaryTotal + (state.summaries.some((item) => item.id === project.id) ? 0 : 1),
+            syncError: undefined,
+        }));
+        persistedProjectVersions.set(sessionEpoch.key(session, project.id), project.updatedAt);
         return project.id;
     },
     importProject: async (project, sourceHandoffId) => {
         const session = requireSession();
         const created = await createCanvasProject({ title: project.title || "导入画布", sourceHandoffId, project });
         assertCurrent(session);
-        set((state) => ({ projects: [created, ...state.projects.filter((item) => item.id !== created.id)], summaries: upsertSummary(state.summaries, created), syncError: undefined }));
+        set((state) => ({
+            projects: [created, ...state.projects.filter((item) => item.id !== created.id)],
+            summaries: state.summaryPage === 1 ? upsertSummary(state.summaries, created).slice(0, state.summaryPageSize) : state.summaries,
+            summaryTotal: state.summaryTotal + (state.summaries.some((item) => item.id === created.id) ? 0 : 1),
+            syncError: undefined,
+        }));
+        persistedProjectVersions.set(sessionEpoch.key(session, created.id), created.updatedAt);
         return created.id;
     },
     renameProject: (id, title) => {
@@ -118,15 +140,24 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
         uniqueIds.forEach((id) => clearProjectSave(session, id));
         await Promise.all(uniqueIds.map((id) => saveQueues.get(sessionEpoch.key(session, id))?.catch(() => undefined)));
         assertCurrent(session);
-        await deleteCanvasProjectsRequest(uniqueIds);
+        const result = await deleteCanvasProjectsRequest(uniqueIds);
         if (!sessionEpoch.isCurrent(session)) return;
         uniqueIds.forEach((id) => latestProjectTimes.delete(sessionEpoch.key(session, id)));
-        set((state) => ({ projects: state.projects.filter((project) => !uniqueIds.includes(project.id)), summaries: state.summaries.filter((project) => !uniqueIds.includes(project.id)), syncError: undefined }));
+        uniqueIds.forEach((id) => persistedProjectVersions.delete(sessionEpoch.key(session, id)));
+        set((state) => ({
+            projects: state.projects.filter((project) => !uniqueIds.includes(project.id)),
+            summaries: state.summaries.filter((project) => !uniqueIds.includes(project.id)),
+            summaryTotal: Math.max(0, state.summaryTotal - result.deleted),
+            syncError: undefined,
+        }));
+        const state = get();
+        const lastPage = Math.max(1, Math.ceil(state.summaryTotal / state.summaryPageSize));
+        await get().hydrate(true, Math.min(state.summaryPage, lastPage));
     },
     updateProject: (id, patch) => mutateProject(id, (project) => ({ ...project, ...patch })),
     reset: () => {
         invalidateSession();
-        set({ hydrated: false, hydratedUserId: "", summaries: [], projects: [], syncError: undefined });
+        set({ hydrated: false, hydratedUserId: "", summaries: [], summaryTotal: 0, summaryPage: 1, projects: [], syncError: undefined });
     },
 }));
 
@@ -159,8 +190,11 @@ function queueSave(session: ClientSessionStamp, project: CanvasProject) {
             const operation = previous.then(async () => {
                 if (!sessionEpoch.isCurrent(session)) return;
                 try {
-                    const saved = await saveCanvasProject(project);
+                    const expectedUpdatedAt = persistedProjectVersions.get(key);
+                    if (!expectedUpdatedAt) throw new Error("画布项目版本尚未加载，请刷新后重试");
+                    const saved = await saveCanvasProject(project, expectedUpdatedAt);
                     if (!sessionEpoch.isCurrent(session)) return;
+                    persistedProjectVersions.set(key, saved.updatedAt);
                     useCanvasStore.setState((state) => ({ projects: state.projects.map((item) => (item.id === saved.id && item.updatedAt === project.updatedAt ? saved : item)), summaries: upsertSummary(state.summaries, saved), syncError: undefined }));
                 } catch (error) {
                     if (!sessionEpoch.isCurrent(session)) return;
@@ -211,10 +245,17 @@ function invalidateSession() {
     saveTimers.forEach((timer) => clearTimeout(timer));
     saveTimers.clear();
     latestProjectTimes.clear();
+    persistedProjectVersions.clear();
     projectRequests.clear();
 }
 
 function upsertSummary(summaries: CanvasProjectSummary[], project: CanvasProject) {
     const summary = summarizeCanvasProjectRecord(project);
     return [summary, ...summaries.filter((item) => item.id !== project.id)].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id));
+}
+
+async function loadSummaryPage(page: number, pageSize: number) {
+    const result = await listCanvasProjectSummaries({ page, pageSize });
+    const lastPage = Math.max(1, Math.ceil(result.total / result.pageSize));
+    return result.page > lastPage ? listCanvasProjectSummaries({ page: lastPage, pageSize: result.pageSize }) : result;
 }

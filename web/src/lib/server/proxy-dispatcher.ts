@@ -1,13 +1,21 @@
 import { execFileSync } from "node:child_process";
 import { ProxyAgent, setGlobalDispatcher } from "undici";
 
+import { GENERATION_TRANSPORT_TIMEOUT_MS } from "@/lib/server/generation-http-lifecycle";
+
 let configuredProxy = "";
 let windowsProxyCache: string | null | undefined;
 
 export function configureServerProxyDispatcher() {
     const proxy = resolveServerProxyUrl();
     if (!proxy || proxy === configuredProxy) return;
-    setGlobalDispatcher(new ProxyAgent(proxy));
+    setGlobalDispatcher(
+        new ProxyAgent({
+            uri: proxy,
+            headersTimeout: GENERATION_TRANSPORT_TIMEOUT_MS,
+            bodyTimeout: GENERATION_TRANSPORT_TIMEOUT_MS,
+        }),
+    );
     configuredProxy = proxy;
 }
 

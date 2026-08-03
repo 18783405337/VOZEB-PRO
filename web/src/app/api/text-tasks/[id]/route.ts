@@ -12,6 +12,7 @@ import { getStoredGenerationTaskRecord } from "@/lib/server/generation-task-stor
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 2400;
 
 type RouteContext = {
     params: Promise<{ id: string }>;

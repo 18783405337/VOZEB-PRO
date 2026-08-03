@@ -22,6 +22,8 @@ export type CanvasProjectSummary = Pick<CanvasProject, "id" | "sourceHandoffId" 
     connectionCount: number;
 };
 
+export type CanvasProjectSummaryPage = { projects: CanvasProjectSummary[]; total: number; page: number; pageSize: number };
+
 export type CreateCanvasProjectInput = {
     title?: string;
     sourceHandoffId?: string;

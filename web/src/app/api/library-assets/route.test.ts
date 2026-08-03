@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
     getCurrentUser: vi.fn(),
-    listAll: vi.fn(),
     listPage: vi.fn(),
 }));
 
@@ -10,7 +9,6 @@ vi.mock("@/lib/auth/session", () => ({ getCurrentUser: mocks.getCurrentUser }));
 vi.mock("@/lib/server/library-asset-service", () => ({
     LibraryAssetServiceError: class LibraryAssetServiceError extends Error {},
     createLibraryAssetForUser: vi.fn(),
-    listLibraryAssetsForUser: mocks.listAll,
     listLibraryAssetPageForUser: mocks.listPage,
 }));
 
@@ -20,16 +18,15 @@ describe("library assets route", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.getCurrentUser.mockResolvedValue({ id: "user-one" });
-        mocks.listAll.mockResolvedValue([]);
         mocks.listPage.mockResolvedValue({ items: [{ id: "asset-one" }], total: 21, page: 2, pageSize: 10 });
     });
 
-    it("keeps the legacy unpaged response for existing lazy pickers", async () => {
+    it("uses bounded defaults when pagination is omitted", async () => {
+        mocks.listPage.mockResolvedValueOnce({ items: [{ id: "asset-one" }], total: 1, page: 1, pageSize: 20 });
         const response = await GET(new Request("http://localhost/api/library-assets"));
 
-        expect(await response.json()).toEqual({ code: 0, data: { assets: [] }, msg: "OK" });
-        expect(mocks.listAll).toHaveBeenCalledWith("user-one");
-        expect(mocks.listPage).not.toHaveBeenCalled();
+        expect(mocks.listPage).toHaveBeenCalledWith("user-one", { page: null, pageSize: null, kind: null, keyword: null });
+        expect(await response.json()).toEqual({ code: 0, data: { assets: [{ id: "asset-one" }], total: 1, page: 1, pageSize: 20 }, msg: "OK" });
     });
 
     it("passes page filters to the server-side page query", async () => {

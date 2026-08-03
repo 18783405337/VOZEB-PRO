@@ -16,7 +16,7 @@ import { WorkbenchGenerationActivity } from "@/components/agent/workbench-genera
 import { moveListItem, ReferenceOrderButtons, WorkbenchPromptEditor } from "@/components/agent/workbench-composer-controls";
 import { WorkbenchResourceDialogs } from "@/components/agent/workbench-resource-dialogs";
 import { WorkbenchFileInput } from "@/components/agent/workbench-result-controls";
-import { matchesWorkbenchHistoryQuery } from "@/components/agent/workbench-agent-session-store";
+import { findWorkbenchAgentSessionForRecord, latestWorkbenchRecordsByConversation, matchesWorkbenchHistoryQuery } from "@/components/agent/workbench-agent-session-store";
 import { cn } from "@/lib/utils";
 import { normalizeVideoSeconds } from "./video-workbench-records";
 
@@ -35,6 +35,7 @@ export default function VideoPage() {
         prompt,
         setPrompt,
         agentMessages,
+        agentSessions,
         availableSkills,
         selectedSkill,
         setSelectedSkill,
@@ -45,7 +46,6 @@ export default function VideoPage() {
         enableSmartPlanning,
         selectSkill,
         selectVideoModelOption,
-        agentSessionByRecordId,
         hasOlderAgentMessages,
         olderAgentMessagesLoading,
         loadOlderAgentMessages,
@@ -105,6 +105,11 @@ export default function VideoPage() {
     } = controller;
     const agentModelOptions = videoModelOptions.map((id) => ({ id, name: modelOptionLabel(effectiveConfig, id), capability: "video" as const }));
     const selectedAgentModels = agentModelOptions.filter((item) => selectedModelIds.includes(item.id));
+    const conversationLogs = latestWorkbenchRecordsByConversation(logs).map((log) => {
+        const session = findWorkbenchAgentSessionForRecord(agentSessions, log.id, log.creativeConversationId);
+        return session?.title ? { ...log, title: session.title } : log;
+    });
+    const activeHistoryLogId = previewLog ? conversationLogs.find((log) => log.id === previewLog.id || Boolean(log.creativeConversationId && log.creativeConversationId === previewLog.creativeConversationId))?.id : undefined;
     return (
         <div className="flex h-full flex-col overflow-hidden bg-background text-foreground">
             <main className="min-h-0 flex-1 overflow-y-auto p-2 lg:overflow-hidden sm:p-3">
@@ -114,15 +119,15 @@ export default function VideoPage() {
                             subtitle="视频创作助手"
                             onNew={createSession}
                             historyContent={(query, closeHistory) => {
-                                const filteredLogs = logs.filter((log) => {
-                                    const session = agentSessionByRecordId.get(log.id);
+                                const filteredLogs = conversationLogs.filter((log) => {
+                                    const session = findWorkbenchAgentSessionForRecord(agentSessions, log.id, log.creativeConversationId);
                                     return matchesWorkbenchHistoryQuery(query, log.title, generationLogPublicPrompt(log), session?.searchText || "", ...(session?.messages.map((item) => item.text) || []));
                                 });
                                 return (
                                     <LogPanel
                                         logs={filteredLogs}
                                         selectedLogIds={selectedLogIds}
-                                        activeLogId={previewLog?.id}
+                                        activeLogId={activeHistoryLogId}
                                         onSelectedLogIdsChange={setSelectedLogIds}
                                         onCreateSession={createSession}
                                         onDeleteSelected={() => setDeleteConfirmOpen(true)}
@@ -404,9 +409,9 @@ export default function VideoPage() {
             <Drawer title="生成记录" placement="bottom" size="min(86dvh, 720px)" open={logsOpen} onClose={() => setLogsOpen(false)} styles={{ body: { padding: 0, overflow: "hidden" } }}>
                 <div className="thin-scrollbar h-full overflow-y-auto px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-4">
                     <LogPanel
-                        logs={logs}
+                        logs={conversationLogs}
                         selectedLogIds={selectedLogIds}
-                        activeLogId={previewLog?.id}
+                        activeLogId={activeHistoryLogId}
                         onSelectedLogIdsChange={setSelectedLogIds}
                         onCreateSession={createSession}
                         onDeleteSelected={() => setDeleteConfirmOpen(true)}

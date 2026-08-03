@@ -204,8 +204,12 @@ export async function createPaymentCheckout(orderId: string, input: { provider?:
 
 async function requestBilling<T>(url: string, init?: RequestInit) {
     const response = await fetch(url, { cache: "no-store", ...init });
-    const payload = (await response.json().catch(() => ({}))) as T & { error?: string };
-    if (!response.ok) throw new Error(payload.error || "请求失败");
+    const payload = (await response.json().catch(() => ({}))) as (T & { error?: string }) | { code: number; data: T | null; msg: string; error?: string };
+    if (!response.ok) throw new Error(("msg" in payload && payload.msg) || payload.error || "请求失败");
+    if ("code" in payload) {
+        if (payload.code !== 0 || payload.data === null) throw new Error(payload.msg || "请求失败");
+        return payload.data;
+    }
     return payload;
 }
 

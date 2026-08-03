@@ -586,6 +586,18 @@ describe("split Postgres repositories", () => {
         expect(queryArgs(query, 1)[1]).toEqual(["user-one", "2026-01-01"]);
     });
 
+    it("casts decimal daily wallet balances to PostgreSQL numeric", async () => {
+        const walletRow = { user_id: "user-one", date: "2026-01-01", plan_id: "pro", assignment_id: null, granted_points: 2, remaining_points: 1.7 };
+        const { executor, query } = mockExecutor([[walletRow]]);
+
+        const updated = await createPostgresRepositories(executor).pointsWallet.updateRemaining("user-one", "2026-01-01", 1.7);
+
+        expect(updated?.remainingPoints).toBe(1.7);
+        expect(queryArgs(query, 0)[0]).toContain("SET remaining_points = $3::numeric");
+        expect(queryArgs(query, 0)[0]).toContain("$3::numeric >= 0::numeric");
+        expect(queryArgs(query, 0)[1]).toEqual(["user-one", "2026-01-01", 1.7]);
+    });
+
     it("selects one current assignment with stable ordering", async () => {
         const timestamp = "2026-01-01T00:00:00.000Z";
         const { executor, query } = mockExecutor([[{ id: "assignment-one", user_id: "user-one", plan_id: "pro", status: "active", source: "order", starts_at: timestamp, created_at: timestamp, updated_at: timestamp }]]);

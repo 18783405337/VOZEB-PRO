@@ -12,11 +12,11 @@ pnpm dev
 ## 生产构建
 
 ```bash
-NEXT_BUILD_CPUS=1 NODE_OPTIONS=--max-old-space-size=1024 pnpm build
+pnpm build
 pnpm start:standalone
 ```
 
-构建脚本先在独立进程中执行严格 TypeScript 检查，再运行 Next.js 构建，避免两个阶段共用 1GB 堆内存。
+构建脚本先在独立进程中执行严格 TypeScript 检查，再运行 Next.js 构建。默认使用 Node.js 与 Next.js 的可用资源策略；只有部署环境确有资源限制时才显式设置 `NEXT_BUILD_CPUS` 或 `NODE_OPTIONS`。
 
 ## 服务端数据
 

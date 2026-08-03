@@ -1,8 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { normalizePaymentForm, parsePaymentFormHtml } from "./payment-form";
 
 describe("payment form normalization", () => {
+    afterEach(() => vi.unstubAllEnvs());
+
     it("extracts only a structured form and preserves duplicate fields", () => {
         expect(
             parsePaymentFormHtml('<script>window.opener.steal()</script><form action="https://pay.example/submit" method="post"><input type="hidden" name="item" value="one"><input type="hidden" name="item" value="two"><button>支付</button></form>'),
@@ -27,5 +29,11 @@ describe("payment form normalization", () => {
     it("rejects executable or credential-bearing actions", () => {
         expect(parsePaymentFormHtml('<form action="javascript:alert(1)"></form>')).toBeUndefined();
         expect(normalizePaymentForm({ action: "https://user:secret@pay.example/", fields: {} })).toBeUndefined();
+    });
+
+    it("rejects non-loopback http actions in production", () => {
+        vi.stubEnv("NODE_ENV", "production");
+        expect(normalizePaymentForm({ action: "http://pay.example/submit", fields: {} })).toBeUndefined();
+        expect(normalizePaymentForm({ action: "http://localhost:3000/submit", fields: {} })).toMatchObject({ action: "http://localhost:3000/submit" });
     });
 });

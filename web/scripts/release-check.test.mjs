@@ -11,7 +11,7 @@ import { prepareStandaloneAssets } from "./standalone-assets.mjs";
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = path.resolve(webRoot, "..");
 
-describe("low-memory release type-check contract", () => {
+describe("release type-check and build contract", () => {
     it("runs strict type-check once before the standalone build", () => {
         const releaseCheck = readFileSync(path.join(webRoot, "scripts/release-check.mjs"), "utf8");
         const productionBuild = readFileSync(path.join(webRoot, "scripts/production-build.mjs"), "utf8");
@@ -26,6 +26,8 @@ describe("low-memory release type-check contract", () => {
         expect(releaseCheck.indexOf('["test"]')).toBeLessThan(releaseCheck.indexOf('["run", "build"]'));
         expect(releaseCheck).toContain('["run", "lint"]');
         expect(releaseCheck).toContain('NEXT_SKIP_BUILD_TYPECHECK: "1"');
+        expect(releaseCheck).not.toContain('NEXT_BUILD_CPUS: "1"');
+        expect(releaseCheck).not.toContain('"--max-old-space-size=1024"');
         expect(releaseCheck).toContain(".next-release-");
         expect(releaseCheck).toContain('"web/.next-release-*"');
         expect(releaseCheck).not.toContain(":(glob)");
@@ -46,6 +48,8 @@ describe("low-memory release type-check contract", () => {
         expect(standaloneStart).toContain('process.env.NEXT_DIST_DIR?.trim() || ".next"');
         expect(standaloneStart).toContain("prepareStandaloneAssets");
         expect(dockerfile).toContain("pnpm run typecheck && NEXT_SKIP_BUILD_TYPECHECK=1 pnpm run build");
+        expect(dockerfile).not.toContain("ARG NEXT_BUILD_CPUS=1");
+        expect(dockerfile).not.toContain("ARG BUILD_NODE_OPTIONS=--max-old-space-size=1536");
     });
 
     it("copies static and complete public assets into a custom standalone dist directory", async () => {

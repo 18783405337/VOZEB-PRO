@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { GENERATION_ROUTE_MAX_DURATION_SECONDS, GENERATION_TRANSPORT_TIMEOUT_MS } from "./generation-http-lifecycle";
 import { DEFAULT_MODEL_REQUEST_TIMEOUT_MS, resolveModelPollingAttempts, resolveModelRequestTimeoutMs } from "./model-request-policy";
 
 describe("model request policy", () => {
@@ -22,5 +23,10 @@ describe("model request policy", () => {
     it("extends asynchronous polling to the effective model timeout", () => {
         expect(resolveModelPollingAttempts({ capabilityProfile: { timeoutMs: 12 * 60_000 } }, "image", 2_500, 120)).toBe(288);
         expect(resolveModelPollingAttempts(undefined, "audio", 2_500, 180)).toBe(180);
+    });
+
+    it("keeps the HTTP lifecycle above every supported model timeout", () => {
+        expect(GENERATION_TRANSPORT_TIMEOUT_MS).toBe(GENERATION_ROUTE_MAX_DURATION_SECONDS * 1000);
+        expect(GENERATION_TRANSPORT_TIMEOUT_MS).toBeGreaterThan(DEFAULT_MODEL_REQUEST_TIMEOUT_MS.video);
     });
 });

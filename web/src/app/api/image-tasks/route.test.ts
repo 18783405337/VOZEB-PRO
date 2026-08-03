@@ -24,11 +24,15 @@ vi.mock("@/lib/server/security", () => ({
 }));
 vi.mock("@/lib/server/proxy-dispatcher", () => ({ configureServerProxyDispatcher: vi.fn() }));
 
-import { POST } from "./route";
+import { maxDuration, POST } from "./route";
 
 describe("image task route", () => {
     beforeEach(() => {
         vi.clearAllMocks();
+    });
+
+    it("keeps background image submission alive past the five minute route default", () => {
+        expect(maxDuration).toBeGreaterThanOrEqual(40 * 60);
     });
 
     it("returns the existing task before settings, rate, and concurrency checks", async () => {

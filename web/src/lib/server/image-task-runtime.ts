@@ -5,6 +5,7 @@ import { directRemoteImageResult, imageUnits, ImageQueryContractError, ImageUpst
 import type { ImageTaskMediaResult, ImageTaskResult, ImageTaskRunResult } from "@/app/api/image-tasks/image-task-types";
 import { stableMediaUrl, writeImageGenerationLog } from "@/app/api/image-tasks/image-task-runner";
 import { getAuthSettings, refundUserPoints } from "@/lib/auth/store";
+import { dedupeImageResults } from "@/lib/image-result-dedupe";
 import { registerGenerationTaskAssetsForUser } from "@/lib/server/creative-runtime-service";
 import { finishGenerationAttempt, startGenerationAttempt } from "@/lib/server/generation-attempt";
 import { generationModelId, systemGenerationChannelId } from "@/lib/server/generation-channel";
@@ -185,7 +186,7 @@ async function completeImageResult(task: ImageTask, result: ImageTaskRunResult, 
     }
     task = beforePersistence;
     const settledResults = await Promise.allSettled(imageTaskMediaResults(result).map((item) => normalizeSafeImageResult(task, item, origin, authContext)));
-    const safeResults = settledResults.flatMap((item) => (item.status === "fulfilled" && item.value?.dataUrl ? [item.value] : []));
+    const safeResults = dedupeImageResults(settledResults.flatMap((item) => (item.status === "fulfilled" && item.value?.dataUrl ? [item.value] : [])));
     if (!safeResults.length) {
         const rejected = settledResults.find((item): item is PromiseRejectedResult => item.status === "rejected");
         throw rejected?.reason instanceof Error ? rejected.reason : new GenerationSubmissionSafeFailure("上游返回的图片文件无效或保存失败");
@@ -234,13 +235,7 @@ async function completeImageResult(task: ImageTask, result: ImageTaskRunResult, 
 
 function imageTaskMediaResults(result: ImageTaskResult): ImageTaskMediaResult[] {
     const values = result.results?.length ? result.results : result.dataUrl || result.remoteUrl ? [{ dataUrl: result.dataUrl, remoteUrl: result.remoteUrl }] : [];
-    const seen = new Set<string>();
-    return values.filter((item) => {
-        const key = item.remoteUrl || item.dataUrl;
-        if (!key || seen.has(key)) return false;
-        seen.add(key);
-        return true;
-    });
+    return dedupeImageResults(values);
 }
 
 async function normalizeSafeImageResult(task: ImageTask, result: ImageTaskMediaResult, origin: string, authContext: string): Promise<ImageTaskMediaResult> {

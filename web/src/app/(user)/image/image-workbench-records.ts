@@ -4,6 +4,7 @@ import { nanoid } from "nanoid";
 
 import { browserReadableMediaUrl } from "@/lib/browser-media-url";
 import { generationLogDraftSnapshot, generationLogPublicPrompt, type GenerationLogReferenceSnapshot, type GenerationLogRequestSnapshot, type GenerationLogSlotSnapshot, type GenerationLogSnapshotParameters } from "@/lib/generation-log-snapshot";
+import { dedupeImageResults } from "@/lib/image-result-dedupe";
 import { readImageMeta } from "@/lib/image-utils";
 import { deleteGenerationLogs as deleteServerGenerationLogs, listGenerationLogs, recordGenerationLog, type StoredGenerationLogRecord } from "@/services/api/generation-logs";
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
@@ -86,12 +87,13 @@ export function updateResultAt(results: GenerationResult[], index: number, next:
 }
 
 export function replaceResultWithImageOutputs(results: GenerationResult[], resultId: string, images: GeneratedImage[]) {
-    if (!images.length) return results;
+    const uniqueImages = dedupeImageResults(images);
+    if (!uniqueImages.length) return results;
     const outputPrefix = `${resultId}:output:`;
     const retained = results.filter((item) => !item.id.startsWith(outputPrefix));
     const targetIndex = retained.findIndex((item) => item.id === resultId);
     const insertAt = targetIndex >= 0 ? targetIndex : retained.length;
-    const outputs = images.map((image, index): GenerationResult => {
+    const outputs = uniqueImages.map((image, index): GenerationResult => {
         const id = index ? `${outputPrefix}${index + 1}` : resultId;
         return { id, status: "success", image: { ...image, id } };
     });

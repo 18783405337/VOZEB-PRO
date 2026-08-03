@@ -54,6 +54,26 @@ describe("github agent skill import", () => {
         expect(result.skill?.instructions).toContain("识别商品卖点");
     });
 
+    it("keeps a bounded long source document for text-model extraction", async () => {
+        const longMarkdown = `${markdown}\n${"专业创作规则。".repeat(5_000)}`;
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async (input: string | URL) => {
+                const url = String(input);
+                if (url.endsWith("/repos/acme/skills")) return response({ default_branch: "main" });
+                if (url.endsWith("/repos/acme/skills/commits/main")) return response({ sha: commit });
+                if (url.includes(`/git/trees/${commit}?recursive=1`)) return response({ tree: [{ type: "blob", path: "poster/SKILL.md" }] });
+                if (url.includes(`raw.githubusercontent.com/acme/skills/${commit}/poster/SKILL.md`)) return response(longMarkdown);
+                return response({ message: "not found" }, 404);
+            }),
+        );
+
+        const result = await importAgentSkillFromGithub({ url: "https://github.com/acme/skills" });
+
+        expect(result.skill?.instructions.length).toBe(24_000);
+        expect(result.skill?.instructions.length).toBeGreaterThan(8_000);
+    });
+
     it("returns bounded candidates before reading a multi-skill repository", async () => {
         vi.stubGlobal(
             "fetch",

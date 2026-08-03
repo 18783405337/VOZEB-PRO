@@ -8,6 +8,7 @@ import { getInstallStatus } from "@/lib/server/install-status";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 2400;
 
 export async function POST(request: Request) {
     if (!isMaintenanceTokenConfigured()) return NextResponse.json({ code: 503, data: null, msg: "维护任务令牌未配置" }, { status: 503 });

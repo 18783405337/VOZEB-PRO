@@ -26,6 +26,7 @@ vi.mock("@/lib/server/outbound-url-security", () => ({ isPublicIpAddress: mocks.
 vi.mock("@/lib/server/proxy-dispatcher", () => ({ resolveServerProxyUrl: mocks.proxyUrl }));
 
 import { fetchSafeOutbound, UnsafeOutboundUrlError } from "./safe-outbound-fetch";
+import { GENERATION_TRANSPORT_TIMEOUT_MS } from "./generation-http-lifecycle";
 
 describe("safe outbound fetch", () => {
     beforeEach(() => {
@@ -46,6 +47,10 @@ describe("safe outbound fetch", () => {
         expect(String(requestUrl)).toBe("https://provider.example:8443/v1/models?cursor=one");
         expect(new Headers(init?.headers).get("host")).toBeNull();
         expect((init as RequestInit & { dispatcher?: unknown }).dispatcher).toBeTruthy();
+        expect(mocks.agents[0]?.options).toMatchObject({
+            headersTimeout: GENERATION_TRANSPORT_TIMEOUT_MS,
+            bodyTimeout: GENERATION_TRANSPORT_TIMEOUT_MS,
+        });
 
         const connect = mocks.agents[0]?.options.connect as { servername?: string; lookup?: (hostname: string, options: { all?: boolean }, callback: (error: Error | null, addresses: Array<{ address: string; family: 4 | 6 }>) => void) => void };
         expect(connect.servername).toBe("provider.example");
@@ -71,5 +76,18 @@ describe("safe outbound fetch", () => {
 
         expect(mocks.proxyUrl).not.toHaveBeenCalled();
         expect(mocks.agents[0]?.options.connect).toBeTruthy();
+    });
+
+    it("keeps the same long response timeout when an outbound proxy is used", async () => {
+        mocks.resolve.mockResolvedValue({ url: new URL("https://provider.example/v1/images/generations"), address: "8.8.8.8", family: 4 });
+        mocks.proxyUrl.mockReturnValue("http://proxy.test:8080");
+
+        await fetchSafeOutbound("https://provider.example/v1/images/generations");
+
+        expect(mocks.agents[0]?.options).toMatchObject({
+            uri: "http://proxy.test:8080",
+            headersTimeout: GENERATION_TRANSPORT_TIMEOUT_MS,
+            bodyTimeout: GENERATION_TRANSPORT_TIMEOUT_MS,
+        });
     });
 });

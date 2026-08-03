@@ -4,10 +4,10 @@ import { after, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth/session";
 import { getAuthSettings, refundUserPoints } from "@/lib/auth/store";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
+import { dedupeImageResults } from "@/lib/image-result-dedupe";
 import { configureServerProxyDispatcher } from "@/lib/server/proxy-dispatcher";
 import { fetchInternalApi, isInternalApiBaseUrl, resolveInternalOrigin } from "@/lib/server/internal-origin";
 import { resolveGeneratedMediaUrl } from "@/lib/media-url";
-import { closestImageAspectRatio, parseImageDimensions } from "@/lib/image-size";
 import { resolveGlobalAiOpcPreset } from "@/lib/globalaiopc-catalog";
 import { toSafeGenerationErrorMessage } from "@/lib/server/generation-errors";
 import { generationModelId, toSystemGenerationChannel } from "@/lib/server/generation-channel";
@@ -39,9 +39,6 @@ import {
     type GeminiPayload,
     QUALITY_BASE,
     QUALITY_ALIASES,
-    DEFAULT_IMAGE_SHORT_SIDE,
-    IMAGE_SIZE_STEP,
-    IMAGE_MIN_PIXELS,
     IMAGE_OUTPUT_FORMAT,
     TASK_HEARTBEAT_MS,
     IMAGE_TASK_POLL_INTERVAL_MS,
@@ -57,6 +54,8 @@ import {
     IMAGE_POLL_URL_KEYS,
     type ImageEditReferenceMode,
 } from "./image-task-types";
+
+export { imageRequestAspectRatio, parseImageDimensions, parseImageRatio, resolveRequestSize, resolveSize, validateImageSize } from "./image-task-size";
 
 export function publicTask(task: ImageTask) {
     return {
@@ -387,13 +386,7 @@ export function findImageResult(value: unknown, baseUrl: string, config: ImageTa
 export function findImageResults(value: unknown, baseUrl: string, config: ImageTaskConfig, depth = 0): ImageTaskMediaResult[] {
     const images: ImageTaskMediaResult[] = [];
     collectImageResults(value, baseUrl, config, depth, images);
-    const seen = new Set<string>();
-    return images.filter((image) => {
-        const key = image.remoteUrl || image.dataUrl;
-        if (!key || seen.has(key)) return false;
-        seen.add(key);
-        return true;
-    });
+    return dedupeImageResults(images);
 }
 
 function collectImageResults(value: unknown, baseUrl: string, config: ImageTaskConfig, depth: number, images: ImageTaskMediaResult[]) {
@@ -804,84 +797,4 @@ export function normalizeQuality(quality: string) {
     const value = quality.trim().toLowerCase();
     const normalized = QUALITY_ALIASES[value] || value;
     return QUALITY_BASE[normalized] ? normalized : undefined;
-}
-
-export function resolveRequestSize(quality: string | undefined, size: string) {
-    try {
-        const value = size.trim();
-        if (!value || value.toLowerCase() === "auto") return undefined;
-        const dimensions = parseImageDimensions(value);
-        if (dimensions) {
-            validateImageTargetSize(dimensions.width, dimensions.height);
-            return upstreamImageSize(dimensions.width, dimensions.height);
-        }
-        if (value.includes(":")) return resolveSize(quality, value);
-        throw new Error("图片尺寸格式不支持，请使用 auto、9:16 或 1024x1024");
-    } catch (error) {
-        if (error instanceof GenerationSubmissionSafeFailure) throw error;
-        throw new GenerationSubmissionSafeFailure(error instanceof Error ? error.message : "图片尺寸参数无效");
-    }
-}
-
-export function imageRequestAspectRatio(size: string) {
-    const value = size.trim();
-    if (/^\d+(?:\.\d+)?:\d+(?:\.\d+)?$/.test(value)) return value;
-    const dimensions = parseImageDimensions(value);
-    return (dimensions && closestImageAspectRatio(dimensions.width, dimensions.height)) || "1:1";
-}
-
-export function resolveSize(quality: string | undefined, ratio: string): string {
-    const parsedRatio = parseImageRatio(ratio);
-    const basePixels = quality ? QUALITY_BASE[quality] : undefined;
-    const isLandscape = parsedRatio.width >= parsedRatio.height;
-    const longRatio = isLandscape ? parsedRatio.width / parsedRatio.height : parsedRatio.height / parsedRatio.width;
-    let longSide: number;
-    let shortSide: number;
-    if (basePixels) {
-        const targetPixels = basePixels * basePixels;
-        const longSideRaw = Math.sqrt(targetPixels * longRatio);
-        longSide = Math.floor(longSideRaw / IMAGE_SIZE_STEP) * IMAGE_SIZE_STEP;
-        shortSide = Math.round(longSide / longRatio / IMAGE_SIZE_STEP) * IMAGE_SIZE_STEP;
-    } else {
-        shortSide = DEFAULT_IMAGE_SHORT_SIDE;
-        longSide = Math.round((shortSide * longRatio) / IMAGE_SIZE_STEP) * IMAGE_SIZE_STEP;
-    }
-    const width = isLandscape ? longSide : shortSide;
-    const height = isLandscape ? shortSide : longSide;
-    validateImageSize(width, height);
-    return `${width}x${height}`;
-}
-
-export function parseImageRatio(value: string) {
-    const parts = value.split(":");
-    if (parts.length !== 2) throw new Error("图片尺寸格式不支持，请使用 auto、9:16 或 1024x1024");
-    const width = Number(parts[0]);
-    const height = Number(parts[1]);
-    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) throw new Error("图片比例必须是正数，例如 9:16");
-    return { width, height };
-}
-
-export { parseImageDimensions };
-
-export function validateImageSize(width: number, height: number) {
-    validateImageDimensions(width, height);
-}
-
-function validateImageTargetSize(width: number, height: number) {
-    validateImageDimensions(width, height);
-}
-
-function validateImageDimensions(width: number, height: number) {
-    if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) throw new Error("图片尺寸必须是正整数，例如 1024x1024");
-}
-
-function upstreamImageSize(width: number, height: number) {
-    if (width * height >= IMAGE_MIN_PIXELS) return `${width}x${height}`;
-    const scale = Math.sqrt(IMAGE_MIN_PIXELS / (width * height));
-    const align = (value: number) => Math.ceil(value / IMAGE_SIZE_STEP) * IMAGE_SIZE_STEP;
-    const shortSide = align(Math.min(width, height) * scale);
-    const upstreamWidth = width <= height ? shortSide : align(shortSide * (width / height));
-    const upstreamHeight = height <= width ? shortSide : align(shortSide * (height / width));
-    validateImageSize(upstreamWidth, upstreamHeight);
-    return `${upstreamWidth}x${upstreamHeight}`;
 }

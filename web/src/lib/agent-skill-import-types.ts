@@ -1,5 +1,7 @@
 import type { AgentSkill } from "./auth/store-types";
 
+export const AGENT_SKILL_EXTRACTION_SOURCE_LENGTH = 24_000;
+
 export type AgentSkillImportCandidate = {
     path: string;
     name: string;

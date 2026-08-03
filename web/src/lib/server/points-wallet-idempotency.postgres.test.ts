@@ -9,6 +9,48 @@ import { consumePoints } from "./points-wallet-service";
 const postgresIt = process.env.VOZEB_PRO_RUN_POSTGRES_INTEGRATION === "1" ? it : it.skip;
 
 describe("PostgreSQL points wallet idempotency", () => {
+    postgresIt("updates a decimal daily balance without integer parameter inference", async () => {
+        await ensurePostgresSchema();
+        const repositories = createPostgresRepositories();
+        const settings = await repositories.settings.getSettings();
+        const planId = settings.settings?.defaultPlanId || settings.plans[0]?.id;
+        if (!planId) throw new Error("No entitlement plan is available for the PostgreSQL integration test");
+
+        const suffix = randomUUID();
+        const userId = `test-points-decimal-${suffix}`;
+        const now = new Date();
+        try {
+            await repositories.users.createWithNextAccountId({
+                id: userId,
+                username: `decimal_${suffix.replaceAll("-", "").slice(0, 16)}`,
+                displayName: "小数积分测试用户",
+                bio: "",
+                role: "user",
+                status: "active",
+                planId,
+                pointsBalance: 0,
+                passwordHash: "integration-test-only",
+                createdAt: now.toISOString(),
+                updatedAt: now.toISOString(),
+            });
+            await repositories.pointsWallet.createDailyWallet({
+                userId,
+                date: "2026-08-03",
+                planId,
+                grantedPoints: 2,
+                remainingPoints: 2,
+                createdAt: now.toISOString(),
+                updatedAt: now.toISOString(),
+            });
+
+            const wallet = await repositories.pointsWallet.updateRemaining(userId, "2026-08-03", 1.7);
+
+            expect(wallet?.remainingPoints).toBe(1.7);
+        } finally {
+            await repositories.users.delete(userId);
+        }
+    });
+
     postgresIt("persists the server request fingerprint and rejects conflicting replays", async () => {
         await ensurePostgresSchema();
         const repositories = createPostgresRepositories();

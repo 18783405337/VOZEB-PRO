@@ -195,7 +195,7 @@ export function AgentSkillCreateModal({ open, existingSkills, onClose, onCreate 
                             <Alert
                                 type="success"
                                 showIcon
-                                message={<span>已提取：{importedSkill.name}</span>}
+                                message={<span>AI 提取完成：{importedSkill.name}</span>}
                                 description={
                                     <span className="break-all">
                                         {importedSkill.sourcePath}
@@ -204,7 +204,7 @@ export function AgentSkillCreateModal({ open, existingSkills, onClose, onCreate 
                                 }
                             />
                         ) : (
-                            <div className="text-xs leading-5 text-stone-600 dark:text-stone-400">仅读取公开仓库中的 SKILL.md，不会执行仓库代码；提取后仍可在下方编辑并确认。</div>
+                            <div className="text-xs leading-5 text-stone-600 dark:text-stone-400">读取公开仓库中的 SKILL.md 后，由后台默认文本模型整理为中文原生规则；不会执行仓库代码，整理后仍可编辑确认。</div>
                         )}
                     </div>
                 ) : null}

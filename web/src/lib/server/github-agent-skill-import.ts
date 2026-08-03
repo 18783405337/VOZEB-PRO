@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { parseDocument } from "yaml";
 
 import type { AgentSkillWorkspace } from "@/lib/auth/store-types";
-import type { AgentSkillImportCandidate, AgentSkillImportResult, ImportedAgentSkill } from "@/lib/agent-skill-import-types";
+import { AGENT_SKILL_EXTRACTION_SOURCE_LENGTH, type AgentSkillImportResult, type ImportedAgentSkill } from "@/lib/agent-skill-import-types";
 import { fetchSafeOutbound } from "@/lib/server/safe-outbound-fetch";
 
 const GITHUB_API = "https://api.github.com";
@@ -166,7 +166,7 @@ function parseSkillMarkdown(markdown: string, source: { id: string; repository: 
         name: name.slice(0, 60),
         description: description.slice(0, 240),
         plannerSummary: description.slice(0, 240),
-        instructions: instructions.slice(0, 8000),
+        instructions: instructions.slice(0, AGENT_SKILL_EXTRACTION_SOURCE_LENGTH),
         enabled: false,
         keywords: keywords.slice(0, 30),
         workspaces,

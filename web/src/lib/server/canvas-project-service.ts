@@ -17,8 +17,11 @@ export class CanvasProjectServiceError extends Error {
     }
 }
 
-export function listCanvasProjectsForUser(userId: string) {
-    return listCanvasProjectSummaries(userId);
+export function listCanvasProjectsForUser(userId: string, input: { page?: unknown; pageSize?: unknown } = {}) {
+    return listCanvasProjectSummaries(userId, {
+        page: positiveInteger(input.page, 1, 1_000_000),
+        pageSize: positiveInteger(input.pageSize, 12, 100),
+    });
 }
 
 export async function getCanvasProjectForUser(userId: string, id: string) {
@@ -63,12 +66,13 @@ export async function createCanvasProjectForUser(userId: string, value: unknown)
 }
 
 export async function updateCanvasProjectForUser(userId: string, id: string, value: unknown) {
+    const input = object(value);
+    const expectedUpdatedAt = isoTimestamp(input.expectedUpdatedAt);
+    if (!expectedUpdatedAt) throw new CanvasProjectServiceError("缺少画布项目版本，请刷新后重试", 400);
     const current = await getCanvasProject(text(id, 160), userId);
     if (!current) throw new CanvasProjectServiceError("画布项目不存在", 404);
-    const incomingUpdatedAt = parseTimestamp(object(value).updatedAt);
-    if (incomingUpdatedAt && incomingUpdatedAt < parseTimestamp(current.updatedAt)) return current;
-    const project = normalizeProject(object(value), current);
-    return updateCanvasProject(userId, project);
+    const project = normalizeProject(object(input.project), current);
+    return updateCanvasProject(userId, project, expectedUpdatedAt);
 }
 
 export async function deleteCanvasProjectsForUser(userId: string, value: unknown) {
@@ -100,7 +104,7 @@ function normalizeProject(value: Record<string, unknown>, current: CanvasProject
         showImageInfo: sanitized.showImageInfo === true,
         viewport: normalizeViewport(sanitized.viewport, current.viewport),
         createdAt: current.createdAt,
-        updatedAt: new Date().toISOString(),
+        updatedAt: nextProjectVersion(current.updatedAt),
         id: current.id,
         sourceHandoffId: current.sourceHandoffId,
         creativeConversationId: current.creativeConversationId,
@@ -123,9 +127,20 @@ function text(value: unknown, max: number) {
     return typeof value === "string" ? value.trim().slice(0, max) : "";
 }
 
-function parseTimestamp(value: unknown) {
-    const time = Date.parse(String(value || ""));
-    return Number.isFinite(time) ? time : 0;
+function positiveInteger(value: unknown, fallback: number, max: number) {
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) && parsed > 0 ? Math.min(parsed, max) : fallback;
+}
+
+function isoTimestamp(value: unknown) {
+    if (typeof value !== "string") return "";
+    const time = Date.parse(value);
+    return Number.isFinite(time) ? new Date(time).toISOString() : "";
+}
+
+function nextProjectVersion(current: string) {
+    const previous = Date.parse(current);
+    return new Date(Math.max(Date.now(), Number.isFinite(previous) ? previous + 1 : 0)).toISOString();
 }
 
 export function canvasProjectError(error: unknown) {

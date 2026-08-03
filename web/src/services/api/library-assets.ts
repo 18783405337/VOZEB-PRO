@@ -1,7 +1,7 @@
 import type { Asset, CreateLibraryAssetInput } from "@/lib/library-asset-contract";
 
 export function listLibraryAssets() {
-    return request<{ assets: Asset[] }>("/api/library-assets", { cache: "no-store" }).then((data) => data.assets);
+    return listLibraryAssetPage({ page: 1, pageSize: 100 }).then((data) => data.assets);
 }
 
 export type LibraryAssetPage = { assets: Asset[]; total: number; page: number; pageSize: number };

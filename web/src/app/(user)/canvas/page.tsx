@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { App, Button } from "antd";
+import { App, Button, Pagination } from "antd";
 import { Download, FileUp, Plus } from "lucide-react";
 
 import { readZip } from "@/lib/zip";
@@ -31,6 +31,9 @@ export default function CanvasPage() {
     const syncError = useCanvasStore((state) => state.syncError);
     const hydrate = useCanvasStore((state) => state.hydrate);
     const projects = useCanvasStore((state) => state.summaries);
+    const total = useCanvasStore((state) => state.summaryTotal);
+    const page = useCanvasStore((state) => state.summaryPage);
+    const pageSize = useCanvasStore((state) => state.summaryPageSize);
     const loadProject = useCanvasStore((state) => state.loadProject);
     const createProject = useCanvasStore((state) => state.createProject);
     const importProject = useCanvasStore((state) => state.importProject);
@@ -48,7 +51,7 @@ export default function CanvasPage() {
         if (creating) return;
         setCreating(true);
         try {
-            enterProject(await createProject(`VOZEB PRO 画布 ${projects.length + 1}`));
+            enterProject(await createProject(`VOZEB PRO 画布 ${total + 1}`));
         } catch (error) {
             message.error(error instanceof Error ? error.message : "画布创建失败");
         } finally {
@@ -107,14 +110,14 @@ export default function CanvasPage() {
         autoOpenRef.current = true;
         void (async () => {
             try {
-                const id = mode === "new" ? await createProject(`VOZEB PRO 画布 ${projects.length + 1}`) : projects[0]?.id || (await createProject(`VOZEB PRO 画布 ${projects.length + 1}`));
+                const id = mode === "new" ? await createProject(`VOZEB PRO 画布 ${total + 1}`) : projects[0]?.id || (await createProject(`VOZEB PRO 画布 ${total + 1}`));
                 enterProject(id);
             } catch (error) {
                 autoOpenRef.current = false;
                 message.error(error instanceof Error ? error.message : "画布打开失败");
             }
         })();
-    }, [createProject, message, mode, projects, ready]);
+    }, [createProject, message, mode, projects, ready, total]);
 
     if (ready && (mode === "new" || mode === "recent")) return <main className="flex h-full items-center justify-center bg-background text-sm text-stone-500">正在打开画布...</main>;
 
@@ -139,7 +142,7 @@ export default function CanvasPage() {
                         ) : null}
                         {projects.length ? (
                             <Button disabled={!ready} onClick={() => setDeleteIds(projects.map((project) => project.id))}>
-                                删除全部
+                                删除当前页
                             </Button>
                         ) : null}
                         <Button disabled={!ready} icon={<FileUp className="size-4" />} onClick={() => inputRef.current?.click()}>
@@ -161,11 +164,18 @@ export default function CanvasPage() {
                         ) : null}
                     </section>
                 ) : projects.length ? (
-                    <div className="grid gap-2 sm:grid-cols-2 sm:gap-5 xl:grid-cols-3">
-                        {projects.map((project) => (
-                            <CanvasProjectCard key={project.id} project={project} />
-                        ))}
-                    </div>
+                    <>
+                        <div className="grid gap-2 sm:grid-cols-2 sm:gap-5 xl:grid-cols-3">
+                            {projects.map((project) => (
+                                <CanvasProjectCard key={project.id} project={project} />
+                            ))}
+                        </div>
+                        {total > pageSize ? (
+                            <div className="flex justify-center py-2 sm:py-0">
+                                <Pagination current={page} pageSize={pageSize} total={total} showSizeChanger={false} onChange={(nextPage) => void hydrate(true, nextPage)} />
+                            </div>
+                        ) : null}
+                    </>
                 ) : (
                     <section className="flex min-h-24 flex-col items-center justify-center border-y border-stone-200 px-3 py-5 text-center sm:min-h-56 sm:py-8 dark:border-stone-800">
                         <h2 className="text-lg font-medium sm:text-xl">还没有画布</h2>

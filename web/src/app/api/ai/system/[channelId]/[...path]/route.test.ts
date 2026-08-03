@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
     taskAccess: vi.fn(),
 }));
 
-vi.mock("@/lib/auth/session", () => ({ getCurrentUser: vi.fn(async () => ({ id: "user-one" })) }));
+vi.mock("@/lib/auth/session", () => ({ getCurrentUser: vi.fn(async () => ({ id: "user-one", role: "user", pointsBalance: 5 })) }));
 vi.mock("@/lib/auth/store", () => ({
     consumeUserPoints: mocks.consumeUserPoints,
     getAuthSettings: mocks.getAuthSettings,
@@ -32,11 +32,17 @@ vi.mock("@/lib/server/security", () => ({
     rateLimitHeaders: vi.fn(() => ({ "Retry-After": "60" })),
 }));
 
-import { GET, POST, PUT } from "./route";
+import { GET, maxDuration, POST, PUT } from "./route";
 import { MEDIA_SNIFF_RANGE } from "@/lib/server/media-content-validation";
 import { systemAiBillingHeaders, systemAiPointsIdempotencyKey } from "@/lib/server/system-ai-billing";
 
 const context = { params: Promise.resolve({ channelId: "channel-one", path: ["_media"] }) };
+
+describe("system generation proxy runtime", () => {
+    it("keeps long image and video submissions alive beyond the framework default", () => {
+        expect(maxDuration).toBeGreaterThanOrEqual(40 * 60);
+    });
+});
 
 describe("system media proxy", () => {
     beforeEach(() => {

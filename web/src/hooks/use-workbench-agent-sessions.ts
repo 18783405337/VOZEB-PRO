@@ -23,7 +23,9 @@ export function useWorkbenchAgentSessions(workspace: "image" | "video", userId: 
     const [availableSkills, setAvailableSkills] = useState<AgentSkillSummary[]>([]);
     const [olderAgentMessagesLoading, setOlderAgentMessagesLoading] = useState(false);
     const contextRef = useRef<WorkbenchContext>({ key: contextKey, generation: 0 });
+    const activeAgentSessionIdRef = useRef(activeAgentSessionId);
     const agentMessagesContextRef = useRef(contextKey);
+    const agentMessagesSessionIdRef = useRef(activeAgentSessionId);
     const agentSessionsRef = useRef<WorkbenchAgentSession[]>([]);
     const activeConversationRef = useRef<{ key: string; id: string } | undefined>(undefined);
     const activeSessionSelectedRef = useRef(false);
@@ -31,7 +33,9 @@ export function useWorkbenchAgentSessions(workspace: "image" | "video", userId: 
     const olderMessagesRequestRef = useRef<string | undefined>(undefined);
     if (contextRef.current.key !== contextKey) {
         contextRef.current = { key: contextKey, generation: contextRef.current.generation + 1 };
+        activeAgentSessionIdRef.current = "";
         agentMessagesContextRef.current = "";
+        agentMessagesSessionIdRef.current = "";
         activeConversationRef.current = undefined;
         activeSessionSelectedRef.current = false;
         conversationRequestRef.current = null;
@@ -39,18 +43,22 @@ export function useWorkbenchAgentSessions(workspace: "image" | "video", userId: 
     }
     const setAgentMessages = useCallback<Dispatch<SetStateAction<WorkbenchAgentMessage[]>>>((value) => {
         agentMessagesContextRef.current = contextRef.current.key;
+        agentMessagesSessionIdRef.current = activeAgentSessionIdRef.current;
         setAgentMessagesState(value);
     }, []);
 
     useEffect(() => {
         const context = { ...contextRef.current };
+        const freshSessionId = nanoid();
+        activeAgentSessionIdRef.current = freshSessionId;
         agentMessagesContextRef.current = "";
+        agentMessagesSessionIdRef.current = freshSessionId;
         setAgentMessagesState([]);
         setAgentSessions([]);
         agentSessionsRef.current = [];
         setPrompt("");
         setLastAgentPrompt("");
-        setActiveAgentSessionIdState(nanoid());
+        setActiveAgentSessionIdState(freshSessionId);
         setActiveAgentRecordId(undefined);
         setActiveCreativeConversationId(undefined);
         activeConversationRef.current = undefined;
@@ -69,6 +77,8 @@ export function useWorkbenchAgentSessions(workspace: "image" | "video", userId: 
                     activeSessionSelectedRef.current = true;
                     const latest = merged[0];
                     const conversationId = latest.creativeConversationId || latest.id;
+                    activeAgentSessionIdRef.current = latest.id;
+                    agentMessagesSessionIdRef.current = "";
                     setActiveAgentSessionIdState(latest.id);
                     setActiveAgentRecordId(latest.recordId);
                     activeConversationRef.current = { key: context.key, id: conversationId };
@@ -76,12 +86,13 @@ export function useWorkbenchAgentSessions(workspace: "image" | "video", userId: 
                     setLastAgentPrompt(latest.lastPrompt);
                     try {
                         const loaded = await restoreLatestWorkbenchAgentSession(workspace, merged);
-                        if (loaded && isCurrentContext(contextRef.current, context) && activeConversationRef.current?.id === conversationId) {
+                        if (loaded && isCurrentWorkbenchSession(contextRef.current, context, activeAgentSessionIdRef.current, latest.id) && activeConversationRef.current?.id === conversationId) {
                             const next = agentSessionsRef.current.map((item) => (item.id === loaded.id ? loaded : item));
                             agentSessionsRef.current = next;
                             setAgentSessions(next);
                             setActiveAgentRecordId(loaded.recordId);
                             agentMessagesContextRef.current = context.key;
+                            agentMessagesSessionIdRef.current = loaded.id;
                             setAgentMessagesState(loaded.messages);
                             setLastAgentPrompt(loaded.lastPrompt);
                         }
@@ -101,7 +112,7 @@ export function useWorkbenchAgentSessions(workspace: "image" | "video", userId: 
     }, [agentSessions]);
 
     useEffect(() => {
-        if (agentMessagesContextRef.current !== contextKey || !userId || !agentMessages.length) return;
+        if (agentMessagesContextRef.current !== contextKey || agentMessagesSessionIdRef.current !== activeAgentSessionId || !userId || !agentMessages.length) return;
         const context = { ...contextRef.current };
         if (!isCurrentContext(contextRef.current, context)) return;
         const session: WorkbenchAgentSession = {
@@ -151,6 +162,8 @@ export function useWorkbenchAgentSessions(workspace: "image" | "video", userId: 
 
     const setActiveAgentSessionId = useCallback((id: string) => {
         activeSessionSelectedRef.current = true;
+        activeAgentSessionIdRef.current = id;
+        agentMessagesSessionIdRef.current = "";
         setActiveAgentSessionIdState(id);
     }, []);
 
@@ -172,15 +185,16 @@ export function useWorkbenchAgentSessions(workspace: "image" | "video", userId: 
         const context = { ...contextRef.current };
         const session = agentSessionsRef.current.find((item) => item.id === activeAgentSessionId);
         if (!session?.hasOlderMessages || !session.oldestSequence || olderMessagesRequestRef.current === session.id) return;
+        const expectedSessionId = session.id;
         olderMessagesRequestRef.current = session.id;
         setOlderAgentMessagesLoading(true);
         try {
             const loaded = await loadOlderWorkbenchAgentSession(workspace, session);
-            if (!isCurrentContext(contextRef.current, context)) return;
+            if (!isCurrentWorkbenchSession(contextRef.current, context, activeAgentSessionIdRef.current, expectedSessionId)) return;
             const next = agentSessionsRef.current.map((item) => (item.id === loaded.id ? loaded : item));
             agentSessionsRef.current = next;
             setAgentSessions(next);
-            if (activeAgentSessionId === loaded.id) setAgentMessages(loaded.messages);
+            setAgentMessages(loaded.messages);
         } catch (error) {
             console.error("Workbench history pagination failed", error instanceof Error ? error.message : error);
         } finally {
@@ -196,7 +210,7 @@ export function useWorkbenchAgentSessions(workspace: "image" | "video", userId: 
         activeSessionSelectedRef.current = true;
         const pending = conversationRequestRef.current;
         if (pending && isCurrentContext(pending, context)) return pending.promise;
-        const request = createCreativeConversation({ surface: "chat", source: `${workspace}-workbench`, title: workspace === "image" ? "图片工作台对话" : "视频工作台对话" }).then((conversation) => {
+        const request = createCreativeConversation({ surface: "chat", source: `${workspace}-workbench`, title: "新对话" }).then((conversation) => {
             if (!isCurrentContext(contextRef.current, context)) throw new Error("工作台已切换，请重试");
             activeConversationRef.current = { key: context.key, id: conversation.id };
             setActiveCreativeConversationId(conversation.id);
@@ -238,4 +252,8 @@ export function useWorkbenchAgentSessions(workspace: "image" | "video", userId: 
 
 function isCurrentContext(current: WorkbenchContext, expected: WorkbenchContext) {
     return current.key === expected.key && current.generation === expected.generation;
+}
+
+export function isCurrentWorkbenchSession(current: WorkbenchContext, expected: WorkbenchContext, currentSessionId: string, expectedSessionId: string) {
+    return isCurrentContext(current, expected) && currentSessionId === expectedSessionId;
 }

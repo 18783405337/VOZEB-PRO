@@ -9,6 +9,6 @@ export async function importAgentSkillFromGithub(input: { url: string; path?: st
         body: JSON.stringify(input),
     });
     const payload = (await response.json().catch(() => null)) as { data?: AgentSkillImportResult; error?: string } | null;
-    if (!response.ok || !payload?.data) throw new Error(payload?.error || "提取 GitHub Skill 失败");
+    if (!response.ok || !payload?.data) throw new Error(payload?.error || "AI 提取 GitHub Skill 失败");
     return payload.data;
 }

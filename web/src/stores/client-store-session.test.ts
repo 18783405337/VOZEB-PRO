@@ -100,9 +100,9 @@ describe("client store session isolation", () => {
     });
 
     it("reloads Canvas projects for the new user after a reset", async () => {
-        const oldRequest = deferred<CanvasProjectSummary[]>();
+        const oldRequest = deferred<{ projects: CanvasProjectSummary[]; total: number; page: number; pageSize: number }>();
         const freshProjects = [summarizeCanvasProjectRecord(canvasProject("canvas-b", "用户 B 画布"))];
-        mocks.listCanvasProjectSummaries.mockReturnValueOnce(oldRequest.promise).mockResolvedValueOnce(freshProjects);
+        mocks.listCanvasProjectSummaries.mockReturnValueOnce(oldRequest.promise).mockResolvedValueOnce({ projects: freshProjects, total: 1, page: 1, pageSize: 12 });
 
         useUserStore.getState().setUser(user("user-a"));
         const oldHydrate = useCanvasStore.getState().hydrate();
@@ -110,11 +110,12 @@ describe("client store session isolation", () => {
         useUserStore.getState().setUser(user("user-b"));
         const freshHydrate = useCanvasStore.getState().hydrate();
 
-        oldRequest.resolve([summarizeCanvasProjectRecord(canvasProject("canvas-a", "用户 A 画布"))]);
+        oldRequest.resolve({ projects: [summarizeCanvasProjectRecord(canvasProject("canvas-a", "用户 A 画布"))], total: 1, page: 1, pageSize: 12 });
         await Promise.all([oldHydrate, freshHydrate]);
 
         expect(mocks.listCanvasProjectSummaries).toHaveBeenCalledTimes(2);
         expect(useCanvasStore.getState().summaries).toEqual(freshProjects);
+        expect(useCanvasStore.getState().summaryTotal).toBe(1);
         expect(useCanvasStore.getState().projects).toEqual([]);
     });
 
@@ -134,6 +135,33 @@ describe("client store session isolation", () => {
 
         expect(useCanvasStore.getState().projects).toEqual([freshProject]);
         expect(useCanvasStore.getState().summaries).toEqual([summarizeCanvasProjectRecord(freshProject)]);
+    });
+
+    it("clamps a stale Canvas page to the last available server page", async () => {
+        const firstPage = [summarizeCanvasProjectRecord(canvasProject("canvas-a", "画布一"))];
+        mocks.listCanvasProjectSummaries.mockResolvedValueOnce({ projects: [], total: 1, page: 2, pageSize: 12 }).mockResolvedValueOnce({ projects: firstPage, total: 1, page: 1, pageSize: 12 });
+        useUserStore.getState().setUser(user("user-a"));
+
+        await useCanvasStore.getState().hydrate(true, 2);
+
+        expect(mocks.listCanvasProjectSummaries).toHaveBeenNthCalledWith(1, { page: 2, pageSize: 12 });
+        expect(mocks.listCanvasProjectSummaries).toHaveBeenNthCalledWith(2, { page: 1, pageSize: 12 });
+        expect(useCanvasStore.getState()).toMatchObject({ summaries: firstPage, summaryPage: 1, summaryTotal: 1 });
+    });
+
+    it("keeps a newly created Canvas off a later summary page", async () => {
+        const secondPage = [summarizeCanvasProjectRecord(canvasProject("canvas-old", "第二页画布"))];
+        const created = canvasProject("canvas-new", "新画布");
+        mocks.listCanvasProjectSummaries.mockResolvedValue({ projects: secondPage, total: 13, page: 2, pageSize: 12 });
+        mocks.createCanvasProject.mockResolvedValue(created);
+        useUserStore.getState().setUser(user("user-a"));
+
+        await useCanvasStore.getState().hydrate(true, 2);
+        await useCanvasStore.getState().createProject("新画布");
+
+        expect(useCanvasStore.getState().summaries).toEqual(secondPage);
+        expect(useCanvasStore.getState().summaryTotal).toBe(14);
+        expect(useCanvasStore.getState().projects).toContainEqual(created);
     });
 
     it("reloads Drama projects for the new user after a reset", async () => {

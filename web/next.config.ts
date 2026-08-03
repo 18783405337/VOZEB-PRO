@@ -9,7 +9,7 @@ import { parseChangelog } from "@/lib/release";
 const webDir = dirname(fileURLToPath(import.meta.url));
 const localVersion = readFileSync(resolve(webDir, "../VERSION"), "utf8").trim() || "dev";
 const localChangelog = readFileSync(resolve(webDir, "../CHANGELOG.md"), "utf8");
-const buildCpus = Math.max(1, Number.parseInt(process.env.NEXT_BUILD_CPUS || "1", 10) || 1);
+const configuredBuildCpus = Number.parseInt(process.env.NEXT_BUILD_CPUS || "", 10);
 const distDir = process.env.NEXT_DIST_DIR?.trim() || ".next";
 const skipBuildTypeCheck = process.env.NEXT_SKIP_BUILD_TYPECHECK === "1";
 const nodeProxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.https_proxy || process.env.http_proxy;
@@ -48,9 +48,8 @@ export default function nextConfig(phase: string): NextConfig {
             NEXT_PUBLIC_APP_RELEASES: JSON.stringify(releases),
         },
         experimental: {
-            cpus: buildCpus,
+            ...(Number.isSafeInteger(configuredBuildCpus) && configuredBuildCpus > 0 ? { cpus: configuredBuildCpus } : {}),
             proxyClientMaxBodySize: "32mb",
-            workerThreads: false,
         },
         async rewrites() {
             return {

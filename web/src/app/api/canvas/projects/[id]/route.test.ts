@@ -9,7 +9,7 @@ vi.mock("@/lib/server/canvas-project-service", () => ({
     updateCanvasProjectForUser: mocks.updateProject,
 }));
 
-import { GET } from "./route";
+import { GET, PATCH } from "./route";
 
 describe("canvas project detail route", () => {
     beforeEach(() => {
@@ -23,5 +23,15 @@ describe("canvas project detail route", () => {
 
         expect(mocks.getProject).toHaveBeenCalledWith("user-one", "canvas-one");
         expect(await response.json()).toEqual({ code: 0, data: { project: { id: "canvas-one", nodes: [], connections: [] } }, msg: "OK" });
+    });
+
+    it("passes the project and expected version to the service", async () => {
+        const body = { project: { id: "canvas-one", title: "新标题" }, expectedUpdatedAt: "2026-08-01T00:00:00.000Z" };
+        mocks.updateProject.mockResolvedValue({ ...body.project, updatedAt: "2026-08-01T00:00:01.000Z" });
+
+        const response = await PATCH(new Request("http://localhost/api/canvas/projects/canvas-one", { method: "PATCH", body: JSON.stringify(body) }), { params: Promise.resolve({ id: "canvas-one" }) });
+
+        expect(mocks.updateProject).toHaveBeenCalledWith("user-one", "canvas-one", body);
+        expect(response.status).toBe(200);
     });
 });

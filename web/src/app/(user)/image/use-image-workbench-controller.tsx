@@ -9,7 +9,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { InsertAssetPayload } from "@/app/(user)/canvas/components/asset-picker-modal";
 import { type WorkbenchAgentMessage } from "@/components/agent/workbench-agent-panel";
 import { workbenchAttachmentsFromReferences } from "@/components/agent/workbench-agent-references";
-import { findWorkbenchAgentSessionForRecord, removeWorkbenchAgentSessionsForRecords } from "@/components/agent/workbench-agent-session-store";
+import { expandWorkbenchConversationSelection, findWorkbenchAgentSessionForRecord, removeWorkbenchAgentSessionsForRecords } from "@/components/agent/workbench-agent-session-store";
 import { preloadWorkbenchResourceDialogs } from "@/components/agent/workbench-resource-dialogs";
 import { requestCreditCost } from "@/constant/credits";
 import { mergeWorkbenchAgentPatch, useWorkbenchAgentRun, type WorkbenchAgentParameterPatch } from "@/hooks/use-workbench-agent-run";
@@ -23,7 +23,8 @@ import { originalImageDownloadUrl, originalImageExtension } from "@/lib/media-im
 import { preloadOnIdle } from "@/lib/preload-on-idle";
 import { resolveImageGenerationCount } from "@/lib/server/image-task-config";
 import { imageAssetData, referenceImageFromAsset } from "@/lib/workbench-asset-reference";
-import { deleteGenerationLogResults as deleteServerGenerationLogResults, deleteGenerationLogs as deleteServerGenerationLogs, renameGenerationLog as renameServerGenerationLog } from "@/services/api/generation-logs";
+import { deleteGenerationLogResults as deleteServerGenerationLogResults, renameGenerationLog as renameServerGenerationLog } from "@/services/api/generation-logs";
+import { deleteCreativeConversations, updateCreativeConversation } from "@/services/api/creative";
 import { ImageGenerationTaskTerminalError, createImageGenerationTask, isImageGenerationTaskDeferredError, waitForImageGenerationTask } from "@/services/api/image";
 import { isDefinitiveGenerationTaskRequestFailure } from "@/services/api/generation-task-request-error";
 import { isGenerationTaskNeedsReviewError } from "@/services/api/generation-task-state";
@@ -153,7 +154,7 @@ export function useImageWorkbenchController() {
     const imageTaskQueue = imageTaskQueueRef.current;
 
     const model = effectiveConfig.imageModel || effectiveConfig.model;
-    const canGenerate = Boolean(prompt.trim()) && references.every((reference) => !reference.uploadStatus);
+    const canGenerate = publicSessionReady && Boolean(prompt.trim()) && references.every((reference) => !reference.uploadStatus);
     const generationCount = resolveImageGenerationCount(effectiveConfig.count);
     const imageConcurrencyLimit = Math.max(1, Math.min(10, Math.floor(Number(effectiveConfig.generationConcurrency?.image) || 4)));
     const previewPendingCount = results.filter((result) => result.status === "pending").length;
@@ -191,6 +192,18 @@ export function useImageWorkbenchController() {
         if (userId) void refreshLogs(userId);
         else replaceLogs([]);
     }, [userId]);
+
+    useEffect(() => {
+        if (!agentSessionsHydrated || !activeCreativeConversationId || activeLogIdRef.current) return;
+        const currentLog = logs.find((log) => log.creativeConversationId === activeCreativeConversationId);
+        if (!currentLog) return;
+        const restoredResults = resultsFromLog(currentLog);
+        activeLogIdRef.current = currentLog.id;
+        resultsByLogIdRef.current.set(currentLog.id, restoredResults);
+        setActiveAgentRecordId(currentLog.id);
+        setPreviewLog(currentLog);
+        setResults(restoredResults);
+    }, [activeCreativeConversationId, agentSessionsHydrated, logs, setActiveAgentRecordId]);
 
     useEffect(() => {
         if (!publicSessionReady) return;
@@ -606,21 +619,25 @@ export function useImageWorkbenchController() {
     };
 
     const deleteSelectedLogs = async () => {
-        const deleteIds = selectedLogIds.filter((id) => logsRef.current.some((log) => log.id === id));
+        const selectedLogs = expandWorkbenchConversationSelection(logsRef.current, selectedLogIds);
+        const deleteIds = selectedLogs.map((log) => log.id);
         if (!deleteIds.length) {
             setDeleteConfirmOpen(false);
             return;
         }
         const deleteIdSet = new Set(deleteIds);
+        const conversationIds = Array.from(new Set(selectedLogs.map((log) => log.creativeConversationId).filter((id): id is string => Boolean(id))));
+        const conversationIdSet = new Set(conversationIds);
+        const standaloneLogs = selectedLogs.filter((log) => !log.creativeConversationId);
         const deletingActiveLog = Boolean(previewLog && deleteIdSet.has(previewLog.id));
-        const imageKeys = logsRef.current.filter((log) => deleteIdSet.has(log.id)).flatMap((log) => log.images.map((image) => image.storageKey).filter((key): key is string => Boolean(key)));
+        const imageKeys = standaloneLogs.flatMap((log) => log.images.map((image) => image.storageKey).filter((key): key is string => Boolean(key)));
         deleteIds.forEach((id) => {
             deletedLogIdsRef.current.add(id);
             resultsByLogIdRef.current.delete(id);
         });
         replaceLogs(logsRef.current.filter((log) => !deleteIdSet.has(log.id)));
         setAgentSessions((current) => {
-            const next = removeWorkbenchAgentSessionsForRecords(current, deleteIdSet).filter((session) => !deletingActiveLog || session.id !== activeAgentSessionId);
+            const next = removeWorkbenchAgentSessionsForRecords(current, deleteIdSet).filter((session) => !conversationIdSet.has(session.creativeConversationId || session.id) && (!deletingActiveLog || session.id !== activeAgentSessionId));
             return next;
         });
         if (deletingActiveLog) {
@@ -640,8 +657,8 @@ export function useImageWorkbenchController() {
         }
         setSelectedLogIds([]);
         setDeleteConfirmOpen(false);
-        const serverIds = deleteIds.flatMap(imageServerLogIds);
-        const results = await Promise.allSettled([deleteStoredImages(imageKeys), deleteServerGenerationLogs(serverIds), removeStoredImageLogs(deleteIds)]);
+        const standaloneIds = standaloneLogs.map((log) => log.id);
+        const results = await Promise.allSettled([conversationIds.length ? deleteCreativeConversations(conversationIds) : Promise.resolve(), deleteStoredImages(imageKeys), standaloneIds.length ? removeStoredImageLogs(standaloneIds) : Promise.resolve()]);
         const failed = results.filter((result) => result.status === "rejected");
         if (failed.length) {
             message.warning("记录已移除，部分关联资源删除失败，请稍后重试");
@@ -819,7 +836,10 @@ export function useImageWorkbenchController() {
         const nextTitle = title.trim();
         if (!nextTitle || nextTitle === log.title) return;
         const latestLog = getLatestLog(log.id) || log;
-        await renameServerGenerationLog(imageServerLogIds(log.id)[0], nextTitle);
+        await Promise.all([renameServerGenerationLog(imageServerLogIds(log.id)[0], nextTitle), log.creativeConversationId ? updateCreativeConversation(log.creativeConversationId, { title: nextTitle }) : Promise.resolve()]);
+        if (log.creativeConversationId) {
+            setAgentSessions((sessions) => sessions.map((session) => (session.creativeConversationId === log.creativeConversationId || session.id === log.creativeConversationId ? { ...session, title: nextTitle } : session)));
+        }
         upsertLog({ ...latestLog, title: nextTitle });
     };
 

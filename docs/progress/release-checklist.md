@@ -6,7 +6,7 @@
 pnpm run check:release
 ```
 
-该命令会检查 Prettier、TypeScript、低内存构建、补丁空白，以及 `.data`、`.next`、`node_modules` 等运行时文件是否被误提交。
+该命令会检查 Prettier、TypeScript、隔离生产构建、补丁空白，以及 `.data`、`.next`、`node_modules` 等运行时文件是否被误提交。
 
 ## 手动页面检查
 

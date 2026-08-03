@@ -1,4 +1,4 @@
-import type { CanvasProject, CanvasProjectSummary } from "@/lib/canvas-project-contract";
+import type { CanvasProject, CanvasProjectSummary, CanvasProjectSummaryPage } from "@/lib/canvas-project-contract";
 import { summarizeCanvasProjectRecord } from "@/lib/canvas-project-summary";
 import { summarizeCanvasProject, type CreateOverviewMedia, type CreateOverviewProject } from "@/lib/create-workbench-overview";
 import { readJsonDataFile, withJsonDataFileLock, writeJsonDataFile } from "@/lib/server/data-adapter";
@@ -22,23 +22,32 @@ export async function listCanvasProjects(userId: string) {
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
-export async function listCanvasProjectSummaries(userId: string): Promise<CanvasProjectSummary[]> {
+export async function listCanvasProjectSummaries(userId: string, input: { page: number; pageSize: number }): Promise<CanvasProjectSummaryPage> {
+    const offset = (input.page - 1) * input.pageSize;
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
         const result = await postgresQuery<Record<string, unknown>>(
-            `SELECT id, title, created_at, updated_at,
-                    project_json->>'sourceHandoffId' AS source_handoff_id,
-                    project_json->>'creativeConversationId' AS creative_conversation_id,
-                    jsonb_array_length(CASE WHEN jsonb_typeof(project_json->'nodes') = 'array' THEN project_json->'nodes' ELSE '[]'::jsonb END) AS node_count,
-                    jsonb_array_length(CASE WHEN jsonb_typeof(project_json->'connections') = 'array' THEN project_json->'connections' ELSE '[]'::jsonb END) AS connection_count
-             FROM canvas_projects
-             WHERE user_id = $1
-             ORDER BY updated_at DESC, id ASC`,
-            [userId],
+            `WITH filtered AS (
+                 SELECT id, title, created_at, updated_at,
+                        project_json->>'sourceHandoffId' AS source_handoff_id,
+                        project_json->>'creativeConversationId' AS creative_conversation_id,
+                        jsonb_array_length(CASE WHEN jsonb_typeof(project_json->'nodes') = 'array' THEN project_json->'nodes' ELSE '[]'::jsonb END) AS node_count,
+                        jsonb_array_length(CASE WHEN jsonb_typeof(project_json->'connections') = 'array' THEN project_json->'connections' ELSE '[]'::jsonb END) AS connection_count
+                 FROM canvas_projects
+                 WHERE user_id = $1
+             ), page_items AS (
+                 SELECT * FROM filtered ORDER BY updated_at DESC, id ASC LIMIT $2 OFFSET $3
+             )
+             SELECT page_items.*, totals.total_count
+             FROM (SELECT count(*)::integer AS total_count FROM filtered) totals
+             LEFT JOIN page_items ON TRUE
+             ORDER BY page_items.updated_at DESC NULLS LAST, page_items.id ASC`,
+            [userId, input.pageSize, offset],
         );
-        return result.rows.map(mapProjectSummary);
+        return { projects: result.rows.filter((row) => row.id).map(mapProjectSummary), total: Math.max(0, Number(result.rows[0]?.total_count) || 0), ...input };
     }
-    return (await listCanvasProjects(userId)).map(summarizeCanvasProjectRecord);
+    const projects = (await listCanvasProjects(userId)).map(summarizeCanvasProjectRecord);
+    return { projects: projects.slice(offset, offset + input.pageSize), total: projects.length, ...input };
 }
 
 export async function getLatestCanvasProjectOverview(userId: string): Promise<CreateOverviewProject | undefined> {
@@ -116,15 +125,19 @@ export async function createCanvasProject(userId: string, project: CanvasProject
     return project;
 }
 
-export async function updateCanvasProject(userId: string, project: CanvasProject) {
+export async function updateCanvasProject(userId: string, project: CanvasProject, expectedUpdatedAt: string) {
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
         const result = await postgresQuery(
             `UPDATE canvas_projects SET title = $3, project_json = $4::jsonb, updated_at = $5
-             WHERE id = $1 AND user_id = $2 RETURNING id`,
-            [project.id, userId, project.title, JSON.stringify(project), new Date(project.updatedAt)],
+             WHERE id = $1 AND user_id = $2 AND project_json->>'updatedAt' = $6
+             RETURNING id`,
+            [project.id, userId, project.title, JSON.stringify(project), new Date(project.updatedAt), expectedUpdatedAt],
         );
-        if (!result.rows[0]) throw new CanvasProjectStoreError("画布项目不存在", 404);
+        if (!result.rows[0]) {
+            const existing = await getCanvasProject(project.id, userId);
+            throw new CanvasProjectStoreError(existing ? "画布项目已在其他页面更新，请刷新后重试" : "画布项目不存在", existing ? 409 : 404);
+        }
         return project;
     }
     let found = false;
@@ -133,6 +146,7 @@ export async function updateCanvasProject(userId: string, project: CanvasProject
         projects: db.projects.map((record) => {
             if (record.userId !== userId || record.project.id !== project.id) return record;
             found = true;
+            if (record.project.updatedAt !== expectedUpdatedAt) throw new CanvasProjectStoreError("画布项目已在其他页面更新，请刷新后重试", 409);
             return { ...record, project };
         }),
     }));

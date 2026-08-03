@@ -91,7 +91,7 @@ export async function listCreativeWorkbenchSessionSummaries(userId: string, work
                 {
                     id: conversation.id,
                     ...(typeof recordId === "string" && recordId ? { recordId } : {}),
-                    title: firstPrompt.slice(0, 24) || conversation.title,
+                    title: workbenchConversationTitle(conversation.title, firstPrompt),
                     lastPrompt: userMessages[userMessages.length - 1].content,
                     searchText: messages
                         .map((message) => message.content)
@@ -181,11 +181,16 @@ function mapSummaryRow(row: SummaryRow): CreativeWorkbenchSessionSummary {
     return {
         id: dbText(row.id),
         ...optionalRecordId(row.record_id),
-        title: firstPrompt.slice(0, 24) || dbText(row.title),
+        title: workbenchConversationTitle(dbText(row.title), firstPrompt),
         lastPrompt: dbText(row.last_prompt),
         searchText: dbText(row.search_text).slice(0, MAX_SEARCH_TEXT),
         updatedAt: dbTime(row.updated_at),
     };
+}
+
+function workbenchConversationTitle(title: string, firstPrompt: string) {
+    const normalizedTitle = title.trim();
+    return normalizedTitle && !["新对话", "图片工作台对话", "视频工作台对话"].includes(normalizedTitle) ? normalizedTitle : firstPrompt.slice(0, 24) || normalizedTitle || "新对话";
 }
 
 function optionalRecordId(value: unknown) {

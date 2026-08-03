@@ -25,7 +25,7 @@ vi.mock("@/lib/server/creative-entity-deletion-store", () => ({
 }));
 vi.mock("@/lib/server/local-media-storage", () => ({ deleteUserLocalMediaAssets: mocks.deleteUserLocalMediaAssets }));
 
-import { createCanvasProjectForUser, deleteCanvasProjectsForUser } from "./canvas-project-service";
+import { createCanvasProjectForUser, deleteCanvasProjectsForUser, updateCanvasProjectForUser } from "./canvas-project-service";
 
 describe("canvas project service lifecycle", () => {
     beforeEach(() => {
@@ -60,6 +60,32 @@ describe("canvas project service lifecycle", () => {
 
         expect(mocks.deleteCanvasProjectAggregates).toHaveBeenCalledWith("user-one", ["canvas-one"]);
         expect(mocks.deleteUserLocalMediaAssets).toHaveBeenCalledWith("user-one", ["permanent/canvas.png"]);
+    });
+
+    it("passes the explicit server version to the conditional store update", async () => {
+        const current = project();
+        mocks.getCanvasProject.mockResolvedValue(current);
+        mocks.updateCanvasProject.mockResolvedValue({ ...current, title: "新标题" });
+
+        await updateCanvasProjectForUser("user-one", current.id, { project: { ...current, title: "新标题" }, expectedUpdatedAt: current.updatedAt });
+
+        expect(mocks.updateCanvasProject).toHaveBeenCalledWith("user-one", expect.objectContaining({ title: "新标题" }), current.updatedAt);
+    });
+
+    it("always advances the persisted version beyond the current snapshot", async () => {
+        const current = { ...project(), updatedAt: "2099-01-01T00:00:00.000Z" };
+        mocks.getCanvasProject.mockResolvedValue(current);
+        mocks.updateCanvasProject.mockImplementation(async (_userId, next) => next);
+
+        await updateCanvasProjectForUser("user-one", current.id, { project: { ...current, title: "新标题" }, expectedUpdatedAt: current.updatedAt });
+
+        const saved = mocks.updateCanvasProject.mock.calls[0][1] as CanvasProject;
+        expect(Date.parse(saved.updatedAt)).toBeGreaterThan(Date.parse(current.updatedAt));
+    });
+
+    it("rejects saves without a valid base version", async () => {
+        await expect(updateCanvasProjectForUser("user-one", "canvas-one", { project: project() })).rejects.toMatchObject({ status: 400 });
+        expect(mocks.getCanvasProject).not.toHaveBeenCalled();
     });
 });
 

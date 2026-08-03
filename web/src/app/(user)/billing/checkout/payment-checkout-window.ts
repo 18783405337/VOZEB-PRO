@@ -1,5 +1,7 @@
 import type { PaymentCheckout } from "@/services/api/billing";
 
+import { safePaymentHttpUrl } from "@/lib/payment-url";
+
 export type PaymentCheckoutOpenResult = { status: "opened" | "blocked" | "invalid" | "manual"; fallbackValue?: string };
 
 type CheckoutWindow = Pick<Window, "close" | "document" | "location"> & { opener: Window["opener"] };
@@ -12,43 +14,13 @@ export function openPaymentCheckoutWindow(checkout: PaymentCheckout, openWindow:
     const redirectUrl = safePaymentUrl(checkout.url || checkout.qrContent);
     if (redirectUrl) return openPaymentRedirect(redirectUrl, fallbackValue, openWindow);
 
-    if (checkout.kind === "form" && checkout.form) {
-        const action = safePaymentUrl(checkout.form.action);
-        if (!action) return { status: "invalid", fallbackValue };
-        const popup = openCheckoutWindow(openWindow);
-        if (!popup) return { status: "blocked", fallbackValue };
-        try {
-            const form = popup.document.createElement("form");
-            form.action = action;
-            form.method = checkout.form.method;
-            for (const field of checkout.form.fields) {
-                const input = popup.document.createElement("input");
-                input.type = "hidden";
-                input.name = field.name;
-                input.value = field.value;
-                form.append(input);
-            }
-            popup.document.body.replaceChildren(form);
-            form.submit();
-            return { status: "opened" };
-        } catch {
-            closePopup(popup);
-            return { status: "invalid", fallbackValue };
-        }
-    }
+    if (checkout.kind === "form" && checkout.form) return openPaymentRedirect(`/api/billing/orders/${encodeURIComponent(checkout.orderId)}/payment-form`, fallbackValue, openWindow);
 
     return { status: "invalid", fallbackValue };
 }
 
 export function safePaymentUrl(value?: string) {
-    const text = value?.trim();
-    if (!text) return "";
-    try {
-        const url = new URL(text);
-        return (url.protocol === "http:" || url.protocol === "https:") && !url.username && !url.password ? url.toString() : "";
-    } catch {
-        return "";
-    }
+    return safePaymentHttpUrl(value);
 }
 
 function openPaymentRedirect(url: string, fallbackValue: string, openWindow: WindowOpen): PaymentCheckoutOpenResult {

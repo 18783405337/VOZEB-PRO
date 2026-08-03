@@ -26,17 +26,41 @@ describe("canvas project file provider", () => {
 
         expect(await listCanvasProjects("user-one")).toMatchObject([{ id: "one", creativeConversationId: "conversation-one" }]);
         expect(await getCanvasProject("two", "user-one")).toBeNull();
-        await expect(updateCanvasProject("user-one", project("two", "越权修改"))).rejects.toMatchObject({ status: 404 });
+        await expect(updateCanvasProject("user-one", project("two", "越权修改"), project("two", "").updatedAt)).rejects.toMatchObject({ status: 404 });
 
+        const stored = await getCanvasProject("one", "user-one");
         const updated = { ...project("one", "已更新"), nodes: [{ id: "node-one" }] as CanvasProject["nodes"], updatedAt: new Date(Date.now() + 1000).toISOString() };
-        await updateCanvasProject("user-one", updated);
+        await updateCanvasProject("user-one", updated, stored?.updatedAt || "");
         expect(await getCanvasProject("one", "user-one")).toMatchObject({ title: "已更新", nodes: [{ id: "node-one" }] });
+    });
+
+    it("rejects a stale file-provider snapshot instead of overwriting a newer save", async () => {
+        const initial = project("one", "初始项目");
+        await createCanvasProject("user-one", initial);
+        const first = { ...initial, title: "第一个页面", updatedAt: new Date(Date.parse(initial.updatedAt) + 1_000).toISOString() };
+        const stale = { ...initial, title: "旧页面", updatedAt: new Date(Date.parse(initial.updatedAt) + 2_000).toISOString() };
+
+        await updateCanvasProject("user-one", first, initial.updatedAt);
+        await expect(updateCanvasProject("user-one", stale, initial.updatedAt)).rejects.toMatchObject({ status: 409 });
+        await expect(getCanvasProject("one", "user-one")).resolves.toMatchObject({ title: "第一个页面" });
+    });
+
+    it("uses the expected version in the PostgreSQL conditional update", async () => {
+        mocks.provider = "postgres";
+        mocks.postgresQuery.mockResolvedValueOnce({ rows: [{ id: "one" }] });
+        const updated = project("one", "已更新");
+
+        await updateCanvasProject("user-one", updated, "2026-08-01T00:00:00.000Z");
+
+        const [statement, params] = mocks.postgresQuery.mock.calls[0] as [string, unknown[]];
+        expect(statement).toContain("project_json->>'updatedAt' = $6");
+        expect(params[5]).toBe("2026-08-01T00:00:00.000Z");
     });
 
     it("returns file-provider summaries without changing stored project details", async () => {
         await createCanvasProject("user-one", { ...project("one", "项目一"), nodes: [{ id: "node-one" }] as CanvasProject["nodes"] });
 
-        await expect(listCanvasProjectSummaries("user-one")).resolves.toMatchObject([{ id: "one", title: "项目一", nodeCount: 1, connectionCount: 0 }]);
+        await expect(listCanvasProjectSummaries("user-one", { page: 1, pageSize: 12 })).resolves.toMatchObject({ projects: [{ id: "one", title: "项目一", nodeCount: 1, connectionCount: 0 }], total: 1 });
         await expect(getCanvasProject("one", "user-one")).resolves.toMatchObject({ nodes: [{ id: "node-one" }] });
     });
 
@@ -51,17 +75,19 @@ describe("canvas project file provider", () => {
                     creative_conversation_id: "conversation-one",
                     node_count: 8,
                     connection_count: 3,
+                    total_count: 21,
                     created_at: "2026-07-20T00:00:00.000Z",
                     updated_at: "2026-07-22T00:00:00.000Z",
                 },
             ],
         });
 
-        await expect(listCanvasProjectSummaries("user-one")).resolves.toMatchObject([{ id: "canvas-one", nodeCount: 8, connectionCount: 3 }]);
+        await expect(listCanvasProjectSummaries("user-one", { page: 2, pageSize: 12 })).resolves.toMatchObject({ projects: [{ id: "canvas-one", nodeCount: 8, connectionCount: 3 }], total: 21, page: 2, pageSize: 12 });
         const [statement, params] = mocks.postgresQuery.mock.calls[0] as [string, unknown[]];
         expect(statement).toContain("jsonb_array_length");
         expect(statement).not.toMatch(/SELECT\s+project_json\s+FROM/i);
-        expect(params).toEqual(["user-one"]);
+        expect(statement).toContain("LIMIT $2 OFFSET $3");
+        expect(params).toEqual(["user-one", 12, 12]);
     });
 
     it("returns only the latest file-provider project summary", async () => {

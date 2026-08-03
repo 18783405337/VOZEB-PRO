@@ -30,10 +30,8 @@ try {
     run(pnpm, ["run", "format:check"], webRoot, "Prettier 格式检查");
     run(pnpm, ["test"], webRoot, "单元与集成测试");
     run(pnpm, ["run", "typecheck"], webRoot, "TypeScript 类型检查");
-    run(pnpm, ["run", "build"], webRoot, "Next.js 低内存隔离构建", {
+    run(pnpm, ["run", "build"], webRoot, "Next.js 隔离生产构建", {
         env: {
-            NEXT_BUILD_CPUS: "1",
-            NODE_OPTIONS: process.env.NODE_OPTIONS || "--max-old-space-size=1024",
             NEXT_TELEMETRY_DISABLED: "1",
             NEXT_DIST_DIR: buildDistDir,
             NEXT_SKIP_BUILD_TYPECHECK: "1",

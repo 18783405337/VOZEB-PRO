@@ -48,7 +48,7 @@ test("conversation and Canvas deletion stay deleted after refresh", async ({ pag
     await expect(conversationDialog).toContainText("永久删除消息、生成记录");
     await expectDialogWithinViewport(conversationDialog);
     await conversationDialog.getByRole("button", { name: /删\s*除/ }).click();
-    await expect(historyDialog.getByText(conversationTitles[0], { exact: true })).toHaveCount(0);
+    await expect(historyDialog.getByText(conversationTitles[0], { exact: true })).toBeHidden();
     expect((await request.get(`/api/creative/conversations/${conversations[0].id}`)).status()).toBe(404);
 
     await historyDialog.getByRole("button", { name: "批量管理" }).click();
@@ -59,8 +59,8 @@ test("conversation and Canvas deletion stay deleted after refresh", async ({ pag
     await expectDialogWithinViewport(batchDialog);
     await batchDialog.getByRole("button", { name: /删\s*除/ }).click();
     await expect(batchDialog).toBeHidden();
-    await expect(historyDialog.getByText(conversationTitles[1], { exact: true })).toHaveCount(0);
-    await expect(historyDialog.getByText(conversationTitles[2], { exact: true })).toHaveCount(0);
+    await expect(historyDialog.getByText(conversationTitles[1], { exact: true })).toBeHidden();
+    await expect(historyDialog.getByText(conversationTitles[2], { exact: true })).toBeHidden();
     await page.reload({ waitUntil: "domcontentloaded" });
     historyDialog = await openCreativeHistory(page);
     for (const title of conversationTitles) await expect(historyDialog.getByText(title, { exact: true })).toHaveCount(0);

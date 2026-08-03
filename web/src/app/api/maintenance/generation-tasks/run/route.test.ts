@@ -17,7 +17,7 @@ vi.mock("@/lib/server/generation-worker-heartbeat", () => ({ recordGenerationWor
 vi.mock("@/lib/server/internal-origin", () => ({ resolveInternalOrigin: vi.fn(() => "http://internal:3000") }));
 vi.mock("@/lib/server/install-status", () => ({ getInstallStatus: mocks.install }));
 
-import { POST } from "./route";
+import { maxDuration, POST } from "./route";
 
 describe("POST /api/maintenance/generation-tasks/run", () => {
     beforeEach(() => {
@@ -27,6 +27,10 @@ describe("POST /api/maintenance/generation-tasks/run", () => {
         mocks.authorized.mockReturnValue(true);
         mocks.recover.mockResolvedValue({ claimed: 0 });
         mocks.install.mockResolvedValue({ database: { schemaReady: true } });
+    });
+
+    it("allows a worker batch to outlive the longest upstream model request", () => {
+        expect(maxDuration).toBeGreaterThanOrEqual(40 * 60);
     });
 
     it("refuses to run without a configured maintenance token", async () => {

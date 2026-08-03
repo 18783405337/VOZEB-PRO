@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
     appendCreativeConversationExchange: vi.fn(),
+    createCreativeConversation: vi.fn(),
     getCreativeConversation: vi.fn(),
     registerCreativeAssets: vi.fn(),
     getCreativeWorkbenchSessionDetail: vi.fn(),
@@ -14,7 +15,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/server/creative-runtime-store", () => ({
     appendCreativeConversationExchange: mocks.appendCreativeConversationExchange,
-    createCreativeConversation: vi.fn(),
+    createCreativeConversation: mocks.createCreativeConversation,
     getCreativeAsset: vi.fn(),
     getCreativeConversation: mocks.getCreativeConversation,
     listCreativeAssets: vi.fn(),
@@ -41,6 +42,7 @@ function file(name: string, type: string, size = 4): File {
 describe("创作会话素材上传", () => {
     beforeEach(() => {
         mocks.appendCreativeConversationExchange.mockReset().mockResolvedValue({});
+        mocks.createCreativeConversation.mockReset();
         mocks.getCreativeConversation.mockReset().mockResolvedValue({ id: "conversation-one", userId: "user-one", status: "active" });
         mocks.getCreativeWorkbenchSessionDetail.mockReset().mockResolvedValue({ id: "conversation-one", messages: [], hasMore: false });
         mocks.listCreativeWorkbenchSessionSummaries.mockReset().mockResolvedValue([]);
@@ -129,6 +131,17 @@ describe("创作会话素材上传", () => {
         });
 
         expect(mocks.appendCreativeConversationExchange).toHaveBeenCalledWith(expect.objectContaining({ runId: "request-retry-1" }));
+    });
+
+    it("appends consecutive generations to the supplied conversation without creating another one", async () => {
+        mocks.getCreativeConversation.mockResolvedValue({ id: "conversation-one", userId: "user-one", status: "active", surface: "chat", source: "image-workbench" });
+
+        await appendWorkbenchExchangeForUser("user-one", { conversationId: "conversation-one", workspace: "image", prompt: "生成小狗", reply: "已收到生成需求。", requestId: "request-one" });
+        await appendWorkbenchExchangeForUser("user-one", { conversationId: "conversation-one", workspace: "image", prompt: "生成唐老鸭", reply: "已收到生成需求。", requestId: "request-two" });
+
+        expect(mocks.createCreativeConversation).not.toHaveBeenCalled();
+        expect(mocks.appendCreativeConversationExchange).toHaveBeenCalledTimes(2);
+        expect(mocks.appendCreativeConversationExchange.mock.calls.map(([input]) => input.conversationId)).toEqual(["conversation-one", "conversation-one"]);
     });
 
     it("persists only owned permanent workbench references as message attachments", async () => {

@@ -1,6 +1,7 @@
 import { nanoid } from "nanoid";
 
 import { GenerationTaskNeedsReviewError, type GenerationTaskExecutionState } from "@/services/api/generation-task-state";
+import { dedupeImageResults } from "@/lib/image-result-dedupe";
 import { GenerationTaskRequestError } from "@/services/api/generation-task-request-error";
 import { refreshUserPointsIfSystem, syncUserPointsFromHeaders } from "@/services/api/points";
 import { throwIfClientSessionExpired } from "@/services/api/session-expiration";
@@ -164,7 +165,7 @@ export async function waitForImageGenerationTask(config: AiConfig, task: ImageGe
         if (current.status === "success") {
             if (!current.result?.dataUrl) throw new ImageGenerationTaskTerminalError("图片任务没有返回结果", true);
             await refreshUserPointsIfSystem(config.apiSource);
-            const media = current.result.results?.length ? current.result.results : [current.result];
+            const media = dedupeImageResults(current.result.results?.length ? current.result.results : [current.result]);
             const results = media.flatMap((item) =>
                 item.dataUrl
                     ? [

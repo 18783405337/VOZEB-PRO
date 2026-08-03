@@ -67,6 +67,24 @@ describe("creative workbench session summaries", () => {
         expect(mocks.readRuntimeFile).toHaveBeenCalledTimes(1);
     });
 
+    it("preserves a manually renamed conversation title", async () => {
+        mocks.postgresQuery.mockResolvedValue({
+            rows: [
+                {
+                    id: "conversation-one",
+                    title: "角色设计会话",
+                    updated_at: new Date("2026-07-26T00:00:00.000Z"),
+                    first_prompt: "生成小狗",
+                    last_prompt: "生成唐老鸭",
+                    search_text: "生成小狗 生成唐老鸭",
+                    record_id: "image-workbench:record-two",
+                },
+            ],
+        });
+
+        await expect(listCreativeWorkbenchSessionSummaries("user-one", "image", 100)).resolves.toEqual([expect.objectContaining({ id: "conversation-one", title: "角色设计会话", lastPrompt: "生成唐老鸭" })]);
+    });
+
     it("loads one owned conversation detail with one PostgreSQL query", async () => {
         mocks.postgresQuery.mockResolvedValue({
             rows: [

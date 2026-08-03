@@ -1,5 +1,7 @@
 import { parseFragment, type DefaultTreeAdapterMap } from "parse5";
 
+import { safePaymentHttpUrl } from "@/lib/payment-url";
+
 export type PaymentFormField = { name: string; value: string };
 export type PaymentForm = { action: string; method: "GET" | "POST"; fields: PaymentFormField[] };
 
@@ -52,15 +54,8 @@ function normalizeFields(value: unknown): PaymentFormField[] {
 }
 
 function safePaymentAction(value: string, baseUrl?: string) {
-    const text = value.trim();
-    if (!text) return "";
-    try {
-        const url = new URL(text, baseUrl);
-        if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.toString().length > 2_000) return "";
-        return url.toString();
-    } catch {
-        return "";
-    }
+    const action = safePaymentHttpUrl(value, { baseUrl });
+    return action.length <= 2_000 ? action : "";
 }
 
 function cleanFieldName(value: unknown) {

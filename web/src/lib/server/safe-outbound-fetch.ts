@@ -1,5 +1,6 @@
 import { Agent, ProxyAgent, fetch as undiciFetch, type Dispatcher } from "undici";
 
+import { GENERATION_TRANSPORT_TIMEOUT_MS } from "@/lib/server/generation-http-lifecycle";
 import { resolveServerProxyUrl } from "@/lib/server/proxy-dispatcher";
 import { isPublicIpAddress, resolveSafeOutboundTarget } from "@/lib/server/outbound-url-security";
 import { toUndiciRequestBody } from "@/lib/server/undici-request-body";
@@ -101,8 +102,23 @@ function dispatcherFor(url: URL, address: string, family: 4 | 6) {
         },
     };
     const dispatcher: Dispatcher = proxyUrl
-        ? new ProxyAgent({ uri: proxyUrl, requestTls: servername ? { servername } : undefined, connectTimeout: 10_000, connections: 8 })
-        : new Agent({ connect, connectTimeout: 10_000, connections: 8, keepAliveTimeout: 10_000, keepAliveMaxTimeout: 60_000 });
+        ? new ProxyAgent({
+              uri: proxyUrl,
+              requestTls: servername ? { servername } : undefined,
+              connectTimeout: 10_000,
+              connections: 8,
+              headersTimeout: GENERATION_TRANSPORT_TIMEOUT_MS,
+              bodyTimeout: GENERATION_TRANSPORT_TIMEOUT_MS,
+          })
+        : new Agent({
+              connect,
+              connectTimeout: 10_000,
+              connections: 8,
+              keepAliveTimeout: 10_000,
+              keepAliveMaxTimeout: 60_000,
+              headersTimeout: GENERATION_TRANSPORT_TIMEOUT_MS,
+              bodyTimeout: GENERATION_TRANSPORT_TIMEOUT_MS,
+          });
     dispatchers.set(key, { dispatcher, lastUsedAt: now });
     cleanupDispatchers(now);
     return dispatcher;

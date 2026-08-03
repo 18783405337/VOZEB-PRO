@@ -24,7 +24,7 @@ vi.mock("@/lib/server/generation-task-scheduler", () => ({ scheduleGenerationTas
 vi.mock("@/lib/server/agent-run-store", () => ({ createAgentRun: mocks.createAgentRun, getAgentRunByClientRequestId: mocks.getAgentRunByClientRequestId, listAgentRuns: mocks.listAgentRuns }));
 vi.mock("@/lib/server/internal-origin", () => ({ resolveInternalOrigin: vi.fn(() => "http://localhost") }));
 
-import { POST } from "./route";
+import { maxDuration, POST } from "./route";
 
 describe("POST /api/agent/runs", () => {
     beforeEach(() => {
@@ -35,6 +35,10 @@ describe("POST /api/agent/runs", () => {
         mocks.countActiveStoredGenerationTasks.mockResolvedValue(0);
         mocks.withGenerationConcurrencyLimit.mockImplementation(async (_userId, _type, _staleMs, _limit, handler) => handler());
         mocks.getAgentRunByClientRequestId.mockResolvedValue(null);
+    });
+
+    it("keeps Agent recovery alive while long media children are running", () => {
+        expect(maxDuration).toBeGreaterThanOrEqual(40 * 60);
     });
 
     it("requires authentication", async () => {

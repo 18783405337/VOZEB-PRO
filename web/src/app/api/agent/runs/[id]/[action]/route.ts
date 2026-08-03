@@ -8,6 +8,8 @@ import { scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
 import { withGenerationConcurrencyLimit } from "@/lib/server/generation-task-store";
 import { fetchInternalApi, resolveInternalOrigin } from "@/lib/server/internal-origin";
 
+export const maxDuration = 2400;
+
 const actions: Record<string, AgentRunStatus> = { pause: "paused", resume: "running", cancel: "cancelled" };
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string; action: string }> }) {

@@ -9,6 +9,8 @@ import { scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
 import { withGenerationConcurrencyLimit } from "@/lib/server/generation-task-store";
 import { resolveInternalOrigin } from "@/lib/server/internal-origin";
 
+export const maxDuration = 2400;
+
 export async function POST(request: Request, { params }: { params: Promise<{ id: string; taskId: string }> }) {
     const user = await getCurrentUser(request);
     if (!user) return NextResponse.json({ code: 401, data: null, msg: "请先登录" }, { status: 401 });

@@ -49,6 +49,33 @@ test("image task persists a real media result and reuses the same request identi
     expect(state.requests.filter((item) => item.method === "POST" && item.path.endsWith("/images/generations"))).toHaveLength(1);
 });
 
+test("image workbench keeps consecutive generations in one conversation with one result each", async ({ page, request }) => {
+    await page.goto("/image", { waitUntil: "domcontentloaded" });
+    const prompt = page.getByPlaceholder("今天我们要创作什么，可直接粘贴文字或图片");
+    const generate = page.getByRole("button", { name: /开始生成/ });
+
+    await prompt.fill("生成小狗");
+    await generate.click();
+    await expect(page.getByTestId("image-result-card")).toHaveCount(1, { timeout: 30_000 });
+
+    await prompt.fill("生成唐老鸭");
+    await generate.click();
+    await expect(page.getByText("生成小狗", { exact: true })).toHaveCount(1);
+    await expect(page.getByText("生成唐老鸭", { exact: true })).toHaveCount(1);
+    await expect(page.getByTestId("image-result-card")).toHaveCount(1, { timeout: 30_000 });
+
+    await expect.poll(async () => (await protocolFixtureState(request)).requests.filter((item) => item.method === "POST" && item.path.endsWith("/images/generations")).length).toBe(2);
+    await expect(page.getByTestId("image-result-card")).toHaveCount(1);
+
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page.getByText("生成小狗", { exact: true })).toHaveCount(1);
+    await expect(page.getByText("生成唐老鸭", { exact: true })).toHaveCount(1);
+    await expect(page.getByTestId("image-result-card")).toHaveCount(1, { timeout: 30_000 });
+
+    await page.getByRole("button", { name: "生成记录" }).click();
+    await expect(page.getByTestId("workbench-history-card").filter({ hasText: "生成小狗" })).toHaveCount(1);
+});
+
 test("video request replay and cancellation keep one upstream task", async ({ request }) => {
     const clientRequestId = `e2e-video:${randomUUID()}`;
     const body = { config: { model: "e2e-video-slow", size: "16:9", vquality: "720", videoSeconds: 5 }, prompt: "slow video", source: "video-workbench", context: { clientRequestId } };
@@ -163,7 +190,7 @@ test("PostgreSQL payment flow verifies missing fields, rejects trade reuse, and 
     const firstOrder = await createOrder(request, product.id);
     const checkout = await request.post(`/api/billing/orders/${firstOrder.id}/checkout`, { data: { provider: "payply" } });
     expect(checkout.ok(), await checkout.text()).toBe(true);
-    expect(await checkout.json()).toMatchObject({ checkout: { kind: "redirect", provider: "payply" } });
+    expect(await checkout.json()).toMatchObject({ code: 0, data: { checkout: { kind: "redirect", provider: "payply" } } });
 
     const firstWebhookBody = JSON.stringify({ eventId: `event-${randomUUID()}`, status: "succeeded", orderId: firstOrder.id, orderNo: firstOrder.orderNo, providerTradeId: "payply_trade_e2e", providerPaymentId: "payply_payment_e2e" });
     const firstWebhook = await postSignedWebhook(request, firstWebhookBody);

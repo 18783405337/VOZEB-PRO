@@ -25,8 +25,8 @@ export class PointsWalletRepository {
     async updateRemaining(userId: string, date: string, remainingPoints: number) {
         const result = await this.db.query(
             `UPDATE daily_plan_point_wallets
-             SET remaining_points = $3
-             WHERE user_id = $1 AND date = $2 AND $3 >= 0 AND $3 <= granted_points
+             SET remaining_points = $3::numeric
+             WHERE user_id = $1 AND date = $2 AND $3::numeric >= 0::numeric AND $3::numeric <= granted_points
              RETURNING *`,
             [userId, date, remainingPoints],
         );

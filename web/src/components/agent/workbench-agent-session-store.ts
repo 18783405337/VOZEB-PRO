@@ -115,6 +115,27 @@ export function removeWorkbenchAgentSessionsForRecords(sessions: WorkbenchAgentS
     return sessions.filter((session) => !session.recordId || !recordIds.has(session.recordId));
 }
 
+export function latestWorkbenchRecordsByConversation<T extends { id: string; creativeConversationId?: string }>(records: T[]) {
+    const seen = new Set<string>();
+    return records.filter((record) => {
+        const key = record.creativeConversationId || `record:${record.id}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+}
+
+export function expandWorkbenchConversationSelection<T extends { id: string; creativeConversationId?: string }>(records: T[], selectedRecordIds: readonly string[]) {
+    const selectedIds = new Set(selectedRecordIds);
+    const conversationIds = new Set(
+        records
+            .filter((record) => selectedIds.has(record.id))
+            .map((record) => record.creativeConversationId)
+            .filter((id): id is string => Boolean(id)),
+    );
+    return records.filter((record) => selectedIds.has(record.id) || Boolean(record.creativeConversationId && conversationIds.has(record.creativeConversationId)));
+}
+
 function toWorkbenchMessage(message: CreativeMessage): WorkbenchAgentMessage[] {
     if (message.metadata.contentVisibility !== WORKBENCH_PUBLIC_MESSAGE_VISIBILITY) return [];
     const attachments = normalizeWorkbenchAgentAttachments(message.metadata.attachments);

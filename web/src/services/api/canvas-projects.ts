@@ -1,7 +1,8 @@
-import type { CanvasProject, CanvasProjectSummary, CreateCanvasProjectInput } from "@/lib/canvas-project-contract";
+import type { CanvasProject, CanvasProjectSummaryPage, CreateCanvasProjectInput } from "@/lib/canvas-project-contract";
 
-export function listCanvasProjectSummaries() {
-    return request<{ projects: CanvasProjectSummary[] }>("/api/canvas/projects", { cache: "no-store" }).then((data) => data.projects);
+export function listCanvasProjectSummaries(input: { page: number; pageSize: number }) {
+    const query = new URLSearchParams({ page: String(input.page), pageSize: String(input.pageSize) });
+    return request<CanvasProjectSummaryPage>(`/api/canvas/projects?${query}`, { cache: "no-store" });
 }
 
 export function getCanvasProject(id: string) {
@@ -12,8 +13,12 @@ export function createCanvasProject(input: CreateCanvasProjectInput) {
     return request<{ project: CanvasProject }>("/api/canvas/projects", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) }).then((data) => data.project);
 }
 
-export function saveCanvasProject(project: CanvasProject) {
-    return request<{ project: CanvasProject }>(`/api/canvas/projects/${encodeURIComponent(project.id)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(project) }).then((data) => data.project);
+export function saveCanvasProject(project: CanvasProject, expectedUpdatedAt: string) {
+    return request<{ project: CanvasProject }>(`/api/canvas/projects/${encodeURIComponent(project.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project, expectedUpdatedAt }),
+    }).then((data) => data.project);
 }
 
 export function deleteCanvasProjects(ids: string[]) {

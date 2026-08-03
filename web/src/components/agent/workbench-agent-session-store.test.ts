@@ -13,6 +13,8 @@ import {
     loadOlderWorkbenchAgentSession,
     loadWorkbenchAgentSession,
     loadWorkbenchAgentSessions,
+    latestWorkbenchRecordsByConversation,
+    expandWorkbenchConversationSelection,
     mergeWorkbenchAgentSessions,
     matchesWorkbenchHistoryQuery,
     normalizeWorkbenchAgentSessions,
@@ -191,6 +193,13 @@ describe("工作台会话与生成记录", () => {
         ]);
 
         expect(session.messages.filter((message) => message.role === "user")).toHaveLength(2);
+    });
+
+    it("shows one history entry per conversation while retaining independent generation records", () => {
+        const records = [{ id: "newest", creativeConversationId: "conversation-one" }, { id: "older", creativeConversationId: "conversation-one" }, { id: "standalone" }];
+
+        expect(latestWorkbenchRecordsByConversation(records).map((record) => record.id)).toEqual(["newest", "standalone"]);
+        expect(expandWorkbenchConversationSelection(records, ["newest"]).map((record) => record.id)).toEqual(["newest", "older"]);
     });
 
     it("drops any server message that is not explicitly public", async () => {

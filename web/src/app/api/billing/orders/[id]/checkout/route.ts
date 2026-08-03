@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
-import { NextResponse } from "next/server";
 
+import { apiCompatError, apiSuccess } from "@/app/api/_shared/api-response";
 import { getCurrentUser } from "@/lib/auth/session";
 import { auditActorFromRequest, safeRecordAuditLog } from "@/lib/server/audit-log-store";
 import { BillingInputError, isBillingInputError } from "@/lib/server/billing-service";
@@ -18,7 +18,7 @@ type RouteContext = {
 
 export async function POST(request: NextRequest, context: RouteContext) {
     const currentUser = await getCurrentUser();
-    if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
+    if (!currentUser) return apiCompatError(401, "请先登录");
 
     const { id } = await context.params;
     try {
@@ -34,7 +34,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
             target: { type: "billing_order", id: checkout.orderId, label: checkout.orderNo },
             metadata: { provider: checkout.provider, kind: checkout.kind, providerOrderId: checkout.providerOrderId },
         });
-        return NextResponse.json({ checkout });
+        return apiSuccess({ checkout }, "支付参数已创建");
     } catch (error) {
         await safeRecordAuditLog({
             action: "billing.order.checkout",
@@ -43,10 +43,10 @@ export async function POST(request: NextRequest, context: RouteContext) {
             target: { type: "billing_order", id },
             metadata: { error: error instanceof Error ? error.message : "unknown" },
         });
-        if (isBillingInputError(error)) return NextResponse.json({ error: error.message }, { status: error.status });
-        if (error instanceof RequestBodyTooLargeError) return NextResponse.json({ error: error.message }, { status: error.status });
+        if (isBillingInputError(error)) return apiCompatError(error.status, error.message);
+        if (error instanceof RequestBodyTooLargeError) return apiCompatError(error.status, error.message);
         console.error("Create payment checkout failed", error);
-        return NextResponse.json({ error: "创建支付参数失败" }, { status: 500 });
+        return apiCompatError(500, "创建支付参数失败");
     }
 }
 

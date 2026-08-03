@@ -14,10 +14,7 @@ export async function createPaymentCheckoutForOrder(orderId: string, options: Cr
     return withPostgresTransaction(async (client) => {
         const repos = createPostgresRepositories(client);
         const order = await repos.billing.getOrderById(normalizeId(orderId), true);
-        if (!order || (options.userId && order.userId !== options.userId)) throw new BillingInputError("订单不存在", 404);
-        if (isAutomaticallyExpiredOrder(order)) throw new BillingInputError("订单已过期", 409);
-        if (order.status !== "pending") throw new BillingInputError("当前订单状态不能发起支付", 409);
-        if (order.expiresAt && Date.parse(order.expiresAt) <= Date.now()) throw new BillingInputError("订单已过期", 409);
+        assertPayableOrder(order, options.userId);
 
         const provider = resolveCheckoutProvider(order.provider, options.provider);
         if (!isPaymentRuntimeProviderCheckoutReady(paymentConfig, provider)) throw new BillingInputError("该支付渠道未启用或配置不完整", 400);
@@ -36,9 +33,27 @@ export async function createPaymentCheckoutForOrder(orderId: string, options: Cr
     });
 }
 
+export async function getStoredPaymentCheckoutForOrder(orderId: string, userId: string) {
+    if (!isPostgresDatabaseEnabled()) throw new BillingInputError("支付下单需要启用 PostgreSQL", 501);
+    return withPostgresTransaction(async (client) => {
+        const order = await createPostgresRepositories(client).billing.getOrderById(normalizeId(orderId), false);
+        assertPayableOrder(order, userId);
+        const provider = normalizeProvider(order.provider);
+        const checkout = checkoutFromMetadata(order, provider);
+        if (!checkout) throw new BillingInputError("支付参数不存在或已过期，请重新发起支付", 409);
+        return checkout;
+    });
+}
+
 export function resolveCheckoutProvider(orderProvider: unknown, requestedProvider: unknown) {
     const provider = normalizeProvider(orderProvider);
     const requested = requestedProvider === undefined || requestedProvider === null || requestedProvider === "" ? provider : normalizeProvider(requestedProvider);
     if (requested !== provider) throw new BillingInputError("订单支付渠道已锁定，请重新创建订单后更换渠道", 409);
     return provider;
+}
+
+function assertPayableOrder(order: Awaited<ReturnType<ReturnType<typeof createPostgresRepositories>["billing"]["getOrderById"]>>, userId?: string): asserts order is NonNullable<typeof order> {
+    if (!order || (userId && order.userId !== userId)) throw new BillingInputError("订单不存在", 404);
+    if (isAutomaticallyExpiredOrder(order) || (order.expiresAt && Date.parse(order.expiresAt) <= Date.now())) throw new BillingInputError("订单已过期", 409);
+    if (order.status !== "pending") throw new BillingInputError("当前订单状态不能发起支付", 409);
 }
