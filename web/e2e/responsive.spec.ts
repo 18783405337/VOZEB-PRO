@@ -58,6 +58,9 @@ test("conversation and Canvas deletion stay deleted after refresh", async ({ pag
     const batchDialog = page.getByRole("dialog", { name: "删除 2 条对话？" });
     await expectDialogWithinViewport(batchDialog);
     await batchDialog.getByRole("button", { name: /删\s*除/ }).click();
+    await expect(batchDialog).toBeHidden();
+    await expect(historyDialog.getByText(conversationTitles[1], { exact: true })).toHaveCount(0);
+    await expect(historyDialog.getByText(conversationTitles[2], { exact: true })).toHaveCount(0);
     await page.reload({ waitUntil: "domcontentloaded" });
     historyDialog = await openCreativeHistory(page);
     for (const title of conversationTitles) await expect(historyDialog.getByText(title, { exact: true })).toHaveCount(0);

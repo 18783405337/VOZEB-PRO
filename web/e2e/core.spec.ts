@@ -39,7 +39,12 @@ test("image task persists a real media result and reuses the same request identi
     expect((await replay.json()).task.id).toBe(firstTask.id);
     const completed = await pollTask(request, `/api/image-tasks/${firstTask.id}`);
     expect(completed).toMatchObject({ status: "success", result: { width: 64, height: 64, mimeType: "image/png" } });
-    expect(String((completed.result as { dataUrl?: string }).dataUrl || "")).toMatch(/^data:image\/png;base64,/);
+    const mediaUrl = String((completed.result as { dataUrl?: string }).dataUrl || "");
+    expect(mediaUrl).toMatch(/^\/api\/generation-log-assets\/permanent\/.+\.png$/);
+    const media = await request.get(mediaUrl);
+    expect(media.ok()).toBe(true);
+    expect(media.headers()["content-type"]).toMatch(/^image\/png/);
+    expect(Array.from((await media.body()).subarray(0, 8))).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
     const state = await protocolFixtureState(request);
     expect(state.requests.filter((item) => item.method === "POST" && item.path.endsWith("/images/generations"))).toHaveLength(1);
 });
@@ -89,7 +94,9 @@ test("video workbench prevents rapid duplicate submissions and restores cancella
     await page.goto("/video", { waitUntil: "domcontentloaded" });
     const prompt = page.getByPlaceholder("今天我们要创作什么，可直接粘贴文字或素材");
     const generate = page.getByRole("button", { name: /开始生成/ });
+    await expect(generate).toHaveAttribute("aria-label", /消耗 0 积分/);
     await prompt.fill("生成一段慢速测试视频");
+    await expect(prompt).toHaveValue("生成一段慢速测试视频");
     await expect(generate).toBeEnabled();
     await generate.evaluate((button) => {
         button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
