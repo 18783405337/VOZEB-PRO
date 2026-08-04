@@ -50,30 +50,34 @@ test("image task persists a real media result and reuses the same request identi
 });
 
 test("image workbench keeps both consecutive generation results after refresh", async ({ page, request }) => {
+    const suffix = randomUUID().slice(0, 8);
+    const firstPrompt = `生成小狗 ${suffix}`;
+    const secondPrompt = `生成唐老鸭 ${suffix}`;
     await page.goto("/image", { waitUntil: "domcontentloaded" });
+    await page.getByRole("button", { name: "新建对话", exact: true }).click();
     const prompt = page.getByPlaceholder("今天我们要创作什么，可直接粘贴文字或图片");
     const generate = page.getByRole("button", { name: /开始生成/ });
 
-    await prompt.fill("生成小狗");
+    await prompt.fill(firstPrompt);
     await generate.click();
     await expect(page.getByTestId("image-result-card")).toHaveCount(1, { timeout: 30_000 });
 
-    await prompt.fill("生成唐老鸭");
+    await prompt.fill(secondPrompt);
     await generate.click();
-    await expect(page.getByText("生成小狗", { exact: true })).toHaveCount(1);
-    await expect(page.getByText("生成唐老鸭", { exact: true })).toHaveCount(1);
+    await expect(page.getByText(firstPrompt, { exact: true })).toHaveCount(1);
+    await expect(page.getByText(secondPrompt, { exact: true })).toHaveCount(1);
     await expect(page.getByTestId("image-result-card")).toHaveCount(2, { timeout: 30_000 });
 
     await expect.poll(async () => (await protocolFixtureState(request)).requests.filter((item) => item.method === "POST" && item.path.endsWith("/images/generations")).length).toBe(2);
     await expect(page.getByTestId("image-result-card")).toHaveCount(2);
 
     await page.reload({ waitUntil: "domcontentloaded" });
-    await expect(page.getByText("生成小狗", { exact: true })).toHaveCount(1);
-    await expect(page.getByText("生成唐老鸭", { exact: true })).toHaveCount(1);
+    await expect(page.getByText(firstPrompt, { exact: true })).toHaveCount(1);
+    await expect(page.getByText(secondPrompt, { exact: true })).toHaveCount(1);
     await expect(page.getByTestId("image-result-card")).toHaveCount(2, { timeout: 30_000 });
 
     await page.getByRole("button", { name: "生成记录" }).click();
-    await expect(page.getByTestId("workbench-history-card").filter({ hasText: "生成小狗" })).toHaveCount(1);
+    await expect(page.getByTestId("workbench-history-card").filter({ hasText: firstPrompt })).toHaveCount(1);
 });
 
 test("video request replay and cancellation keep one upstream task", async ({ request }) => {
@@ -215,7 +219,7 @@ test("new Agent Skill is saved before leaving the administrator page", async ({ 
 
         await page.goto("/create");
         await page.goto("/admin?section=skills");
-        await expect(page.getByText(skillName, { exact: true })).toBeVisible();
+        await expect(page.getByRole("main").getByText(skillName, { exact: true })).toBeVisible();
 
         const persistedResponse = await request.get("/api/admin/settings");
         expect(persistedResponse.ok(), await persistedResponse.text()).toBe(true);
