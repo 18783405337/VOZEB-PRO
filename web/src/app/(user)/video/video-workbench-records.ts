@@ -302,6 +302,24 @@ export function replaceResult(results: GenerationResult[], resultId: string, nex
     return replaced ? nextResults : [...nextResults, nextResult];
 }
 
+export function rebuildLogAfterResultDeletion(log: GenerationLog, results: GenerationResult[]): GenerationLog {
+    const videos = results.flatMap((result) => (result.status === "success" && result.video ? [result.video] : []));
+    const video = videos[videos.length - 1];
+    const failedResult = results.find((result) => result.status === "failed");
+    const pendingResult = results.find((result) => result.status === "pending");
+    return {
+        ...log,
+        status: pendingResult ? "生成中" : video ? "成功" : failedResult ? "失败" : log.status === "生成中" ? "失败" : log.status,
+        task: pendingResult ? log.task : undefined,
+        taskResultId: pendingResult ? log.taskResultId : undefined,
+        video,
+        videos,
+        failures: results.flatMap((result) => (result.status === "failed" ? [{ resultId: result.id, error: result.error || "未知错误" }] : [])),
+        error: failedResult?.error,
+        resultDeleted: !results.length,
+    };
+}
+
 export function buildLogFromVideoResults(baseLog: GenerationLog | null, snapshot: GenerationSnapshot, results: GenerationResult[], durationMs: number, error?: string, pending?: PendingVideoRequest): GenerationLog {
     const videos = results.flatMap((result) => (result.status === "success" && result.video ? [result.video] : []));
     const failures = results.flatMap((result) => (result.status === "failed" ? [{ resultId: result.id, error: result.error || error || "生成失败", canRetry: result.canRetry === true }] : []));

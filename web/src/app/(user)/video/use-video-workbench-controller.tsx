@@ -42,6 +42,7 @@ import {
     buildVideoConfig,
     delay,
     readStoredLogs,
+    rebuildLogAfterResultDeletion,
     removeStoredVideoLogs,
     replaceResult,
     resultsFromLog,
@@ -201,6 +202,16 @@ export function useVideoWorkbenchController() {
             setLogs([]);
         }
     }, [userId]);
+
+    useEffect(() => {
+        if (!agentSessionsHydrated || !activeCreativeConversationId || activeLogIdRef.current) return;
+        const currentLog = logs.find((log) => log.creativeConversationId === activeCreativeConversationId);
+        if (!currentLog) return;
+        activeLogIdRef.current = currentLog.id;
+        setActiveAgentRecordId(currentLog.id);
+        setPreviewLog(currentLog);
+        setResults(resultsFromLog(currentLog));
+    }, [activeCreativeConversationId, agentSessionsHydrated, logs, setActiveAgentRecordId]);
 
     useEffect(() => {
         if (!publicSessionReady) return;
@@ -883,21 +894,7 @@ export function useVideoWorkbenchController() {
         deletedResultLogIdsRef.current.add(currentLog.id);
         blockedVideoLogIdsRef.current.add(currentLog.id);
         discardVideoLog(currentLog.id);
-        const keptVideos = nextResults.flatMap((result) => (result.status === "success" && result.video ? [result.video] : []));
-        const keptVideo = keptVideos[keptVideos.length - 1];
-        const failedResult = nextResults.find((result) => result.status === "failed");
-        const pendingResult = nextResults.find((result) => result.status === "pending");
-        const nextLog: GenerationLog = {
-            ...currentLog,
-            status: pendingResult ? "生成中" : keptVideo ? "成功" : failedResult ? "失败" : currentLog.status === "生成中" ? "失败" : currentLog.status,
-            task: pendingResult ? currentLog.task : undefined,
-            taskResultId: pendingResult ? currentLog.taskResultId : undefined,
-            video: keptVideo,
-            videos: keptVideos,
-            failures: nextResults.flatMap((result) => (result.status === "failed" ? [{ resultId: result.id, error: result.error || "未知错误" }] : [])),
-            error: failedResult?.error,
-            resultDeleted: !nextResults.length,
-        };
+        const nextLog = rebuildLogAfterResultDeletion(currentLog, nextResults);
         setResults(nextResults);
         setSelectedResultIds([]);
         setPreviewLog(nextLog);

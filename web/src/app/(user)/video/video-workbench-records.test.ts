@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { AiConfig } from "@/stores/use-config-store";
 import { generationLogPublicPrompt } from "@/lib/generation-log-snapshot";
-import { buildLogFromVideoResults, buildVideoConfig, filterAudioReferencesByDuration, generatedVideoFallback, normalizeVideoSeconds, resultsFromLog, snapshotFromLog } from "./video-workbench-records";
+import { buildLogFromVideoResults, buildVideoConfig, filterAudioReferencesByDuration, generatedVideoFallback, normalizeVideoSeconds, rebuildLogAfterResultDeletion, resultsFromLog, snapshotFromLog } from "./video-workbench-records";
 
 describe("video workbench records", () => {
     it("restores success, failure, and pending results from a log", () => {
@@ -40,6 +40,22 @@ describe("video workbench records", () => {
             status: "失败",
             error: "生成失败",
             failures: [{ resultId: "result-1", error: "生成失败" }],
+            resultDeleted: false,
+        });
+    });
+
+    it("recomputes persisted log state after deleting selected results", () => {
+        const log = buildLogFromVideoResults(null, { text: "生成视频", config: baseConfig(), references: [], videoReferences: [], audioReferences: [] }, [{ id: "pending-1", status: "pending" }], 0, undefined, {
+            taskResultId: "pending-1",
+            task: { id: "task-1", provider: "generation", model: "video-v1" },
+        });
+
+        expect(rebuildLogAfterResultDeletion(log, [{ id: "failed-1", status: "failed", error: "生成失败" }])).toMatchObject({
+            status: "失败",
+            task: undefined,
+            taskResultId: undefined,
+            failures: [{ resultId: "failed-1", error: "生成失败" }],
+            error: "生成失败",
             resultDeleted: false,
         });
     });

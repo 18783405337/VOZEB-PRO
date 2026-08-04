@@ -399,7 +399,7 @@
 | tslib | 2.8.1 | 0BSD | [链接](https://www.typescriptlang.org/) |
 | tw-animate-css | 1.4.0 | MIT | [链接](https://github.com/Wombosvideo/tw-animate-css#readme) |
 | uint8array-extras | 1.5.0 | MIT | [链接](https://github.com/sindresorhus/uint8array-extras#readme) |
-| undici | 8.6.0 | MIT | [链接](https://undici.nodejs.org) |
+| undici | 8.9.0 | MIT | [链接](https://undici.nodejs.org) |
 | undici-types | 6.21.0 | MIT | [链接](https://undici.nodejs.org) |
 | unified | 11.0.5 | MIT | [链接](https://unifiedjs.com) |
 | unist-util-is | 6.0.1 | MIT | [链接](https://github.com/syntax-tree/unist-util-is#readme) |

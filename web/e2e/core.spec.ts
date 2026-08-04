@@ -152,6 +152,25 @@ test("video workbench prevents rapid duplicate submissions and restores cancella
     await page.getByRole("button", { name: "取消任务" }).first().click();
 });
 
+test("video workbench restores a successful result after refresh", async ({ page }) => {
+    await page.goto("/video", { waitUntil: "domcontentloaded" });
+    await page.getByRole("button", { name: "智能规划已开启，点击关闭" }).click();
+    await expect(page.getByText("选择生成模型", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "e2e-video", exact: true }).click();
+    await page.keyboard.press("Escape");
+
+    const prompt = page.getByPlaceholder("今天我们要创作什么，可直接粘贴文字或素材");
+    const generate = page.getByRole("button", { name: /开始生成/ });
+    await prompt.fill("生成一段刷新后仍然显示的测试视频");
+    await expect(generate).toBeEnabled();
+    await generate.click();
+    await expect(page.locator("video")).toHaveCount(1, { timeout: 30_000 });
+
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page.getByText("生成一段刷新后仍然显示的测试视频", { exact: true })).toHaveCount(1);
+    await expect(page.locator("video")).toHaveCount(1, { timeout: 30_000 });
+});
+
 test("audio task stores a valid audio result", async ({ request }) => {
     const created = await request.post("/api/audio-tasks", { data: { config: { model: "e2e-audio", voice: "alloy", format: "wav" }, prompt: "audio fixture", source: "agent", context: { clientRequestId: `e2e-audio:${randomUUID()}` } } });
     expect(created.ok(), await created.text()).toBe(true);
