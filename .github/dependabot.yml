@@ -40,13 +40,7 @@ updates:
     schedule:
       interval: weekly
     ignore:
-      - dependency-name: actions/download-artifact
-        update-types: ["version-update:semver-major"]
-      - dependency-name: docker/build-push-action
-        update-types: ["version-update:semver-major"]
-      - dependency-name: docker/metadata-action
-        update-types: ["version-update:semver-major"]
-      - dependency-name: docker/setup-buildx-action
+      - dependency-name: "*"
         update-types: ["version-update:semver-major"]
     open-pull-requests-limit: 5
 

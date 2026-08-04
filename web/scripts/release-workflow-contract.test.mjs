@@ -63,7 +63,7 @@ describe("release workflow contract", () => {
         expect(web.ignore.map((item) => item["dependency-name"])).toEqual(["@types/node", "eslint", "typescript"]);
         expect(docs.groups["docs-dependencies"]["update-types"]).toEqual(["minor", "patch"]);
         expect(docs.ignore.map((item) => item["dependency-name"])).toEqual(["@types/node", "typescript"]);
-        expect(actions.ignore.map((item) => item["dependency-name"])).toEqual(["actions/download-artifact", "docker/build-push-action", "docker/metadata-action", "docker/setup-buildx-action"]);
+        expect(actions.ignore.map((item) => item["dependency-name"])).toEqual(["*"]);
         expect([...web.ignore, ...docs.ignore, ...actions.ignore, ...docker.flatMap((item) => item.ignore)].every((item) => item["update-types"][0] === "version-update:semver-major")).toBe(true);
         expect(docker).toHaveLength(2);
         expect(docker.every((item) => item.ignore[0]["dependency-name"] === "node")).toBe(true);
