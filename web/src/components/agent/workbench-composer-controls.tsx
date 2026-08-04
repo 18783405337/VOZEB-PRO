@@ -2,7 +2,7 @@
 
 import { Button, Input } from "antd";
 import { ArrowLeft, ArrowRight, BookOpen, Check, FolderPlus } from "lucide-react";
-import type { ClipboardEvent, KeyboardEvent } from "react";
+import { useLayoutEffect, useRef, type ClipboardEvent, type KeyboardEvent } from "react";
 
 import { clipboardImageFiles } from "@/lib/clipboard-image-files";
 
@@ -41,6 +41,16 @@ export function WorkbenchPromptEditor({
     onOpenPrompts: () => void;
     onOpenAssets: () => void;
 }) {
+    const containerRef = useRef<HTMLDivElement>(null);
+    const hydrationCheckedRef = useRef(false);
+    useLayoutEffect(() => {
+        if (hydrationCheckedRef.current) return;
+        hydrationCheckedRef.current = true;
+        const hydratedValue = containerRef.current?.querySelector("textarea")?.value || "";
+        const draft = resolveWorkbenchHydrationDraft(value, hydratedValue);
+        if (draft !== value) onChange(draft);
+    }, [onChange, value]);
+
     const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
         if (event.key !== "Enter" || event.shiftKey) return;
         event.preventDefault();
@@ -53,7 +63,7 @@ export function WorkbenchPromptEditor({
         onPasteFiles(files);
     };
     return (
-        <div className="workbench-prompt-editor order-2">
+        <div ref={containerRef} className="workbench-prompt-editor order-2">
             <div className="mb-2 flex items-center justify-between gap-3">
                 <span className="sr-only">提示词</span>
                 <div className="flex gap-2">
@@ -77,6 +87,10 @@ export function WorkbenchPromptEditor({
             />
         </div>
     );
+}
+
+export function resolveWorkbenchHydrationDraft(controlledValue: string, hydratedValue: string) {
+    return controlledValue || hydratedValue;
 }
 
 export function moveListItem<T>(items: T[], index: number, offset: number) {

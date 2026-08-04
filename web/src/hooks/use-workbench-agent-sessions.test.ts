@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isCurrentWorkbenchSession } from "./use-workbench-agent-sessions";
+import { isCurrentWorkbenchSession, shouldResetWorkbenchDraft } from "./use-workbench-agent-sessions";
 
 describe("workbench session selection", () => {
     it("rejects a history response after the user creates another session", () => {
@@ -17,5 +17,20 @@ describe("workbench session selection", () => {
         const context = { key: "user:image", generation: 2 };
 
         expect(isCurrentWorkbenchSession(context, context, "session", "session")).toBe(true);
+    });
+});
+
+describe("workbench draft hydration", () => {
+    it("preserves input while the initial authenticated user hydrates", () => {
+        expect(shouldResetWorkbenchDraft({ workspace: "image", userId: "" }, { workspace: "image", userId: "user-one" })).toBe(false);
+    });
+
+    it("clears input when the authenticated user changes or signs out", () => {
+        expect(shouldResetWorkbenchDraft({ workspace: "image", userId: "user-one" }, { workspace: "image", userId: "user-two" })).toBe(true);
+        expect(shouldResetWorkbenchDraft({ workspace: "image", userId: "user-one" }, { workspace: "image", userId: "" })).toBe(true);
+    });
+
+    it("clears input when switching workspaces", () => {
+        expect(shouldResetWorkbenchDraft({ workspace: "image", userId: "user-one" }, { workspace: "video", userId: "user-one" })).toBe(true);
     });
 });

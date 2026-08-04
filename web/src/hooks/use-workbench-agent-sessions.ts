@@ -9,6 +9,7 @@ import type { AgentSkillSummary } from "@/services/api/agent-skills";
 import { createCreativeConversation } from "@/services/api/creative";
 
 type WorkbenchContext = { key: string; generation: number };
+type WorkbenchIdentity = { workspace: "image" | "video"; userId: string };
 
 export function useWorkbenchAgentSessions(workspace: "image" | "video", userId: string) {
     const contextKey = `${userId}:${workspace}`;
@@ -23,6 +24,7 @@ export function useWorkbenchAgentSessions(workspace: "image" | "video", userId: 
     const [availableSkills, setAvailableSkills] = useState<AgentSkillSummary[]>([]);
     const [olderAgentMessagesLoading, setOlderAgentMessagesLoading] = useState(false);
     const contextRef = useRef<WorkbenchContext>({ key: contextKey, generation: 0 });
+    const identityRef = useRef<WorkbenchIdentity>({ workspace, userId });
     const activeAgentSessionIdRef = useRef(activeAgentSessionId);
     const agentMessagesContextRef = useRef(contextKey);
     const agentMessagesSessionIdRef = useRef(activeAgentSessionId);
@@ -49,6 +51,9 @@ export function useWorkbenchAgentSessions(workspace: "image" | "video", userId: 
 
     useEffect(() => {
         const context = { ...contextRef.current };
+        const nextIdentity = { workspace, userId };
+        const resetDraft = shouldResetWorkbenchDraft(identityRef.current, nextIdentity);
+        identityRef.current = nextIdentity;
         const freshSessionId = nanoid();
         activeAgentSessionIdRef.current = freshSessionId;
         agentMessagesContextRef.current = "";
@@ -56,7 +61,7 @@ export function useWorkbenchAgentSessions(workspace: "image" | "video", userId: 
         setAgentMessagesState([]);
         setAgentSessions([]);
         agentSessionsRef.current = [];
-        setPrompt("");
+        if (resetDraft) setPrompt("");
         setLastAgentPrompt("");
         setActiveAgentSessionIdState(freshSessionId);
         setActiveAgentRecordId(undefined);
@@ -256,4 +261,9 @@ function isCurrentContext(current: WorkbenchContext, expected: WorkbenchContext)
 
 export function isCurrentWorkbenchSession(current: WorkbenchContext, expected: WorkbenchContext, currentSessionId: string, expectedSessionId: string) {
     return isCurrentContext(current, expected) && currentSessionId === expectedSessionId;
+}
+
+export function shouldResetWorkbenchDraft(previous: WorkbenchIdentity, next: WorkbenchIdentity) {
+    if (previous.workspace !== next.workspace) return true;
+    return Boolean(previous.userId) && previous.userId !== next.userId;
 }
