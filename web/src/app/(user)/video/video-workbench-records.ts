@@ -71,6 +71,13 @@ export type GenerationLog = {
     resultDeleted?: boolean;
 };
 
+export type VideoConversationLogSummary = GenerationLog & {
+    successCount: number;
+    failCount: number;
+    pendingCount: number;
+    videoCount: number;
+};
+
 export type GenerationLogConfig = Pick<AiConfig, "model" | "videoModel" | "size" | "vquality" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark">;
 export type GenerationSnapshot = { text: string; userText?: string; config: AiConfig; references: ReferenceImage[]; videoReferences: ReferenceVideo[]; audioReferences: ReferenceAudio[] };
 export type ReferenceDropTarget = "image" | "video" | "audio";
@@ -266,6 +273,26 @@ export function resultsFromLog(log: GenerationLog): GenerationResult[] {
     if (log.status === "生成中" && pendingResultId && !results.some((result) => result.id === pendingResultId)) results.push({ id: pendingResultId, status: "pending" });
     if (!results.length && log.error) results.push({ id: log.id, status: "failed", error: log.error });
     return results;
+}
+
+export function summarizeVideoConversationLogs(logs: GenerationLog[], title?: string): VideoConversationLogSummary {
+    const latest = logs[0];
+    if (!latest) throw new Error("视频对话缺少生成记录");
+    const results = logs.flatMap(resultsFromLog);
+    const successCount = results.filter((result) => result.status === "success").length;
+    const failCount = results.filter((result) => result.status === "failed").length;
+    const pendingCount = results.filter((result) => result.status === "pending").length;
+    const first = logs.reduce((earliest, log) => (log.createdAt < earliest.createdAt ? log : earliest), latest);
+    return {
+        ...latest,
+        title: title || first.title,
+        durationMs: logs.reduce((total, log) => total + log.durationMs, 0),
+        successCount,
+        failCount,
+        pendingCount,
+        videoCount: results.length,
+        status: pendingCount ? "生成中" : successCount ? "成功" : "失败",
+    };
 }
 
 export function isSupportedAudioFile(file: Pick<File, "type" | "name">) {

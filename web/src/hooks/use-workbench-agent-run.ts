@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { nanoid } from "nanoid";
 import type { CreativeDeliverableSummary, CreativeFoundation } from "@/lib/creative-agent-contract";
 import type { WorkbenchAgentAttachment } from "@/lib/workbench-agent-attachment";
@@ -24,7 +24,7 @@ export type WorkbenchAgentParameterPatch = Partial<Record<"model" | "size" | "qu
 type AgentRunStage = "planning" | "submitting";
 export type WorkbenchCreativeReviewContext = { recordId: string; foundation: CreativeFoundation; deliverables: CreativeDeliverableSummary[] };
 type WorkbenchGenerationSubmitter = (input: { promptOverride: string; userPrompt: string; signal: AbortSignal; parameterPatch: WorkbenchAgentParameterPatch; conversationId: string }) => Promise<string | null | undefined>;
-type PendingAgentGenerate = {
+type WorkbenchGenerationSubmission = {
     messageId: string;
     hasReferences: boolean;
     userPrompt: string;
@@ -93,7 +93,6 @@ export function useWorkbenchAgentRun({
     onManualModelRequired,
 }: UseWorkbenchAgentRunOptions) {
     const [agentRunning, setAgentRunning] = useState(false);
-    const [pendingAgentGenerate, setPendingAgentGenerate] = useState<PendingAgentGenerate | null>(null);
     const [creativeReviewContext, setCreativeReviewContext] = useState<WorkbenchCreativeReviewContext | null>(null);
     const agentRequestRef = useRef<{ messageId: string; controller: AbortController; stage: AgentRunStage } | null>(null);
     const retryActionsRef = useRef(new Map<string, () => void>());
@@ -109,8 +108,44 @@ export function useWorkbenchAgentRun({
         const progressId = nanoid();
         const submittedAttachments = attachments.map((item) => ({ ...item }));
         let resolvedConversationId = conversationId;
-        setPendingAgentGenerate(null);
         setCreativeReviewContext(null);
+        const executeSubmission = async (pending: WorkbenchGenerationSubmission, controller: AbortController) => {
+            const retrySubmission = () => {
+                if (agentRequestRef.current) return;
+                const retryController = new AbortController();
+                agentRequestRef.current = { messageId: pending.messageId, controller: retryController, stage: "submitting" };
+                setAgentMessages((items) => updateWorkbenchAgentProgress(items, pending.messageId, { phase: "submitting", hasReferences: pending.hasReferences, shouldGenerate: true }, "正在重新创建生成任务。"));
+                setAgentRunning(true);
+                void executeSubmission(pending, retryController);
+            };
+            try {
+                const recordId = await pending.submitGeneration({
+                    promptOverride: pending.resolvedPrompt,
+                    userPrompt: pending.userPrompt,
+                    signal: controller.signal,
+                    parameterPatch: pending.parameterPatch,
+                    conversationId: pending.conversationId,
+                });
+                const settlement = workbenchSubmissionSettlement(controller.signal.aborted, agentRequestRef.current?.messageId, pending.messageId);
+                if (!settlement.finalizeMessage) return;
+                const acceptedRecordId = acceptWorkbenchGenerationSubmission(recordId, mediaLabel);
+                retryActionsRef.current.delete(pending.messageId);
+                if (pending.foundation) setCreativeReviewContext({ recordId: acceptedRecordId, foundation: pending.foundation, deliverables: pending.deliverables });
+                setAgentMessages((items) => updateWorkbenchAgentResponse(items, pending.messageId, `${mediaLabel}任务正在生成，工作区会持续显示进度和结果。`));
+            } catch (error) {
+                if (controller.signal.aborted) return;
+                const errorMessage = error instanceof Error ? error.message : `${mediaLabel}生成任务创建失败`;
+                const failure = buildWorkbenchAgentFailureUpdate({ aborted: false, failedAt: "submitting", hasReferences: pending.hasReferences, shouldGenerate: true, mediaLabel, errorMessage });
+                retryActionsRef.current.set(pending.messageId, retrySubmission);
+                setAgentMessages((items) => updateWorkbenchAgentProgress(items, pending.messageId, failure.progress, failure.text));
+            } finally {
+                const settlement = workbenchSubmissionSettlement(controller.signal.aborted, agentRequestRef.current?.messageId, pending.messageId);
+                if (settlement.releaseAgent) {
+                    if (agentRequestRef.current?.messageId === pending.messageId) agentRequestRef.current = null;
+                    setAgentRunning(false);
+                }
+            }
+        };
         const executePlanning = async (appendRequest: boolean) => {
             if (agentRequestRef.current) return;
             const controller = new AbortController();
@@ -162,17 +197,20 @@ export function useWorkbenchAgentRun({
                 setAgentMessages((items) => applyWorkbenchAgentPlan(items, progressId, shouldGenerate ? "已理解需求，正在创建生成任务。" : reply, choices));
                 if (shouldGenerate) {
                     if (agentRequestRef.current?.messageId === progressId) agentRequestRef.current.stage = "submitting";
-                    setPendingAgentGenerate({
-                        messageId: progressId,
-                        hasReferences,
-                        userPrompt: text,
-                        resolvedPrompt,
-                        parameterPatch: patch,
-                        conversationId: resolvedConversationId,
-                        foundation: intent === "generation" ? foundation : undefined,
-                        deliverables,
-                        submitGeneration,
-                    });
+                    await executeSubmission(
+                        {
+                            messageId: progressId,
+                            hasReferences,
+                            userPrompt: text,
+                            resolvedPrompt,
+                            parameterPatch: patch,
+                            conversationId: resolvedConversationId,
+                            foundation: intent === "generation" ? foundation : undefined,
+                            deliverables,
+                            submitGeneration,
+                        },
+                        controller,
+                    );
                 } else {
                     retryActionsRef.current.delete(progressId);
                     agentRequestRef.current = null;
@@ -182,7 +220,6 @@ export function useWorkbenchAgentRun({
                 if (agentRequestRef.current?.messageId !== progressId) return;
                 const errorMessage = error instanceof Error ? error.message : `${mediaLabel} Agent 规划失败`;
                 const failure = buildWorkbenchAgentFailureUpdate({ aborted: controller.signal.aborted, failedAt: "planning", hasReferences, mediaLabel, errorMessage });
-                setPendingAgentGenerate(null);
                 setAgentMessages((items) => updateWorkbenchAgentProgress(items, progressId, failure.progress, failure.text));
                 if (!controller.signal.aborted) retryActionsRef.current.set(progressId, () => void executePlanning(false));
                 else retryActionsRef.current.delete(progressId);
@@ -222,50 +259,10 @@ export function useWorkbenchAgentRun({
         if (!active) return;
         active.controller.abort();
         retryActionsRef.current.delete(active.messageId);
-        setPendingAgentGenerate(null);
         setAgentMessages((items) => updateWorkbenchAgentProgress(items, active.messageId, { phase: "cancelled", hasReferences, failedAt: active.stage }, "你已停止本轮 Agent，本次没有创建生成任务。"));
         agentRequestRef.current = null;
         setAgentRunning(false);
     }, [hasReferences, setAgentMessages]);
-
-    useEffect(() => {
-        if (!pendingAgentGenerate) return;
-        const pending = pendingAgentGenerate;
-        const active = agentRequestRef.current;
-        setPendingAgentGenerate(null);
-        if (!active || active.messageId !== pending.messageId || active.controller.signal.aborted) {
-            setAgentRunning(false);
-            return;
-        }
-        const retrySubmission = () => {
-            if (agentRequestRef.current) return;
-            const controller = new AbortController();
-            agentRequestRef.current = { messageId: pending.messageId, controller, stage: "submitting" };
-            setAgentMessages((items) => updateWorkbenchAgentProgress(items, pending.messageId, { phase: "submitting", hasReferences: pending.hasReferences, shouldGenerate: true }, "正在重新创建生成任务。"));
-            setAgentRunning(true);
-            setPendingAgentGenerate(pending);
-        };
-        void pending
-            .submitGeneration({ promptOverride: pending.resolvedPrompt, userPrompt: pending.userPrompt, signal: active.controller.signal, parameterPatch: pending.parameterPatch, conversationId: pending.conversationId })
-            .then((recordId) => {
-                if (active.controller.signal.aborted || agentRequestRef.current?.messageId !== pending.messageId) return;
-                const acceptedRecordId = acceptWorkbenchGenerationSubmission(recordId, mediaLabel);
-                retryActionsRef.current.delete(pending.messageId);
-                if (pending.foundation) setCreativeReviewContext({ recordId: acceptedRecordId, foundation: pending.foundation, deliverables: pending.deliverables });
-                setAgentMessages((items) => updateWorkbenchAgentResponse(items, pending.messageId, `${mediaLabel}任务正在生成，工作区会持续显示进度和结果。`));
-            })
-            .catch((error) => {
-                if (active.controller.signal.aborted) return;
-                const errorMessage = error instanceof Error ? error.message : `${mediaLabel}生成任务创建失败`;
-                const failure = buildWorkbenchAgentFailureUpdate({ aborted: false, failedAt: "submitting", hasReferences: pending.hasReferences, shouldGenerate: true, mediaLabel, errorMessage });
-                retryActionsRef.current.set(pending.messageId, retrySubmission);
-                setAgentMessages((items) => updateWorkbenchAgentProgress(items, pending.messageId, failure.progress, failure.text));
-            })
-            .finally(() => {
-                if (agentRequestRef.current?.messageId === pending.messageId) agentRequestRef.current = null;
-                setAgentRunning(false);
-            });
-    }, [mediaLabel, pendingAgentGenerate, setAgentMessages]);
 
     const retryAgentMessage = useCallback((messageId: string) => retryActionsRef.current.get(messageId)?.(), []);
 
@@ -275,6 +272,13 @@ export function useWorkbenchAgentRun({
 export function acceptWorkbenchGenerationSubmission(recordId: string | null | undefined, mediaLabel: string) {
     if (!recordId) throw new Error(`${mediaLabel}生成任务未能创建，请检查模型与参数`);
     return recordId;
+}
+
+export function workbenchSubmissionSettlement(aborted: boolean, activeMessageId: string | undefined, submittedMessageId: string) {
+    return {
+        finalizeMessage: !aborted,
+        releaseAgent: !activeMessageId || activeMessageId === submittedMessageId,
+    };
 }
 
 export function workbenchRequiresManualModel(smartPlanning: boolean, modelIds: string[]) {

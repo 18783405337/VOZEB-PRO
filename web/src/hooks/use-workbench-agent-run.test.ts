@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { acceptWorkbenchGenerationSubmission, buildWorkbenchAgentFailureUpdate, mergeWorkbenchAgentPatch, workbenchRequiresManualModel } from "./use-workbench-agent-run";
+import { acceptWorkbenchGenerationSubmission, buildWorkbenchAgentFailureUpdate, mergeWorkbenchAgentPatch, workbenchRequiresManualModel, workbenchSubmissionSettlement } from "./use-workbench-agent-run";
 
 describe("workbench Agent failure update", () => {
     it("marks planning errors as failed with a text-model recovery hint", () => {
@@ -70,10 +70,20 @@ describe("workbench Agent failure update", () => {
         expect(() => acceptWorkbenchGenerationSubmission(null, "图片")).toThrow("图片生成任务未能创建");
     });
 
+    it("finalizes the submitted message even if the mutable request ref has changed", () => {
+        expect(workbenchSubmissionSettlement(false, "new-request", "submitted-request")).toEqual({ finalizeMessage: true, releaseAgent: false });
+        expect(workbenchSubmissionSettlement(false, undefined, "submitted-request")).toEqual({ finalizeMessage: true, releaseAgent: true });
+    });
+
+    it("does not turn a cancelled submission into a completed Agent response", () => {
+        expect(workbenchSubmissionSettlement(true, undefined, "submitted-request")).toEqual({ finalizeMessage: false, releaseAgent: true });
+    });
+
     it("submits the original user request separately from the resolved provider prompt", () => {
         const source = readFileSync(resolve(process.cwd(), "src/hooks/use-workbench-agent-run.ts"), "utf8");
 
         expect(source).toContain("userPrompt: text");
-        expect(source).toContain("promptOverride: pending.resolvedPrompt, userPrompt: pending.userPrompt");
+        expect(source).toContain("promptOverride: pending.resolvedPrompt");
+        expect(source).toContain("userPrompt: pending.userPrompt");
     });
 });

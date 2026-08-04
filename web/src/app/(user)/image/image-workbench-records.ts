@@ -489,6 +489,27 @@ export function resultsFromLog(log: GenerationLog): GenerationResult[] {
     return entries.sort((a, b) => a.index - b.index).map((entry) => entry.result);
 }
 
+export function summarizeImageConversationLogs(logs: GenerationLog[], title?: string): GenerationLog {
+    const latest = logs[0];
+    if (!latest) throw new Error("图片对话缺少生成记录");
+    const results = logs.flatMap(resultsFromLog);
+    const successfulImages = results.flatMap((result) => (result.status === "success" && result.image ? [result.image] : []));
+    const failCount = results.filter((result) => result.status === "failed").length;
+    const pendingCount = results.filter((result) => result.status === "pending").length;
+    const first = logs.reduce((earliest, log) => (log.createdAt < earliest.createdAt ? log : earliest), latest);
+    return {
+        ...latest,
+        title: title || first.title,
+        durationMs: logs.reduce((total, log) => total + log.durationMs, 0),
+        successCount: successfulImages.length,
+        failCount,
+        pendingCount,
+        imageCount: results.length,
+        status: pendingCount ? "生成中" : successfulImages.length ? "成功" : "失败",
+        thumbnails: successfulImages.map(stableResultImageUrl).filter(Boolean),
+    };
+}
+
 function normalizeLogConfig(log: Partial<GenerationLog>): GenerationLogConfig {
     return {
         model: log.config?.model || log.model || "",

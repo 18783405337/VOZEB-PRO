@@ -2,7 +2,17 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { AiConfig } from "@/stores/use-config-store";
 import { generationLogPublicPrompt } from "@/lib/generation-log-snapshot";
-import { buildLogFromVideoResults, buildVideoConfig, filterAudioReferencesByDuration, generatedVideoFallback, normalizeVideoSeconds, rebuildLogAfterResultDeletion, resultsFromLog, snapshotFromLog } from "./video-workbench-records";
+import {
+    buildLogFromVideoResults,
+    buildVideoConfig,
+    filterAudioReferencesByDuration,
+    generatedVideoFallback,
+    normalizeVideoSeconds,
+    rebuildLogAfterResultDeletion,
+    resultsFromLog,
+    snapshotFromLog,
+    summarizeVideoConversationLogs,
+} from "./video-workbench-records";
 
 describe("video workbench records", () => {
     it("restores success, failure, and pending results from a log", () => {
@@ -126,6 +136,14 @@ describe("video workbench records", () => {
     it("prefers remote and server fallbacks over blob URLs", () => {
         expect(generatedVideoFallback({ url: "blob:local", remoteUrl: "https://cdn.example.com/video.mp4" })).toBe("https://cdn.example.com/video.mp4");
         expect(generatedVideoFallback({ url: "blob:local", serverUrl: "/api/generation-log-assets/video.mp4" })).toBe("/api/generation-log-assets/video.mp4");
+    });
+
+    it("summarizes every video round while keeping the first automatic title", () => {
+        const snapshot = { text: "生成视频", config: baseConfig(), references: [], videoReferences: [], audioReferences: [] };
+        const latest = { ...buildLogFromVideoResults(null, snapshot, [{ id: "latest", status: "success", video: video("latest") }], 2000), createdAt: 20, title: "第二轮" };
+        const first = { ...buildLogFromVideoResults(null, snapshot, [{ id: "first", status: "success", video: video("first") }], 1000), createdAt: 10, title: "第一轮" };
+
+        expect(summarizeVideoConversationLogs([latest, first])).toMatchObject({ id: latest.id, title: "第一轮", successCount: 2, failCount: 0, pendingCount: 0, videoCount: 2, durationMs: 3000, status: "成功" });
     });
 });
 

@@ -6,6 +6,7 @@ import { GenerationTaskRequestError } from "@/services/api/generation-task-reque
 import { refreshUserPointsIfSystem, syncUserPointsFromHeaders } from "@/services/api/points";
 import { throwIfClientSessionExpired } from "@/services/api/session-expiration";
 import { imageToDataUrl } from "@/services/image-storage";
+import { serverMediaUrl } from "@/services/server-media-storage";
 import { resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 
@@ -206,7 +207,8 @@ function isDeferredPollStatus(status: number) {
 }
 
 async function referenceToTaskInput(reference: ReferenceImage) {
-    const dataUrl = (await imageToDataUrl(reference)).trim();
+    const stableUrl = firstStableReferenceUrl(reference.serverUrl, reference.remoteUrl, reference.url, reference.dataUrl, serverMediaUrl(reference.storageKey, reference.serverUrl || reference.url || reference.dataUrl));
+    const dataUrl = stableUrl || (await imageToDataUrl(reference)).trim();
     if (!dataUrl) throw new Error("参考图读取失败，请重新上传参考图");
     if (dataUrl.startsWith("blob:")) throw new Error("参考图已失效，请重新上传");
     const remoteUrl = firstRemoteReferenceUrl(reference.remoteUrl, reference.url, reference.serverUrl, reference.dataUrl, dataUrl);
@@ -219,6 +221,10 @@ async function referenceToTaskInput(reference: ReferenceImage) {
         remoteUrl: isRemoteReferenceUrl(reference.remoteUrl) ? reference.remoteUrl : remoteUrl,
         serverUrl: reference.serverUrl,
     };
+}
+
+function firstStableReferenceUrl(...values: Array<string | undefined>) {
+    return values.map((value) => (value || "").trim()).find((value) => /^https?:\/\//i.test(value) || /^\/api\/(?:reference-assets|generation-log-assets|media-proxy)\//i.test(value));
 }
 
 function firstRemoteReferenceUrl(...values: Array<string | undefined>) {

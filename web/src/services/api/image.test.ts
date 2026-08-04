@@ -40,6 +40,44 @@ describe("图片任务轮询", () => {
         expect(body.context).toMatchObject({ clientRequestId: "image-workbench:conversation:slot", attemptNo: 3 });
     });
 
+    it("reuses a permanent server reference without downloading it before task creation", async () => {
+        const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => Response.json({ task: { id: "image-task", kind: "edit", model: "image-model" } }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        await createImageGenerationTask({ apiSource: "system", model: "image-model", imageModel: "image-model" } as AiConfig, "基于参考图生成", [
+            {
+                id: "reference",
+                name: "reference.png",
+                type: "image/png",
+                dataUrl: "/api/reference-assets/permanent/2026/08/04/images/reference.png",
+                serverUrl: "/api/reference-assets/permanent/2026/08/04/images/reference.png",
+                storageKey: "permanent/2026/08/04/images/reference.png",
+                width: 1024,
+                height: 1024,
+            },
+        ]);
+
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/image-tasks");
+        const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as { references: Array<{ dataUrl: string; serverUrl?: string }> };
+        expect(body.references[0]).toMatchObject({
+            dataUrl: "/api/reference-assets/permanent/2026/08/04/images/reference.png",
+            serverUrl: "/api/reference-assets/permanent/2026/08/04/images/reference.png",
+        });
+    });
+
+    it("keeps inline base64 references for providers that require inline images", async () => {
+        const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => Response.json({ task: { id: "image-task", kind: "edit", model: "image-model" } }));
+        vi.stubGlobal("fetch", fetchMock);
+        const inlineImage = "data:image/png;base64,AA==";
+
+        await createImageGenerationTask({ apiSource: "system", model: "image-model", imageModel: "image-model" } as AiConfig, "基于参考图生成", [{ id: "inline", name: "inline.png", type: "image/png", dataUrl: inlineImage, width: 1, height: 1 }]);
+
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as { references: Array<{ dataUrl: string }> };
+        expect(body.references[0]?.dataUrl).toBe(inlineImage);
+    });
+
     it("stops polling when the upstream submission needs manual review", async () => {
         const fetchMock = vi.fn(async () => Response.json({ task: { id: "review-task", kind: "generation", model: "image-model", status: "running", needsReview: true } }));
         vi.stubGlobal("fetch", fetchMock);

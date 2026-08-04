@@ -15,7 +15,7 @@ import { WorkbenchGenerationPlaceholder } from "@/components/agent/workbench-gen
 import { WorkbenchHistoryPanel } from "@/components/agent/workbench-history-panel";
 import { ResultSelectCheckbox } from "@/components/agent/workbench-result-controls";
 import { cn } from "@/lib/utils";
-import type { GeneratedVideo, GenerationLog } from "./video-workbench-records";
+import type { GeneratedVideo, GenerationLog, VideoConversationLogSummary } from "./video-workbench-records";
 
 export type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
 
@@ -136,7 +136,7 @@ export function LogPanel({
     cancellingLogIds = [],
     compact = false,
 }: {
-    logs: GenerationLog[];
+    logs: VideoConversationLogSummary[];
     selectedLogIds: string[];
     activeLogId?: string;
     onSelectedLogIdsChange: (ids: string[]) => void;
@@ -181,6 +181,18 @@ export function LogPanel({
                         <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none" color="green">
                             {formatDuration(log.durationMs)}
                         </Tag>
+                        <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none">成功 {log.successCount}</Tag>
+                        {log.failCount ? (
+                            <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none" color="error">
+                                失败 {log.failCount}
+                            </Tag>
+                        ) : null}
+                        {log.pendingCount ? (
+                            <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none" color="processing">
+                                生成中 {log.pendingCount}
+                            </Tag>
+                        ) : null}
+                        <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none">{log.videoCount} 条</Tag>
                     </div>
                     {log.status === "生成中" && log.task && onCancelLog ? (
                         <Button

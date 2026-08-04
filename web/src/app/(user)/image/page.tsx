@@ -24,7 +24,8 @@ import { WorkbenchHistoryPanel } from "@/components/agent/workbench-history-pane
 import { moveListItem, ReferenceOrderButtons, WorkbenchPromptEditor } from "@/components/agent/workbench-composer-controls";
 import { preloadWorkbenchResourceDialogs, WorkbenchResourceDialogs } from "@/components/agent/workbench-resource-dialogs";
 import { ResultSelectCheckbox, WorkbenchFileInput } from "@/components/agent/workbench-result-controls";
-import { findWorkbenchAgentSessionForRecord, latestWorkbenchRecordsByConversation, matchesWorkbenchHistoryQuery } from "@/components/agent/workbench-agent-session-store";
+import { findWorkbenchAgentSessionForRecord, matchesWorkbenchHistoryQuery } from "@/components/agent/workbench-agent-session-store";
+import { workbenchConversationRecordGroups } from "@/components/agent/workbench-conversation-results";
 import { mergeWorkbenchAgentPatch, useWorkbenchAgentRun, type WorkbenchAgentParameterPatch } from "@/hooks/use-workbench-agent-run";
 import { useWorkbenchAgentSessions } from "@/hooks/use-workbench-agent-sessions";
 import { useWorkbenchCreativeReview } from "@/hooks/use-workbench-creative-review";
@@ -53,6 +54,7 @@ import {
     saveStoredImageLog,
     snapshotFromLog,
     stableResultImageUrl,
+    summarizeImageConversationLogs,
     updateResultAt,
     withLogOwner,
     type GeneratedImage,
@@ -109,7 +111,7 @@ export default function ImagePage() {
         importedCreatePromptRef,
         references,
         setReferences,
-        results,
+        resultEntries,
         setResults,
         logs,
         setLogs,
@@ -198,9 +200,9 @@ export default function ImagePage() {
     } = controller;
     const agentModelOptions = selectableModelsByCapability(effectiveConfig, "image").map((id) => ({ id, name: modelOptionLabel(effectiveConfig, id), capability: "image" as const }));
     const selectedAgentModels = agentModelOptions.filter((item) => selectedModelIds.includes(item.id));
-    const conversationLogs = latestWorkbenchRecordsByConversation(logs).map((log) => {
-        const session = findWorkbenchAgentSessionForRecord(agentSessions, log.id, log.creativeConversationId);
-        return session?.title ? { ...log, title: session.title } : log;
+    const conversationLogs = workbenchConversationRecordGroups(logs).map(({ record, records }) => {
+        const session = findWorkbenchAgentSessionForRecord(agentSessions, record.id, record.creativeConversationId);
+        return summarizeImageConversationLogs(records, session?.title);
     });
     const activeHistoryLogId = previewLog ? conversationLogs.find((log) => log.id === previewLog.id || Boolean(log.creativeConversationId && log.creativeConversationId === previewLog.creativeConversationId))?.id : undefined;
     return (
@@ -397,7 +399,7 @@ export default function ImagePage() {
                                 <h2 className="text-lg font-semibold sm:text-xl">生成结果</h2>
                             </div>
                             <div className="flex flex-wrap items-center justify-end gap-2">
-                                <Button size="small" icon={<CheckSquare className="size-3.5" />} disabled={!results.length} onClick={toggleAllResults}>
+                                <Button size="small" icon={<CheckSquare className="size-3.5" />} disabled={!resultEntries.length} onClick={toggleAllResults}>
                                     {allResultsSelected ? "取消" : "全选"}
                                 </Button>
                                 <Button size="small" danger icon={<Trash2 className="size-3.5" />} disabled={!selectedVisibleResultIds.length} onClick={() => void deleteSelectedResults()}>
@@ -416,38 +418,41 @@ export default function ImagePage() {
                                 ) : null}
                             </div>
                         </div>
-                        {results.length ? (
-                            <div data-testid="image-results-grid" className={results.length === 1 ? "flex w-full items-start" : "grid w-full grid-cols-1 items-start gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4"}>
-                                {results.map((result, index) => (
-                                    <div key={result.id} data-testid="image-result-slot" className={results.length === 1 ? "w-[320px] max-w-full" : "min-w-0"}>
-                                        {result.status === "success" && result.image ? (
-                                            <ResultImageCard
-                                                image={result.image}
-                                                index={index}
-                                                large={results.length === 1}
-                                                fluid={results.length > 1}
-                                                missing={missingResultIds.includes(result.id) || !result.image.dataUrl}
-                                                selected={selectedResultIds.includes(result.id)}
-                                                onSelectedChange={(checked) => toggleResultSelected(result.id, checked)}
-                                                onMissing={() => markResultMissing(result.id)}
-                                                onEdit={addResultToReferences}
-                                                onDownload={downloadImage}
-                                                onSaveAsset={saveResultToAssets}
-                                            />
-                                        ) : result.status === "failed" ? (
-                                            <FailedImageCard
-                                                error={result.error || "生成失败"}
-                                                large={results.length === 1}
-                                                selected={selectedResultIds.includes(result.id)}
-                                                onSelectedChange={(checked) => toggleResultSelected(result.id, checked)}
-                                                retryable={result.canRetry === true}
-                                                onRetry={() => retryResult(index)}
-                                            />
-                                        ) : (
-                                            <PendingImageCard large={results.length === 1} />
-                                        )}
-                                    </div>
-                                ))}
+                        {resultEntries.length ? (
+                            <div data-testid="image-results-grid" className={resultEntries.length === 1 ? "flex w-full items-start" : "grid w-full grid-cols-1 items-start gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4"}>
+                                {resultEntries.map((entry) => {
+                                    const result = entry.result;
+                                    return (
+                                        <div key={entry.key} data-testid="image-result-slot" data-record-id={entry.recordId} className={resultEntries.length === 1 ? "w-[320px] max-w-full" : "min-w-0"}>
+                                            {result.status === "success" && result.image ? (
+                                                <ResultImageCard
+                                                    image={result.image}
+                                                    index={entry.displayIndex}
+                                                    large={resultEntries.length === 1}
+                                                    fluid={resultEntries.length > 1}
+                                                    missing={missingResultIds.includes(entry.key) || !result.image.dataUrl}
+                                                    selected={selectedResultIds.includes(entry.key)}
+                                                    onSelectedChange={(checked) => toggleResultSelected(entry.key, checked)}
+                                                    onMissing={() => markResultMissing(entry.key)}
+                                                    onEdit={addResultToReferences}
+                                                    onDownload={downloadImage}
+                                                    onSaveAsset={saveResultToAssets}
+                                                />
+                                            ) : result.status === "failed" ? (
+                                                <FailedImageCard
+                                                    error={result.error || "生成失败"}
+                                                    large={resultEntries.length === 1}
+                                                    selected={selectedResultIds.includes(entry.key)}
+                                                    onSelectedChange={(checked) => toggleResultSelected(entry.key, checked)}
+                                                    retryable={result.canRetry === true}
+                                                    onRetry={() => retryResult(entry.recordId, entry.resultId)}
+                                                />
+                                            ) : (
+                                                <PendingImageCard large={resultEntries.length === 1} />
+                                            )}
+                                        </div>
+                                    );
+                                })}
                             </div>
                         ) : (
                             <CompactEmptyState title="还没有生成图片" description="完成一次生成后，结果会按时间保留在这里。" icon={<ImagePlus className="size-4" />} className="min-h-20 sm:min-h-40 lg:min-h-[360px]" />

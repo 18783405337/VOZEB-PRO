@@ -7,7 +7,7 @@ import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { InsertAssetPayload } from "@/app/(user)/canvas/components/asset-picker-modal";
-import { type WorkbenchAgentMessage } from "@/components/agent/workbench-agent-panel";
+import { workbenchConversationResultEntries, workbenchHistoryMessages } from "@/components/agent/workbench-conversation-results";
 import { workbenchAttachmentsFromReferences } from "@/components/agent/workbench-agent-references";
 import { expandWorkbenchConversationSelection, findWorkbenchAgentSessionForRecord, removeWorkbenchAgentSessionsForRecords } from "@/components/agent/workbench-agent-session-store";
 import { preloadWorkbenchResourceDialogs } from "@/components/agent/workbench-resource-dialogs";
@@ -172,7 +172,6 @@ export function useVideoWorkbenchController() {
     });
     const canGenerate = publicSessionReady && Boolean(prompt.trim());
     const videoConcurrencyLimit = Math.max(1, Math.min(5, Math.floor(Number(effectiveConfig.generationConcurrency?.video) || 1)));
-    const previewPendingCount = results.filter((result) => result.status === "pending").length;
 
     useEffect(() => {
         mountedRef.current = true;
@@ -429,14 +428,14 @@ export function useVideoWorkbenchController() {
         return null;
     };
 
-    const retryResult = async () => {
-        const currentLog = previewLog ? getLatestLog(previewLog.id) || previewLog : null;
+    const retryResult = async (recordId: string, resultId: string) => {
+        const currentLog = getLatestLog(recordId);
         if (!currentLog) {
             message.error("找不到原任务记录，无法重试");
             return;
         }
         const currentResults = resultsFromLog(currentLog);
-        const failedResult = currentResults.findLast((result) => result.status === "failed");
+        const failedResult = currentResults.find((result) => result.id === resultId && result.status === "failed");
         if (!failedResult?.canRetry) {
             message.info(currentLog.task ? "原视频任务仍由后台继续查询，无需重新创建" : "当前错误未确认来自上游，系统不会重复创建任务");
             if (currentLog.status === "生成中" && currentLog.task) scheduleVideoLog(currentLog);
@@ -830,14 +829,7 @@ export function useVideoWorkbenchController() {
         setSelectedResultIds([]);
         const publicPrompt = generationLogPublicPrompt(log);
         const session = findWorkbenchAgentSessionForRecord(agentSessions, log.id, log.creativeConversationId);
-        const fallbackMessages: WorkbenchAgentMessage[] = [
-            ...(publicPrompt ? [{ id: `history-${log.id}-user`, role: "user" as const, text: publicPrompt }] : []),
-            {
-                id: `history-${log.id}-assistant`,
-                role: log.status === "失败" ? "error" : "assistant",
-                text: log.status === "失败" ? log.error || "该任务生成失败。" : log.status === "生成中" ? "该任务仍在生成中。" : "已打开这条历史生成记录，可以继续修改或重新生成。",
-            },
-        ];
+        const fallbackMessages = workbenchHistoryMessages(log, publicPrompt);
         setActiveAgentRecordId(log.id);
         setActiveAgentSessionId(session?.id || `log-${log.id}`);
         setActiveCreativeConversationId(session?.creativeConversationId || log.creativeConversationId);
@@ -872,35 +864,44 @@ export function useVideoWorkbenchController() {
                 });
     };
 
-    const currentResultIds = results.filter((result) => result.status !== "pending").map((result) => result.id);
+    const resultEntries = workbenchConversationResultEntries(logs, previewLog, (log) => (log.id === previewLog?.id ? results : resultsFromLog(log)));
+    const currentResultIds = resultEntries.filter((entry) => entry.result.status !== "pending").map((entry) => entry.key);
     const selectedVisibleResultIds = selectedResultIds.filter((id) => currentResultIds.includes(id));
-    const allResultsSelected = Boolean(currentResultIds.length) && selectedVisibleResultIds.length === currentResultIds.length;
-
-    const toggleAllResults = () => {
-        setSelectedResultIds(allResultsSelected ? [] : currentResultIds);
-    };
-
-    const toggleResultSelected = (id: string, checked: boolean) => {
-        setSelectedResultIds((value) => (checked ? Array.from(new Set([...value, id])) : value.filter((item) => item !== id)));
-    };
 
     const deleteSelectedResults = async () => {
-        const currentLog = previewLog ? getLatestLog(previewLog.id) || previewLog : null;
-        if (!currentLog || !selectedVisibleResultIds.length) return;
+        if (!selectedVisibleResultIds.length) return;
         const selectedIds = new Set(selectedVisibleResultIds);
-        const removedResults = results.filter((result) => selectedIds.has(result.id));
-        const nextResults = results.filter((result) => !selectedIds.has(result.id));
-        const mediaKeys = removedResults.flatMap((result) => (result.video?.storageKey ? [result.video.storageKey] : []));
-        deletedResultLogIdsRef.current.add(currentLog.id);
-        blockedVideoLogIdsRef.current.add(currentLog.id);
-        discardVideoLog(currentLog.id);
-        const nextLog = rebuildLogAfterResultDeletion(currentLog, nextResults);
-        setResults(nextResults);
+        const selectedEntries = resultEntries.filter((entry) => selectedIds.has(entry.key));
+        const entriesByRecord = new Map<string, typeof selectedEntries>();
+        selectedEntries.forEach((entry) => entriesByRecord.set(entry.recordId, [...(entriesByRecord.get(entry.recordId) || []), entry]));
+        const cleanup: Promise<unknown>[] = [];
+
+        for (const [recordId, entries] of entriesByRecord) {
+            const currentLog = getLatestLog(recordId);
+            if (!currentLog) continue;
+            const resultIds = new Set(entries.map((entry) => entry.resultId));
+            const currentResults = resultsFromLog(currentLog);
+            const removedResults = currentResults.filter((result) => resultIds.has(result.id));
+            const nextResults = currentResults.filter((result) => !resultIds.has(result.id));
+            const mediaKeys = removedResults.flatMap((result) => (result.video?.storageKey ? [result.video.storageKey] : []));
+            deletedResultLogIdsRef.current.add(currentLog.id);
+            blockedVideoLogIdsRef.current.add(currentLog.id);
+            discardVideoLog(currentLog.id, false);
+            const nextLog = rebuildLogAfterResultDeletion(currentLog, nextResults);
+            if (activeLogIdRef.current === currentLog.id) {
+                setResults(nextResults);
+                setPreviewLog(nextLog);
+            }
+            cleanup.push(deleteStoredMedia(mediaKeys), deleteServerGenerationLogResults(`video-workbench:${currentLog.id}`, [...resultIds]));
+            await saveLog(nextLog, { refresh: false });
+        }
+
+        startQueuedVideoLogs();
         setSelectedResultIds([]);
-        setPreviewLog(nextLog);
-        await Promise.all([deleteStoredMedia(mediaKeys), deleteServerGenerationLogResults(`video-workbench:${currentLog.id}`, selectedVisibleResultIds)]);
-        await saveLog(nextLog, { refresh: false });
-        message.success(`已删除 ${removedResults.length} 个结果`);
+        const cleanupResults = await Promise.allSettled(cleanup);
+        entriesByRecord.forEach((_entries, recordId) => deletedResultLogIdsRef.current.delete(recordId));
+        if (cleanupResults.some((result) => result.status === "rejected")) message.warning("结果已从当前对话移除，部分关联资源清理失败，请稍后重试");
+        else message.success(`已删除 ${selectedEntries.length} 个结果`);
     };
 
     const renameGenerationLog = async (log: GenerationLog, title: string) => {
@@ -946,7 +947,7 @@ export function useVideoWorkbenchController() {
         setVideoReferences,
         audioReferences,
         setAudioReferences,
-        results,
+        resultEntries,
         logs,
         activeVideoCount,
         logsOpen,
@@ -958,6 +959,7 @@ export function useVideoWorkbenchController() {
         selectedLogIds,
         setSelectedLogIds,
         selectedResultIds,
+        setSelectedResultIds,
         previewLog,
         cancellingLogIds,
         deleteConfirmOpen,
@@ -967,7 +969,6 @@ export function useVideoWorkbenchController() {
         pointsCost,
         canGenerate,
         videoConcurrencyLimit,
-        previewPendingCount,
         addReferences,
         referenceDropZoneClass,
         handleReferenceDragOver,
@@ -988,9 +989,6 @@ export function useVideoWorkbenchController() {
         deleteSelectedLogs,
         previewGenerationLog,
         selectedVisibleResultIds,
-        allResultsSelected,
-        toggleAllResults,
-        toggleResultSelected,
         deleteSelectedResults,
         renameGenerationLog,
     };

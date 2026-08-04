@@ -16,9 +16,10 @@ import { WorkbenchGenerationActivity } from "@/components/agent/workbench-genera
 import { moveListItem, ReferenceOrderButtons, WorkbenchPromptEditor } from "@/components/agent/workbench-composer-controls";
 import { WorkbenchResourceDialogs } from "@/components/agent/workbench-resource-dialogs";
 import { WorkbenchFileInput } from "@/components/agent/workbench-result-controls";
-import { findWorkbenchAgentSessionForRecord, latestWorkbenchRecordsByConversation, matchesWorkbenchHistoryQuery } from "@/components/agent/workbench-agent-session-store";
+import { findWorkbenchAgentSessionForRecord, matchesWorkbenchHistoryQuery } from "@/components/agent/workbench-agent-session-store";
+import { workbenchConversationRecordGroups } from "@/components/agent/workbench-conversation-results";
 import { cn } from "@/lib/utils";
-import { normalizeVideoSeconds } from "./video-workbench-records";
+import { normalizeVideoSeconds, summarizeVideoConversationLogs } from "./video-workbench-records";
 
 import { GenerationSettings, ResultVideoCard, PendingVideoCard, FailedVideoCard, LogPanel } from "./video-workbench-panels";
 
@@ -55,7 +56,7 @@ export default function VideoPage() {
         setVideoReferences,
         audioReferences,
         setAudioReferences,
-        results,
+        resultEntries,
         logs,
         activeVideoCount,
         logsOpen,
@@ -67,6 +68,7 @@ export default function VideoPage() {
         selectedLogIds,
         setSelectedLogIds,
         selectedResultIds,
+        setSelectedResultIds,
         previewLog,
         cancellingLogIds,
         deleteConfirmOpen,
@@ -76,7 +78,6 @@ export default function VideoPage() {
         pointsCost,
         canGenerate,
         videoConcurrencyLimit,
-        previewPendingCount,
         addReferences,
         referenceDropZoneClass,
         handleReferenceDragOver,
@@ -97,17 +98,19 @@ export default function VideoPage() {
         deleteSelectedLogs,
         previewGenerationLog,
         selectedVisibleResultIds,
-        allResultsSelected,
-        toggleAllResults,
-        toggleResultSelected,
         deleteSelectedResults,
         renameGenerationLog,
     } = controller;
+    const currentResultIds = resultEntries.filter((entry) => entry.result.status !== "pending").map((entry) => entry.key);
+    const allResultsSelected = Boolean(currentResultIds.length) && selectedVisibleResultIds.length === currentResultIds.length;
+    const previewPendingCount = resultEntries.filter((entry) => entry.result.status === "pending").length;
+    const toggleAllResults = () => setSelectedResultIds(allResultsSelected ? [] : currentResultIds);
+    const toggleResultSelected = (id: string, checked: boolean) => setSelectedResultIds((value) => (checked ? Array.from(new Set([...value, id])) : value.filter((item) => item !== id)));
     const agentModelOptions = videoModelOptions.map((id) => ({ id, name: modelOptionLabel(effectiveConfig, id), capability: "video" as const }));
     const selectedAgentModels = agentModelOptions.filter((item) => selectedModelIds.includes(item.id));
-    const conversationLogs = latestWorkbenchRecordsByConversation(logs).map((log) => {
-        const session = findWorkbenchAgentSessionForRecord(agentSessions, log.id, log.creativeConversationId);
-        return session?.title ? { ...log, title: session.title } : log;
+    const conversationLogs = workbenchConversationRecordGroups(logs).map(({ record, records }) => {
+        const session = findWorkbenchAgentSessionForRecord(agentSessions, record.id, record.creativeConversationId);
+        return summarizeVideoConversationLogs(records, session?.title);
     });
     const activeHistoryLogId = previewLog ? conversationLogs.find((log) => log.id === previewLog.id || Boolean(log.creativeConversationId && log.creativeConversationId === previewLog.creativeConversationId))?.id : undefined;
     return (
@@ -353,7 +356,7 @@ export default function VideoPage() {
                         <div className="mb-2.5 flex items-center justify-between gap-2 sm:mb-4 sm:gap-3">
                             <h2 className="text-lg font-semibold sm:text-xl">生成结果</h2>
                             <div className="flex flex-wrap items-center justify-end gap-2">
-                                <Button size="small" icon={<CheckSquare className="size-3.5" />} disabled={!results.length} onClick={toggleAllResults}>
+                                <Button size="small" icon={<CheckSquare className="size-3.5" />} disabled={!resultEntries.length} onClick={toggleAllResults}>
                                     {allResultsSelected ? "取消" : "全选"}
                                 </Button>
                                 <Button size="small" danger icon={<Trash2 className="size-3.5" />} disabled={!selectedVisibleResultIds.length} onClick={() => void deleteSelectedResults()}>
@@ -372,30 +375,30 @@ export default function VideoPage() {
                                 ) : null}
                             </div>
                         </div>
-                        {results.length ? (
-                            <div className={results.length === 1 ? "grid max-w-[360px] gap-2.5 sm:gap-4" : "grid w-full grid-cols-1 gap-2.5 sm:grid-cols-2 sm:gap-4 2xl:grid-cols-3"}>
-                                {results.map((result) =>
-                                    result.status === "success" && result.video ? (
+                        {resultEntries.length ? (
+                            <div className={resultEntries.length === 1 ? "grid max-w-[360px] gap-2.5 sm:gap-4" : "grid w-full grid-cols-1 gap-2.5 sm:grid-cols-2 sm:gap-4 2xl:grid-cols-3"}>
+                                {resultEntries.map((entry) =>
+                                    entry.result.status === "success" && entry.result.video ? (
                                         <ResultVideoCard
-                                            key={result.id}
-                                            video={result.video}
-                                            large={results.length === 1}
-                                            selected={selectedResultIds.includes(result.id)}
-                                            onSelectedChange={(checked) => toggleResultSelected(result.id, checked)}
+                                            key={entry.key}
+                                            video={entry.result.video}
+                                            large={resultEntries.length === 1}
+                                            selected={selectedResultIds.includes(entry.key)}
+                                            onSelectedChange={(checked) => toggleResultSelected(entry.key, checked)}
                                             onDownload={downloadVideo}
                                             onSaveAsset={saveResultToAssets}
                                         />
-                                    ) : result.status === "failed" ? (
+                                    ) : entry.result.status === "failed" ? (
                                         <FailedVideoCard
-                                            key={result.id}
-                                            error={result.error || "生成失败"}
-                                            retryable={result.canRetry === true}
-                                            selected={selectedResultIds.includes(result.id)}
-                                            onSelectedChange={(checked) => toggleResultSelected(result.id, checked)}
-                                            onRetry={retryResult}
+                                            key={entry.key}
+                                            error={entry.result.error || "生成失败"}
+                                            retryable={entry.result.canRetry === true}
+                                            selected={selectedResultIds.includes(entry.key)}
+                                            onSelectedChange={(checked) => toggleResultSelected(entry.key, checked)}
+                                            onRetry={() => retryResult(entry.recordId, entry.resultId)}
                                         />
                                     ) : (
-                                        <PendingVideoCard key={result.id} />
+                                        <PendingVideoCard key={entry.key} />
                                     ),
                                 )}
                             </div>
