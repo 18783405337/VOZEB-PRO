@@ -11,6 +11,7 @@ export async function prepareStandaloneAssets({ webRoot, distDir = ".next" }) {
     const targetPublic = path.join(standaloneRoot, "public");
 
     await assertFile(serverEntry, `Standalone server was not found: ${serverEntry}`);
+    const sharpRuntimePackages = await copySharpRuntimePackages(webRoot, standaloneRoot);
     const sourceStaticFiles = await listRelativeFiles(sourceStatic);
     if (!sourceStaticFiles.length) throw new Error(`Build static directory is empty: ${sourceStatic}`);
 
@@ -28,7 +29,24 @@ export async function prepareStandaloneAssets({ webRoot, distDir = ".next" }) {
     const missingPublicFiles = sourcePublicFiles.filter((file) => !targetPublicFiles.includes(file));
     if (missingPublicFiles.length) throw new Error(`Standalone public directory is incomplete: ${missingPublicFiles.join(", ")}`);
 
-    return { serverEntry, standaloneRoot, staticFiles: targetStaticFiles.length, publicFiles: targetPublicFiles.length };
+    return { serverEntry, standaloneRoot, staticFiles: targetStaticFiles.length, publicFiles: targetPublicFiles.length, sharpRuntimePackages };
+}
+
+async function copySharpRuntimePackages(webRoot, standaloneRoot) {
+    const sourcePnpmRoot = path.join(webRoot, "node_modules", ".pnpm");
+    const targetPnpmRoot = path.join(standaloneRoot, "node_modules", ".pnpm");
+    const packages = (await readdir(sourcePnpmRoot, { withFileTypes: true })).filter((entry) => entry.isDirectory() && entry.name.startsWith("@img+sharp-"));
+    if (!packages.length) throw new Error(`Sharp runtime packages were not found: ${sourcePnpmRoot}`);
+    if (process.platform === "linux" && !packages.some((entry) => entry.name.startsWith("@img+sharp-linux"))) {
+        throw new Error(`Sharp native Linux runtime package was not found: ${sourcePnpmRoot}`);
+    }
+    if (process.platform === "linux" && !packages.some((entry) => entry.name.startsWith("@img+sharp-libvips-linux"))) {
+        throw new Error(`Sharp libvips runtime package was not found: ${sourcePnpmRoot}`);
+    }
+
+    await mkdir(targetPnpmRoot, { recursive: true });
+    await Promise.all(packages.map((entry) => cp(path.join(sourcePnpmRoot, entry.name), path.join(targetPnpmRoot, entry.name), { recursive: true, force: true })));
+    return packages.map((entry) => entry.name).sort();
 }
 
 async function assertFile(target, message) {

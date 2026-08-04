@@ -2,7 +2,6 @@
 
 ## Unreleased
 
-
 ## v0.0.4
 
 - [工作台] 图片与视频结果框按当前创作对话展示全部独立生成轮次，新建对话才清空结果；历史卡汇总该对话全部结果和耗时，后续输出不自动改标题；图片桌面端一行 4 个并自动换行，刷新、跨轮次选择、删除和重试保持稳定记录关联。
@@ -26,6 +25,7 @@
 - [界面] 套餐选择弹窗按商品数量自适应宽度，移除重复标题与无意义周期占位，压缩价格、积分、权益和操作区；最多 8 个套餐保持桌面紧凑多列与 390px/430px 单卡切换。
 - [界面] Agent Skills 桌面卡片使用独立双列流，长规则内容不再撑高相邻卡片；移动端保持单列。
 - [构建] 默认构建按环境可用资源执行，不再强制单 Worker 或固定 Node 堆；仍支持 `NEXT_BUILD_CPUS` 和 `NODE_OPTIONS` 显式限制。Web 与文档站固定 Next.js 追踪及 Turbopack 根目录，避免临时根锁文件改变 Standalone 入口。
+- [构建] Linux Standalone 会把当前平台的 Sharp 与 libvips pnpm 原生包复制到独立产物，避免服务启动后因缺少 `libvips-cpp` 使 API 返回 500；多架构镜像完整读取 Buildx inspect 输出后再提取 digest，避免 `pipefail` 将成功推送误判为失败。
 - [工程] 根目录、CI、Web 与 Docs 统一使用 pnpm 11.9.0；新增 ESLint、Playwright E2E、Dependabot、CODEOWNERS、Issue/PR 模板和第三方许可证清单，发布检查覆盖审计、格式、测试、类型、生产构建和 Standalone 产物。
 - [供应链] 固定已修复的 `brace-expansion` 2.1.4/5.0.9、Undici 8.9.0/7.29.0，并更新 `fast-uri`、`hono` 与 `ip-address`，消除已披露的拒绝服务、缓存解析、请求走私、CRLF、SSRF 与 ReDoS 风险。
 - [供应链] Docker 镜像仅在正式 Tag 门禁通过后发布 `latest`，同时生成 SPDX SBOM、对不可变 digest 签名并附加证明。

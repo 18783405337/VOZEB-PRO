@@ -20,6 +20,8 @@ describe("release workflow contract", () => {
         expect(source).toContain("anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610");
         expect(source).toContain("cosign sign --yes");
         expect(source).toContain("cosign attest --yes");
+        expect(source).toContain("awk '/^Digest:/ && digest == \"\" { digest = $2 } END { print digest }'");
+        expect(source).not.toContain("awk '/^Digest:/ { print $2; exit }'");
         expect(source).toContain("version: 11.9.0");
         expect(source).not.toMatch(/uses:\s+[^\s]+@(v\d|main|master)\b/);
     });

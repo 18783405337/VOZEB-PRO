@@ -147,7 +147,7 @@ jobs:
 
           docker buildx imagetools create "${tag_args[@]}" "${digest_args[@]}"
           primary_tag="$(printf '%s\n' "$TAGS" | sed '/^$/d' | head -n 1)"
-          digest="$(docker buildx imagetools inspect "$primary_tag" | awk '/^Digest:/ { print $2; exit }')"
+          digest="$(docker buildx imagetools inspect "$primary_tag" | awk '/^Digest:/ && digest == "" { digest = $2 } END { print digest }')"
           test -n "$digest"
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
 
