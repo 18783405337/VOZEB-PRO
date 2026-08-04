@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { jsonrepair } from "jsonrepair";
+import { decodeHTML } from "entities";
 
 const REPOSITORY = "tigerowo/awesome-gpt-image-2-prompts";
 const COMMIT = "60e9c65baecfd6d6d51ac4e4d87f146af834bb64";
@@ -80,7 +81,7 @@ function parseCases(markdown, { slug, category, fileName }) {
 }
 
 function cleanTitle(value) {
-    return value.replaceAll("&amp;", "&").replaceAll("&quot;", '"').replaceAll("&#39;", "'").trim();
+    return decodeHTML(value).trim();
 }
 
 function normalizePromptContent(value) {

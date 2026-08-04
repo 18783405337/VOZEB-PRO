@@ -12,7 +12,7 @@ type AgentSkillCreateModalProps = {
     open: boolean;
     existingSkills: AgentSkill[];
     onClose: () => void;
-    onCreate: (skill: AgentSkill) => void;
+    onCreate: (skill: AgentSkill) => Promise<boolean>;
 };
 
 type SkillFormValues = {
@@ -83,7 +83,7 @@ export function AgentSkillCreateModal({ open, existingSkills, onClose, onCreate 
         }
     };
 
-    const submit = (values: SkillFormValues) => {
+    const submit = async (values: SkillFormValues) => {
         const idBase = importedSkill?.id || `skill-${nanoid(8)}`;
         const id = uniqueId(idBase, existingSkills);
         const defaultConfig: AgentSkill["defaultConfig"] = {};
@@ -91,30 +91,35 @@ export function AgentSkillCreateModal({ open, existingSkills, onClose, onCreate 
         if (values.quality.trim()) defaultConfig[values.workspaces?.includes("video") ? "vquality" : "quality"] = values.quality.trim();
         if (values.workspaces?.includes("image")) defaultConfig.count = Math.max(1, Number(values.count) || 1);
         if (values.workspaces?.includes("video")) defaultConfig.videoSeconds = Math.max(1, Number(values.videoSeconds) || 5);
-        onCreate({
-            id,
-            name: values.name.trim(),
-            description: values.description.trim(),
-            plannerSummary: importedSkill?.plannerSummary || values.description.trim(),
-            instructions: values.instructions.trim(),
-            enabled: importedSkill ? false : true,
-            keywords: values.keywords
-                .split(/[、,，\n]/)
-                .map((item) => item.trim())
-                .filter(Boolean),
-            workspaces: values.workspaces?.length ? values.workspaces : ["image"],
-            action: values.action || "generate",
-            requiresReference: Boolean(values.requiresReference),
-            defaultConfig,
-            sourceUrl: importedSkill?.sourceUrl,
-            sourceRepository: importedSkill?.repository,
-            sourcePath: importedSkill?.sourcePath,
-            sourceVersion: importedSkill?.sourceVersion,
-            sourceCommit: importedSkill?.sourceCommit,
-            sourceContentHash: importedSkill?.sourceContentHash,
-            license: importedSkill?.license,
-        });
-        form.resetFields();
+        setLoading(true);
+        try {
+            const saved = await onCreate({
+                id,
+                name: values.name.trim(),
+                description: values.description.trim(),
+                plannerSummary: importedSkill?.plannerSummary || values.description.trim(),
+                instructions: values.instructions.trim(),
+                enabled: importedSkill ? false : true,
+                keywords: values.keywords
+                    .split(/[、,，\n]/)
+                    .map((item) => item.trim())
+                    .filter(Boolean),
+                workspaces: values.workspaces?.length ? values.workspaces : ["image"],
+                action: values.action || "generate",
+                requiresReference: Boolean(values.requiresReference),
+                defaultConfig,
+                sourceUrl: importedSkill?.sourceUrl,
+                sourceRepository: importedSkill?.repository,
+                sourcePath: importedSkill?.sourcePath,
+                sourceVersion: importedSkill?.sourceVersion,
+                sourceCommit: importedSkill?.sourceCommit,
+                sourceContentHash: importedSkill?.sourceContentHash,
+                license: importedSkill?.license,
+            });
+            if (saved) form.resetFields();
+        } finally {
+            setLoading(false);
+        }
     };
 
     return (
@@ -124,7 +129,7 @@ export function AgentSkillCreateModal({ open, existingSkills, onClose, onCreate 
             centered
             width={760}
             destroyOnHidden
-            okText="加入 Skill 列表"
+            okText="添加并保存"
             cancelText="取消"
             confirmLoading={loading}
             keyboard={!loading}

@@ -15,6 +15,12 @@ describe("Seedance video configuration", () => {
         expect(isSeedanceVideoConfig(mixedChannelConfig("video-logical", "seedance"))).toBe(true);
         expect(isSeedanceVideoConfig(mixedChannelConfig("video-logical", "compatible"))).toBe(false);
     });
+
+    it("recognizes Ark paths only on the exact provider host", () => {
+        expect(isSeedanceVideoConfig({ model: "other-video", videoModel: "", baseUrl: "https://ark.cn-beijing.volces.com/api/plan/v3" })).toBe(true);
+        expect(isSeedanceVideoConfig({ model: "other-video", videoModel: "", baseUrl: "https://ark.cn-beijing.volces.com.evil.test/api/plan/v3" })).toBe(false);
+        expect(isSeedanceVideoConfig({ model: "other-video", videoModel: "", baseUrl: "https://example.com/api/plan/v3" })).toBe(false);
+    });
 });
 
 function mixedChannelConfig(model: string, protocol: "seedance" | "compatible"): AiConfig {

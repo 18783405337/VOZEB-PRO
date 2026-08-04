@@ -258,7 +258,6 @@ export function taskFetch(config: ImageTaskConfig, url: string, init: RequestIni
         signal: init.signal || AbortSignal.timeout(imageTaskRequestTimeoutMs(config)),
     };
     if (!isInternalApiBaseUrl(config.baseUrl)) return fetchSafeOutbound(url, nextInit);
-    if (typeof FormData !== "undefined" && nextInit.body instanceof FormData) return fetch(url, nextInit);
     return fetchInternalApi(url, nextInit);
 }
 
@@ -554,7 +553,7 @@ export async function inlineRemoteImageResult(value: string, origin: string, coo
         const workerHeaders = maintenanceWorkerContextHeaders(cookie);
         const headers = new Headers(workerHeaders || (cookie ? { cookie } : undefined));
         new Headers(internalHeaders).forEach((headerValue, key) => headers.set(key, headerValue));
-        const response = await (url.startsWith("/") ? fetch : fetchSafeOutbound)(fetchUrl, {
+        const response = await (url.startsWith("/") ? fetchInternalApi : fetchSafeOutbound)(fetchUrl, {
             headers: url.startsWith("/") ? headers : undefined,
             cache: "no-store",
             signal: controller.signal,
@@ -698,7 +697,7 @@ export async function imageReferenceToFile(reference: ImageTaskReference, name: 
             const fetchUrl = value.startsWith("/") ? `${origin}${value}` : value;
             if (!isRemoteMediaUrl(fetchUrl)) throw new Error("参考图地址无效，请重新上传参考图");
             const workerHeaders = maintenanceWorkerContextHeaders(cookie);
-            const response = await (value.startsWith("/") ? fetch : fetchSafeOutbound)(fetchUrl, {
+            const response = await (value.startsWith("/") ? fetchInternalApi : fetchSafeOutbound)(fetchUrl, {
                 headers: value.startsWith("/") ? workerHeaders || (cookie ? { cookie } : undefined) : undefined,
                 cache: "no-store",
                 signal: AbortSignal.timeout(INLINE_IMAGE_TIMEOUT_MS),

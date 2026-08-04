@@ -1,4 +1,5 @@
 import type { SystemChannelAdvancedConfig, SystemChannelProtocol, SystemModelChannel } from "@/lib/auth/store";
+import { textContainsUrlHost } from "@/lib/url-host";
 
 type ChannelExampleParseResult = {
     patch: Partial<SystemModelChannel>;
@@ -275,10 +276,10 @@ function inferProtocol(raw: string, endpoint: EndpointMatch | null, requestBody:
     const source = `${raw}\n${endpoint?.requestUrl || ""}`.toLowerCase();
     if (source.includes("/v1/seedance-special/videos") || source.includes("sd_2.0_special_") || source.includes("sd_2.0_fast_special_")) return "seedance-special";
     if (source.includes("/sdapi/v1/txt2img") || source.includes("/sdapi/v1/img2img") || source.includes("alwayson_scripts")) return "custom";
-    if (source.includes("sub2api") || source.includes("code2alita.com")) return "sub2api";
+    if (source.includes("sub2api") || textContainsUrlHost(source, ["code2alita.com"])) return "sub2api";
     if (/\bnew\s*api\b|new-api|one-api/i.test(source)) return "newapi";
-    if (source.includes("globalaiopc.com") || source.includes("/videos/videos") || source.includes("referenceimages")) return "globalaiopc";
-    if (source.includes("ark.cn-beijing.volces.com/api/v3")) return "volcengine-video";
+    if (textContainsUrlHost(source, ["globalaiopc.com"]) || source.includes("/videos/videos") || source.includes("referenceimages")) return "globalaiopc";
+    if (textContainsUrlHost(source, ["ark.cn-beijing.volces.com"])) return "volcengine-video";
     if (source.includes("seedance") || source.includes("/contents/generations/tasks") || source.includes("/api/plan/v3")) return "seedance";
     if (isRecord(requestBody) && hasSub2ApiImageReferenceShape(requestBody)) return "sub2api";
     if (/multipart\/form-data|\s-F\s|--form\b/i.test(raw)) return "openai";

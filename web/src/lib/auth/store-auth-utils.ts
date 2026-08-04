@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomInt } from "node:crypto";
 
 import { AuthInputError, USERNAME_PATTERN } from "./store-foundation";
 
@@ -47,5 +47,5 @@ export function hashToken(token: string) {
 }
 
 export function randomNumericCode() {
-    return String(randomBytes(4).readUInt32BE(0) % 1_000_000).padStart(6, "0");
+    return String(randomInt(1_000_000)).padStart(6, "0");
 }

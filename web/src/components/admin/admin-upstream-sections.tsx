@@ -134,7 +134,7 @@ export function AdminChannelsSection({ controller }: { controller: AdminDashboar
 }
 
 export function AdminSkillsSection({ controller }: { controller: AdminDashboardController }) {
-    const { message, settings, setSettings, settingsLoading, activeSection, agentReadiness, saveSettings } = controller;
+    const { settings, setSettings, settingsLoading, activeSection, agentReadiness, saveSettings } = controller;
     const [createModalOpen, setCreateModalOpen] = useState(false);
     if (activeSection !== "skills") return null;
     return (
@@ -338,10 +338,10 @@ export function AdminSkillsSection({ controller }: { controller: AdminDashboardC
                 open={createModalOpen}
                 existingSkills={settings.agentSkills}
                 onClose={() => setCreateModalOpen(false)}
-                onCreate={(skill) => {
-                    setSettings((current) => ({ ...current, agentSkills: [...current.agentSkills, skill] }));
-                    setCreateModalOpen(false);
-                    message.success("Skill 已加入列表，请点击保存");
+                onCreate={async (skill) => {
+                    const saved = await saveSettings({ agentSkills: [...settings.agentSkills, skill] }, "Agent Skill 已添加并保存");
+                    if (saved) setCreateModalOpen(false);
+                    return saved;
                 }}
             />
         </Panel>

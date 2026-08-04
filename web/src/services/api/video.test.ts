@@ -7,11 +7,13 @@ vi.mock("@/services/file-storage", () => ({ getMediaBlob: vi.fn(), uploadMediaFi
 vi.mock("@/services/image-storage", () => ({ imageToDataUrl: mocks.imageToDataUrl }));
 vi.mock("@/stores/use-config-store", () => ({
     resolveModelRequestConfig: vi.fn((config: Record<string, unknown>, model: string) => ({ ...config, model, apiSource: "system" })),
+    modelOptionName: vi.fn((model: string) => model),
 }));
 
 import type { AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import { cancelServerVideoGenerationTask, createServerVideoGenerationTask, createVideoGenerationTask, pollVideoGenerationTask } from "./video";
+import { isGlobalAiOpcVideoConfig } from "./video-providers";
 
 const config = {
     model: "video-v1",
@@ -101,6 +103,12 @@ describe("video API service", () => {
         vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: "当前任务无法取消" }), { status: 409, headers: { "content-type": "application/json" } })));
 
         await expect(cancelServerVideoGenerationTask({ id: "video-finished", provider: "generation", model: "video-v1", pollPath: "server" })).rejects.toThrow("当前任务无法取消");
+    });
+
+    it("recognizes GlobalAiOpc only from an exact provider host", () => {
+        expect(isGlobalAiOpcVideoConfig({ ...config, baseUrl: "https://api.globalaiopc.com/v1" }, "other-model")).toBe(true);
+        expect(isGlobalAiOpcVideoConfig({ ...config, baseUrl: "https://globalaiopc.com.evil.test/v1" }, "other-model")).toBe(false);
+        expect(isGlobalAiOpcVideoConfig({ ...config, baseUrl: "https://kyyreactapiserver-production.example.com/v1" }, "other-model")).toBe(true);
     });
 });
 

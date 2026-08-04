@@ -198,6 +198,35 @@ test("canvas projects round-trip two nodes and one connection", async ({ request
     expect(await loaded.json()).toMatchObject({ data: { project: { nodes: [{ id: "node-a" }, { id: "node-b" }], connections: [{ id: "edge-a-b", fromNodeId: "node-a", toNodeId: "node-b" }] } } });
 });
 
+test("new Agent Skill is saved before leaving the administrator page", async ({ page, request }) => {
+    const beforeResponse = await request.get("/api/admin/settings");
+    expect(beforeResponse.ok(), await beforeResponse.text()).toBe(true);
+    const before = ((await beforeResponse.json()) as { settings: { agentSkills: unknown[] } }).settings.agentSkills;
+    const skillName = `E2E 持久 Skill ${randomUUID().slice(0, 8)}`;
+
+    try {
+        await page.goto("/admin?section=skills");
+        await page.getByRole("button", { name: "新增 Skill" }).click();
+        await page.getByText("手动创建", { exact: true }).click();
+        await page.getByLabel("Skill 名称").fill(skillName);
+        await page.getByLabel("执行规则").fill("保持用户需求不变，按当前工作台能力规划并执行。");
+        await page.getByRole("button", { name: "添加并保存" }).click();
+        await expect(page.getByText("Agent Skill 已添加并保存", { exact: true })).toBeVisible();
+
+        await page.goto("/create");
+        await page.goto("/admin?section=skills");
+        await expect(page.getByText(skillName, { exact: true })).toBeVisible();
+
+        const persistedResponse = await request.get("/api/admin/settings");
+        expect(persistedResponse.ok(), await persistedResponse.text()).toBe(true);
+        const persisted = ((await persistedResponse.json()) as { settings: { agentSkills: Array<{ name?: string }> } }).settings.agentSkills;
+        expect(persisted.some((skill) => skill.name === skillName)).toBe(true);
+    } finally {
+        const restored = await request.patch("/api/admin/settings", { data: { agentSkills: before } });
+        expect(restored.ok(), await restored.text()).toBe(true);
+    }
+});
+
 test("PostgreSQL payment flow verifies missing fields, rejects trade reuse, and refunds", async ({ request }) => {
     test.skip(!process.env.VOZEB_PRO_E2E_DATABASE_URL, "需要专用 PostgreSQL E2E 数据库");
     const productResponse = await request.post("/api/admin/billing/products", {

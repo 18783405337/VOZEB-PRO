@@ -77,6 +77,7 @@ import type { AdminSetupSummary } from "@/lib/server/admin-setup-status";
 import type { PaymentConfigSummary } from "@/lib/payment-config-types";
 import type { AdminBillingSummary } from "@/lib/admin-billing-types";
 import type { Prompt } from "@/services/api/prompts";
+import { urlHostMatches, urlPathStartsWith } from "@/lib/url-host";
 
 export const settingsStatusToneClass = {
     cyan: "bg-cyan-50 text-cyan-700 ring-cyan-100 dark:bg-cyan-950/45 dark:text-cyan-200 dark:ring-cyan-900/40",
@@ -144,9 +145,9 @@ export function createSystemChannel(): SystemModelChannel {
 }
 
 export function suggestedChannelModels(channel: Pick<SystemModelChannel, "baseUrl" | "name">) {
-    const source = `${channel.name} ${channel.baseUrl}`.toLowerCase();
-    if (source.includes("globalaiopc")) return ["videos", "videos_stable", "videos_stable_fast"];
-    if (source.includes("volces.com") || source.includes("/api/plan/v3") || source.includes("seedance")) return ["doubao-seedance-1-0-lite-t2v", "doubao-seedance-1-0-lite-i2v"];
+    const name = channel.name.toLowerCase();
+    if (name.includes("globalaiopc") || urlHostMatches(channel.baseUrl, "globalaiopc.com")) return ["videos", "videos_stable", "videos_stable_fast"];
+    if (name.includes("seedance") || urlHostMatches(channel.baseUrl, "volces.com") || urlPathStartsWith(channel.baseUrl, "/api/plan/v3")) return ["doubao-seedance-1-0-lite-t2v", "doubao-seedance-1-0-lite-i2v"];
     return [];
 }
 

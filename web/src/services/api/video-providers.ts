@@ -12,6 +12,7 @@ import { buildApiUrl, modelOptionName, resolveModelRequestConfig, type AiConfig 
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 import { buildSeedanceSpecialRequest } from "@/lib/seedance-special";
+import { urlHostHasLabel, urlHostMatches } from "@/lib/url-host";
 
 import {
     type VideoResponse,
@@ -219,9 +220,8 @@ export function compatibleVideoCreatePaths(config: AiConfig, model: string) {
 export function isGlobalAiOpcVideoConfig(config: AiConfig, model: string) {
     if (config.advancedConfig?.protocol === "globalaiopc") return true;
     if (normalizeAdvancedVideoPath(config.advancedConfig?.createPath).toLowerCase().endsWith(GLOBAL_AIOPC_VIDEO_CREATE_PATH)) return true;
-    const baseUrl = config.baseUrl.toLowerCase();
     const modelName = modelOptionName(model).toLowerCase();
-    return baseUrl.includes("globalaiopc.com") || baseUrl.includes("aizfw.cn") || baseUrl.includes("kyyreactapiserver") || ["videos", "videos_stable", "videos_stable_fast"].includes(modelName);
+    return urlHostMatches(config.baseUrl, "globalaiopc.com") || urlHostMatches(config.baseUrl, "aizfw.cn") || urlHostHasLabel(config.baseUrl, "kyyreactapiserver") || ["videos", "videos_stable", "videos_stable_fast"].includes(modelName);
 }
 
 export async function pollCompatibleVideoTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {

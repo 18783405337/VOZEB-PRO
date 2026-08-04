@@ -42,4 +42,20 @@ describe("parseChannelExampleConfig", () => {
         const result = parseChannelExampleConfig('curl https://api.example.com/v1/video/generations -d {"model":"video-v1","prompt":"test","image":"https://cdn.example.com/ref.png"}', channel, advanced);
         expect(result?.patch.advancedConfig).toMatchObject({ imageToVideoPath: "/video/generations", queryPath: "/video/generations/:task_id" });
     });
+
+    it.each([
+        ["https://api.code2alita.com/v1/video/generations", "sub2api"],
+        ["https://api.globalaiopc.com/v1/video/generations", "globalaiopc"],
+        ["https://ark.cn-beijing.volces.com/api/v3/video/generations", "volcengine-video"],
+    ])("recognizes the exact provider host in %s", (url, protocol) => {
+        const channel = { id: "one", name: "测试", baseUrl: "", apiKey: "", apiFormat: "openai", models: [], enabled: false } satisfies SystemModelChannel;
+        const result = parseChannelExampleConfig(`curl ${url} -d {"model":"video-v1","prompt":"test"}`, channel, advanced);
+        expect(result?.patch.advancedConfig?.protocol).toBe(protocol);
+    });
+
+    it.each(["code2alita.com.evil.test", "globalaiopc.com.evil.test", "ark.cn-beijing.volces.com.evil.test"])("does not trust a provider name embedded in %s", (hostname) => {
+        const channel = { id: "one", name: "测试", baseUrl: "", apiKey: "", apiFormat: "openai", models: [], enabled: false } satisfies SystemModelChannel;
+        const result = parseChannelExampleConfig(`curl https://${hostname}/v1/video/generations -d {"model":"video-v1","prompt":"test"}`, channel, advanced);
+        expect(result?.patch.advancedConfig?.protocol).toBe("compatible");
+    });
 });

@@ -1,4 +1,5 @@
 import { isSeedanceVideoModelName, normalizeModelId } from "@/lib/model-capability";
+import { urlHostMatches, urlPathStartsWith } from "@/lib/url-host";
 import { modelOptionName, resolveModelChannel, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
@@ -75,8 +76,7 @@ export function isSeedanceFastModel(model: string) {
 }
 
 function isArkPlanBaseUrl(baseUrl: string) {
-    const value = baseUrl.toLowerCase();
-    return value.includes("ark.cn-beijing.volces.com/api/plan/v3") || value.includes("ark.cn-beijing.volces.com/api/v3") || value.includes("/api/plan/v3");
+    return urlHostMatches(baseUrl, "ark.cn-beijing.volces.com") && (urlPathStartsWith(baseUrl, "/api/plan/v3") || urlPathStartsWith(baseUrl, "/api/v3"));
 }
 
 export function normalizeSeedanceResolution(value: string, model = "") {

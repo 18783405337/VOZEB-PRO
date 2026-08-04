@@ -69,7 +69,7 @@ async function fetchMedia(target: URL, method: "GET" | "HEAD", range: string | n
         const response = await fetchSafeOutbound(current, {
             method,
             headers: {
-                "User-Agent": "VOZEB-PRO-Media-Proxy/0.0.4",
+                "User-Agent": "VOZEB-PRO-Media-Proxy/0.0.5",
                 ...(range ? { Range: range } : {}),
             },
             cache: "no-store",
