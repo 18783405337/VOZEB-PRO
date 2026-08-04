@@ -9,6 +9,7 @@ import { useEffect, useState } from "react";
 import { PublicWorkPreviewModal } from "@/components/works/public-work-preview-modal";
 import { PublicCreatorModal } from "@/components/works/public-creator-modal";
 import { PublicWorkLikeButton } from "@/components/works/public-work-like-button";
+import { ResponsiveMasonryGrid } from "@/components/works/responsive-masonry-grid";
 import { imagePreviewUrl } from "@/lib/media-image-url";
 import { LazyMediaImage } from "@/components/media/lazy-media-image";
 import { PublicWorkCardTitle } from "@/components/works/public-work-card-title";
@@ -99,11 +100,11 @@ export function CreateInspirationGallery({ onUsePrompt, onUseImage }: { onUsePro
                     </button>
                 </div>
             ) : items.length ? (
-                <div className="min-w-0 columns-2 gap-2 pt-3 sm:columns-3 sm:gap-3 md:columns-4 lg:columns-5 xl:columns-6" aria-label="灵感作品列表">
+                <ResponsiveMasonryGrid className="grid-cols-2 pt-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6" ariaLabel="灵感作品列表">
                     {items.map((item) => (
                         <InspirationCard key={item.slug} item={item} importing={importingSlug === item.slug} onOpen={() => setPreviewSlug(item.slug)} onOpenAuthor={setCreatorUsername} onUsePrompt={onUsePrompt} onUseImage={() => void importImage(item)} />
                     ))}
-                </div>
+                </ResponsiveMasonryGrid>
             ) : (
                 <div className="flex min-h-32 items-center justify-center border-b border-dashed border-[#e2e7eb] text-sm text-[#9aa2ad] dark:border-[#2b3037] dark:text-[#737d89]">当前分类还没有公开作品</div>
             )}
@@ -166,7 +167,7 @@ function InspirationCard({
     };
 
     return (
-        <article className="group mb-2 inline-block w-full min-w-0 break-inside-avoid overflow-hidden text-[#20242a] sm:mb-3 dark:text-[#f3f5f7]">
+        <article className="group w-full min-w-0 overflow-hidden text-[#20242a] dark:text-[#f3f5f7]">
             <div className="relative overflow-hidden rounded-lg bg-[#eef1f4] dark:bg-[#252a31]">
                 <button type="button" className="block w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6e87db]" onClick={onOpen} aria-label={`查看作品：${item.title}`} aria-haspopup="dialog">
                     {image ? (

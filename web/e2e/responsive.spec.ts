@@ -129,6 +129,107 @@ test("eight billing plans remain dense and usable across desktop and mobile", as
     if (mobile) expect(layout.tabScrollWidth).toBeGreaterThan(layout.tabViewportWidth);
 });
 
+test("inspiration works fill each row before continuing down the shortest masonry column", async ({ page }, testInfo) => {
+    await page.route("**/api/public/gallery?**", (route) =>
+        route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ code: 0, data: { items: masonryGalleryFixture() }, msg: "OK" }),
+        }),
+    );
+    await page.goto("/create", { waitUntil: "domcontentloaded" });
+
+    const grid = page.locator('[aria-label="灵感作品列表"]');
+    await expect(grid).toBeVisible();
+    await expect(grid.locator(":scope > div")).toHaveCount(8);
+    await grid.scrollIntoViewIfNeeded();
+    await expect.poll(() => grid.locator('img[alt^="瀑布流测试作品"]').evaluateAll((images) => images.every((image) => (image as HTMLImageElement).naturalWidth > 0))).toBe(true);
+
+    const viewports = testInfo.project.name === "chromium" ? [390, 430, 700, 900, 1100, 1280] : [page.viewportSize()!.width];
+    for (const width of viewports) {
+        await page.setViewportSize({ width, height: width < 640 ? 900 : 820 });
+        const expectedColumns = width >= 1280 ? 6 : width >= 1024 ? 5 : width >= 768 ? 4 : width >= 640 ? 3 : 2;
+        await expect.poll(async () => masonryLayoutIsReady(await readMasonryLayout(page), expectedColumns)).toBe(true);
+
+        const layout = await readMasonryLayout(page);
+        expect(layout.columnCount).toBe(expectedColumns);
+        expect(layout.firstRowLefts).toHaveLength(expectedColumns);
+        expect(new Set(layout.firstRowLefts).size).toBe(expectedColumns);
+        expect(layout.firstRowLefts).toEqual([...layout.firstRowLefts].sort((left, right) => left - right));
+        expect(layout.firstRowTopRange).toBeLessThanOrEqual(1);
+        expect(layout.nextItemLeft).toBe(layout.shortestColumnLeft);
+        expect(layout.nextItemTop).toBeGreaterThanOrEqual(layout.shortestColumnBottom - 1);
+        expect(layout.nextItemTop).toBeLessThanOrEqual(layout.shortestColumnBottom + layout.rowGap * 2 + 4);
+        expect(layout.documentScrollWidth).toBeLessThanOrEqual(layout.documentClientWidth + 1);
+        expect(layout.gridScrollWidth).toBeLessThanOrEqual(layout.gridClientWidth + 1);
+        expect(layout.itemsInsideGrid).toBe(true);
+    }
+});
+
+function masonryGalleryFixture() {
+    const sizes = [
+        [400, 800],
+        [400, 300],
+        [400, 600],
+        [400, 240],
+        [400, 500],
+        [400, 700],
+        [400, 360],
+        [400, 560],
+    ];
+    return sizes.map(([width, height], index) => ({
+        slug: `e2e-masonry-${index + 1}`,
+        sourceType: "media",
+        viewCount: index + 1,
+        likeCount: 0,
+        isFeatured: false,
+        publishedAt: "2026-08-04T00:00:00.000Z",
+        title: `瀑布流测试作品 ${index + 1}`,
+        description: "",
+        publicPrompt: `masonry fixture ${index + 1}`,
+        category: "视觉设计",
+        tags: [],
+        authorName: "E2E",
+        preview: {
+            id: `e2e-preview-${index + 1}`,
+            mediaType: "image",
+            mimeType: "image/svg+xml",
+            url: `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="hsl(${index * 42} 55% 58%)"/></svg>`)}`,
+        },
+    }));
+}
+
+async function readMasonryLayout(page: import("@playwright/test").Page) {
+    return page.evaluate(() => {
+        const grid = document.querySelector<HTMLElement>('[aria-label="灵感作品列表"]')!;
+        const gridBounds = grid.getBoundingClientRect();
+        const items = [...grid.children].map((item) => (item.firstElementChild as HTMLElement).getBoundingClientRect());
+        const columnCount = getComputedStyle(grid).gridTemplateColumns.trim().split(/\s+/).filter(Boolean).length;
+        const firstRow = items.slice(0, columnCount);
+        const shortestColumn = firstRow.reduce((shortest, item) => (item.bottom < shortest.bottom ? item : shortest));
+        const nextItem = items[columnCount];
+        return {
+            columnCount,
+            firstRowLefts: firstRow.map((item) => Math.round(item.left)),
+            firstRowTopRange: Math.max(...firstRow.map((item) => item.top)) - Math.min(...firstRow.map((item) => item.top)),
+            shortestColumnLeft: Math.round(shortestColumn.left),
+            shortestColumnBottom: shortestColumn.bottom,
+            nextItemLeft: Math.round(nextItem.left),
+            nextItemTop: nextItem.top,
+            rowGap: Number.parseFloat(getComputedStyle(grid).rowGap) || 0,
+            documentClientWidth: document.documentElement.clientWidth,
+            documentScrollWidth: document.documentElement.scrollWidth,
+            gridClientWidth: grid.clientWidth,
+            gridScrollWidth: grid.scrollWidth,
+            itemsInsideGrid: items.every((item) => item.left >= gridBounds.left - 1 && item.right <= gridBounds.right + 1),
+        };
+    });
+}
+
+function masonryLayoutIsReady(layout: Awaited<ReturnType<typeof readMasonryLayout>>, expectedColumns: number) {
+    return layout.columnCount === expectedColumns && layout.firstRowLefts.length === expectedColumns && new Set(layout.firstRowLefts).size === expectedColumns && layout.firstRowTopRange <= 1 && layout.nextItemLeft === layout.shortestColumnLeft;
+}
+
 function billingProductsFixture() {
     const timestamp = "2026-08-02T00:00:00.000Z";
     return Array.from({ length: 8 }, (_, index) => ({

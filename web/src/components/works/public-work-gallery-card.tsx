@@ -22,7 +22,7 @@ export function PublicWorkGalleryCard({ item, nextPath, onOpen, onOpenAuthor }: 
     );
 
     return (
-        <article className="group mb-2 inline-block w-full min-w-0 break-inside-avoid overflow-hidden text-left text-foreground sm:mb-3">
+        <article className="group w-full min-w-0 overflow-hidden text-left text-foreground">
             <button type="button" className="relative block w-full overflow-hidden rounded-lg bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={onOpen} aria-label={`查看作品：${item.title}`} aria-haspopup="dialog">
                 {item.preview?.mediaType === "image" ? (
                     <LazyMediaImage src={imagePreviewUrl(item.preview.url, 640)} alt={item.title} containerClassName="w-full rounded-lg" imageClassName="block h-auto w-full group-hover:scale-[1.015]" />

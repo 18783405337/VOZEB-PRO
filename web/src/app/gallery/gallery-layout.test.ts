@@ -4,11 +4,12 @@ import { describe, expect, it } from "vitest";
 
 describe("gallery surfaces", () => {
     it("keeps the public and workspace routes on one shared gallery view", async () => {
-        const [publicPage, communityPage, sharedView, galleryCard, themeToggle, publishLink, lazyImage] = await Promise.all([
+        const [publicPage, communityPage, sharedView, galleryCard, masonryGrid, themeToggle, publishLink, lazyImage] = await Promise.all([
             readFile(resolve(process.cwd(), "src/app/gallery/page.tsx"), "utf8"),
             readFile(resolve(process.cwd(), "src/app/(user)/community/page.tsx"), "utf8"),
             readFile(resolve(process.cwd(), "src/app/gallery/gallery-view.tsx"), "utf8"),
             readFile(resolve(process.cwd(), "src/components/works/public-work-gallery-card.tsx"), "utf8"),
+            readFile(resolve(process.cwd(), "src/components/works/responsive-masonry-grid.tsx"), "utf8"),
             readFile(resolve(process.cwd(), "src/app/gallery/gallery-theme-toggle.tsx"), "utf8"),
             readFile(resolve(process.cwd(), "src/app/gallery/gallery-publish-link.tsx"), "utf8"),
             readFile(resolve(process.cwd(), "src/components/media/lazy-media-image.tsx"), "utf8"),
@@ -24,11 +25,16 @@ describe("gallery surfaces", () => {
         expect(sharedView).toContain("WORK_CATEGORY_OPTIONS.map");
         expect(sharedView).toContain("action={basePath}");
         expect(sharedView).toContain('aria-label="作品分类"');
-        expect(sharedView).toContain("columns-2");
-        expect(sharedView).toContain("sm:columns-3");
-        expect(sharedView).toContain("md:columns-4");
-        expect(sharedView).toContain("lg:columns-5");
-        expect(sharedView).toContain("2xl:columns-6");
+        expect(sharedView).toContain("<ResponsiveMasonryGrid");
+        expect(sharedView).toContain("grid-cols-2");
+        expect(sharedView).toContain("sm:grid-cols-3");
+        expect(sharedView).toContain("md:grid-cols-4");
+        expect(sharedView).toContain("lg:grid-cols-5");
+        expect(sharedView).toContain("2xl:grid-cols-6");
+        expect(sharedView).not.toContain("columns-2");
+        expect(masonryGrid).toContain("Children.map");
+        expect(masonryGrid).toContain("ResizeObserver");
+        expect(masonryGrid).toContain("gridRowEnd");
         expect(sharedView).not.toContain("max-h-[640px]");
         expect(sharedView).toContain("galleryFilterHref(basePath");
         expect(sharedView).toContain("发布第一个作品");

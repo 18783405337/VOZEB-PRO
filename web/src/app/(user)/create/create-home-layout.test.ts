@@ -29,8 +29,10 @@ describe("create Agent home layout", () => {
         expect(inspiration).toContain("复制提示词");
         expect(inspiration).toContain("使用图片");
         expect(inspiration).toContain("listPublicGallery");
-        expect(inspiration).toContain("columns-2");
-        expect(inspiration).toContain("xl:columns-6");
+        expect(inspiration).toContain("<ResponsiveMasonryGrid");
+        expect(inspiration).toContain("grid-cols-2");
+        expect(inspiration).toContain("xl:grid-cols-6");
+        expect(inspiration).not.toContain("columns-2");
         expect(inspiration).not.toContain("max-h-[560px]");
         expect(inspiration).toContain("<Dropdown");
         expect(inspiration).toContain("<PublicWorkPreviewModal");
