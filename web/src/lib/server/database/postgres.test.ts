@@ -79,6 +79,11 @@ describe("PostgreSQL schema lifecycle", () => {
         expect(ddl).toContain("CREATE TABLE IF NOT EXISTS vozeb_pro_tenant_members");
         expect(ddl).toContain("CREATE UNIQUE INDEX IF NOT EXISTS vozeb_pro_tenant_domains_hostname_lower_idx");
         expect(ddl).toContain("VALUES ('default', 'default', '默认租户', 'active')");
+        expect(ddl).toContain("CONSTRAINT vozeb_pro_tenant_roles_tenant_id_id_key UNIQUE (tenant_id, id)");
+        expect(ddl).toContain("CONSTRAINT vozeb_pro_tenant_members_tenant_role_fkey");
+        expect(ddl).toContain("conrelid = 'vozeb_pro_tenant_roles'::regclass");
+        expect(ddl).toContain("conrelid = 'vozeb_pro_tenant_role_permissions'::regclass");
+        expect(ddl).toContain("conrelid = 'vozeb_pro_tenant_members'::regclass");
         expect(ddl).toContain("CREATE TRIGGER vozeb_pro_tenants_set_updated_at BEFORE UPDATE ON vozeb_pro_tenants FOR EACH ROW EXECUTE FUNCTION vozeb_pro_set_updated_at()");
         expect(ddl).toContain("'review_pending', 'reviewing', 'review_unavailable'");
         expect(ddl).toContain("task_type = 'agent' AND status = 'success' AND execution_phase IN ('review_pending', 'reviewing')");

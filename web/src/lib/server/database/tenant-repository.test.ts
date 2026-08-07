@@ -115,6 +115,73 @@ describe("TenantRepository", () => {
         expect(query).toHaveBeenCalledWith(expect.stringContaining("tm.tenant_id = $1 AND tm.user_id = $2"), ["tenant-a", "user-one"]);
     });
 
+    it("scopes role lookups and lists to the resolved tenant", async () => {
+        const query = vi.fn().mockResolvedValue(queryResult());
+        const repository = new TenantRepository({ query } as unknown as QueryExecutor);
+
+        await repository.getRole("tenant-a", "role-one");
+        await repository.listRoles("tenant-a");
+
+        expect(query.mock.calls[0]).toEqual([expect.stringContaining("tr.tenant_id = $1 AND tr.id = $2"), ["tenant-a", "role-one"]]);
+        expect(query.mock.calls[1]).toEqual([expect.stringContaining("WHERE tr.tenant_id = $1"), ["tenant-a"]]);
+    });
+
+    it("creates a tenant role and its permissions in one transaction", async () => {
+        const timestamp = "2026-08-07T00:00:00.000Z";
+        const query = vi
+            .fn()
+            .mockResolvedValueOnce(
+                queryResult([
+                    {
+                        id: "role-editor",
+                        tenant_id: "tenant-a",
+                        key: "editor",
+                        name: "Editor",
+                        system: false,
+                        created_at: timestamp,
+                        updated_at: timestamp,
+                    },
+                ]),
+            )
+            .mockResolvedValueOnce(queryResult());
+        const transaction = vi.fn(async (handler: Parameters<TenantTransactionRunner>[0]) => handler({ query } as unknown as QueryExecutor));
+        const repository = new TenantRepository({ query: vi.fn() } as unknown as QueryExecutor, transaction as unknown as TenantTransactionRunner);
+
+        await expect(
+            repository.createRole({
+                id: "role-editor",
+                tenantId: "tenant-a",
+                key: "editor",
+                name: "Editor",
+                permissions: ["tenant.apps.read", "tenant.apps.configure"],
+            }),
+        ).resolves.toMatchObject({
+            id: "role-editor",
+            tenantId: "tenant-a",
+            key: "editor",
+            permissions: ["tenant.apps.read", "tenant.apps.configure"],
+        });
+        expect(transaction).toHaveBeenCalledTimes(1);
+        expect(query.mock.calls[0]?.[0]).toContain("INSERT INTO tenant_roles");
+        expect(query.mock.calls[1]?.[0]).toContain("INSERT INTO tenant_role_permissions");
+        expect(query.mock.calls[1]?.[1]).toEqual(["tenant-a", "role-editor", ["tenant.apps.read", "tenant.apps.configure"]]);
+    });
+
+    it("rejects permissions outside the tenant permission catalog before opening a transaction", async () => {
+        const transaction = vi.fn();
+        const repository = new TenantRepository({ query: vi.fn() } as unknown as QueryExecutor, transaction as unknown as TenantTransactionRunner);
+
+        await expect(
+            repository.createRole({
+                tenantId: "tenant-a",
+                key: "admin",
+                name: "Admin",
+                permissions: ["platform.tenants.manage"],
+            }),
+        ).rejects.toThrow("Unsupported tenant permission");
+        expect(transaction).not.toHaveBeenCalled();
+    });
+
     it("looks up verified hostnames without hiding disabled tenants from context checks", async () => {
         const timestamp = "2026-08-07T00:00:00.000Z";
         const query = vi.fn().mockResolvedValue(

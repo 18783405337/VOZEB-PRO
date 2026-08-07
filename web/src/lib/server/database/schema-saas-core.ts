@@ -39,27 +39,69 @@ CREATE TABLE IF NOT EXISTS tenant_roles (
     system boolean NOT NULL DEFAULT false,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT tenant_roles_tenant_id_id_key UNIQUE (tenant_id, id),
     UNIQUE (tenant_id, key)
 );
 
 CREATE TABLE IF NOT EXISTS tenant_role_permissions (
     tenant_id text NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-    role_id text NOT NULL REFERENCES tenant_roles(id) ON DELETE CASCADE,
+    role_id text NOT NULL,
     permission text NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY (tenant_id, role_id, permission)
+    PRIMARY KEY (tenant_id, role_id, permission),
+    CONSTRAINT tenant_role_permissions_tenant_role_fkey
+        FOREIGN KEY (tenant_id, role_id)
+        REFERENCES tenant_roles(tenant_id, id)
+        ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS tenant_members (
     tenant_id text NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    role_id text NOT NULL REFERENCES tenant_roles(id),
+    role_id text NOT NULL,
     status text NOT NULL DEFAULT 'active',
     joined_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (tenant_id, user_id),
-    CONSTRAINT tenant_members_status CHECK (status IN ('active', 'disabled'))
+    CONSTRAINT tenant_members_status CHECK (status IN ('active', 'disabled')),
+    CONSTRAINT tenant_members_tenant_role_fkey
+        FOREIGN KEY (tenant_id, role_id)
+        REFERENCES tenant_roles(tenant_id, id)
 );
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'tenant_roles_tenant_id_id_key'
+          AND conrelid = 'tenant_roles'::regclass
+    ) THEN
+        ALTER TABLE tenant_roles
+            ADD CONSTRAINT tenant_roles_tenant_id_id_key UNIQUE (tenant_id, id);
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'tenant_role_permissions_tenant_role_fkey'
+          AND conrelid = 'tenant_role_permissions'::regclass
+    ) THEN
+        ALTER TABLE tenant_role_permissions
+            ADD CONSTRAINT tenant_role_permissions_tenant_role_fkey
+            FOREIGN KEY (tenant_id, role_id)
+            REFERENCES tenant_roles(tenant_id, id)
+            ON DELETE CASCADE;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'tenant_members_tenant_role_fkey'
+          AND conrelid = 'tenant_members'::regclass
+    ) THEN
+        ALTER TABLE tenant_members
+            ADD CONSTRAINT tenant_members_tenant_role_fkey
+            FOREIGN KEY (tenant_id, role_id)
+            REFERENCES tenant_roles(tenant_id, id);
+    END IF;
+END;
+$$;
 
 INSERT INTO tenant_roles (id, tenant_id, key, name, system)
 VALUES

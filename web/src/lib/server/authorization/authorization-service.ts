@@ -23,14 +23,19 @@ export async function requirePlatformPermission(request: Request, permission: Pl
     return { user, permission };
 }
 
-export async function requireTenantPermission(request: Request, permission: TenantPermission) {
+export async function requireTenantMembership(request: Request) {
     const user = await getCurrentUser(request);
     if (!user) throw new AuthorizationError("请先登录", 401, "auth.required");
 
     const context = await getTenantContext(request, { user, requireMembership: true });
-    const member = context.member;
+    return { user, ...context };
+}
+
+export async function requireTenantPermission(request: Request, permission: TenantPermission) {
+    const authorization = await requireTenantMembership(request);
+    const member = authorization.member;
     const allowed = member?.status === "active" && (member.roleKey === "owner" || member.permissions.includes(permission));
     if (!allowed) throw new AuthorizationError("租户权限不足", 403, "tenant.permission_denied");
 
-    return { user, ...context, permission };
+    return { ...authorization, permission };
 }

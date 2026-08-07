@@ -37,6 +37,17 @@ export type TenantMemberRecord = {
     updatedAt: string;
 };
 
+export type TenantRoleRecord = {
+    id: string;
+    tenantId: string;
+    key: string;
+    name: string;
+    system: boolean;
+    permissions: string[];
+    createdAt: string;
+    updatedAt: string;
+};
+
 export type CreateTenantWithOwnerInput = {
     id?: string;
     slug: string;
@@ -52,6 +63,14 @@ export type AddTenantMemberInput = {
     userId: string;
     roleId: string;
     status?: TenantMemberStatus;
+};
+
+export type CreateTenantRoleInput = {
+    id?: string;
+    tenantId: string;
+    key: string;
+    name: string;
+    permissions: readonly string[];
 };
 
 export type TenantListOptions = {

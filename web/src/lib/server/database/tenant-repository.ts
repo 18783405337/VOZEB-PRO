@@ -2,11 +2,12 @@ import { randomUUID } from "node:crypto";
 
 import { TENANT_PERMISSIONS } from "@/lib/server/authorization/permission-catalog";
 import type { QueryExecutor } from "@/lib/server/database/postgres";
-import type { AddTenantMemberInput, CreateTenantWithOwnerInput, TenantListOptions, TenantListResult, TenantMemberRecord, TenantMemberStatus, TenantRecord, TenantStatus } from "@/lib/server/tenant/tenant-types";
+import type { AddTenantMemberInput, CreateTenantRoleInput, CreateTenantWithOwnerInput, TenantListOptions, TenantListResult, TenantMemberRecord, TenantMemberStatus, TenantRecord, TenantRoleRecord, TenantStatus } from "@/lib/server/tenant/tenant-types";
 
 import { isoValue, optionalString, stringValue } from "./repository-shared";
 
 export const DEFAULT_TENANT_OWNER_PERMISSIONS = TENANT_PERMISSIONS;
+const TENANT_PERMISSION_SET = new Set<string>(TENANT_PERMISSIONS);
 
 export type TenantTransactionRunner = <T>(handler: (executor: QueryExecutor) => Promise<T>) => Promise<T>;
 
@@ -153,6 +154,66 @@ export class TenantRepository {
         return result.rows.map(mapTenantMember);
     }
 
+    async getRole(tenantId: string, roleId: string): Promise<TenantRoleRecord | null> {
+        const result = await this.db.query(
+            `SELECT tr.*,
+                    coalesce(array_agg(DISTINCT trp.permission ORDER BY trp.permission) FILTER (WHERE trp.permission IS NOT NULL), '{}'::text[]) AS permissions
+             FROM tenant_roles tr
+             LEFT JOIN tenant_role_permissions trp ON trp.role_id = tr.id AND trp.tenant_id = tr.tenant_id
+             WHERE tr.tenant_id = $1 AND tr.id = $2
+             GROUP BY tr.id, tr.tenant_id, tr.key, tr.name, tr.system, tr.created_at, tr.updated_at`,
+            [tenantId, roleId],
+        );
+        return result.rows[0] ? mapTenantRole(result.rows[0]) : null;
+    }
+
+    async listRoles(tenantId: string): Promise<TenantRoleRecord[]> {
+        const result = await this.db.query(
+            `SELECT tr.*,
+                    coalesce(array_agg(DISTINCT trp.permission ORDER BY trp.permission) FILTER (WHERE trp.permission IS NOT NULL), '{}'::text[]) AS permissions
+             FROM tenant_roles tr
+             LEFT JOIN tenant_role_permissions trp ON trp.role_id = tr.id AND trp.tenant_id = tr.tenant_id
+             WHERE tr.tenant_id = $1
+             GROUP BY tr.id, tr.tenant_id, tr.key, tr.name, tr.system, tr.created_at, tr.updated_at
+             ORDER BY tr.system DESC, tr.name ASC, tr.key ASC`,
+            [tenantId],
+        );
+        return result.rows.map(mapTenantRole);
+    }
+
+    async createRole(input: CreateTenantRoleInput): Promise<TenantRoleRecord> {
+        const id = input.id?.trim() || randomUUID();
+        const tenantId = requiredText(input.tenantId, "Tenant id");
+        const key = requiredText(input.key, "Tenant role key").toLowerCase();
+        const name = requiredText(input.name, "Tenant role name");
+        const permissions = [...new Set(input.permissions.map((permission) => permission.trim()).filter(Boolean))];
+        if (permissions.some((permission) => !TENANT_PERMISSION_SET.has(permission))) {
+            throw new Error("Unsupported tenant permission");
+        }
+
+        return this.transaction(async (executor) => {
+            const result = await executor.query(
+                `INSERT INTO tenant_roles (id, tenant_id, key, name, system)
+                 VALUES ($1, $2, $3, $4, false)
+                 RETURNING *`,
+                [id, tenantId, key, name],
+            );
+            const role = result.rows[0];
+            if (!role) throw new Error("Tenant role creation did not return a record");
+
+            if (permissions.length) {
+                await executor.query(
+                    `INSERT INTO tenant_role_permissions (tenant_id, role_id, permission)
+                     SELECT $1, $2, permission
+                     FROM unnest($3::text[]) AS permission`,
+                    [tenantId, id, permissions],
+                );
+            }
+
+            return mapTenantRole({ ...role, permissions });
+        });
+    }
+
     async addMember(input: AddTenantMemberInput): Promise<TenantMemberRecord> {
         const status = input.status || "active";
         const result = await this.db.query(
@@ -196,6 +257,19 @@ function mapTenantMember(row: Record<string, unknown>): TenantMemberRecord {
         status: tenantMemberStatusValue(row.status),
         permissions: stringArrayValue(row.permissions),
         joinedAt: isoValue(row.joined_at),
+        updatedAt: isoValue(row.updated_at),
+    };
+}
+
+function mapTenantRole(row: Record<string, unknown>): TenantRoleRecord {
+    return {
+        id: stringValue(row.id),
+        tenantId: stringValue(row.tenant_id),
+        key: stringValue(row.key),
+        name: stringValue(row.name),
+        system: Boolean(row.system),
+        permissions: stringArrayValue(row.permissions),
+        createdAt: isoValue(row.created_at),
         updatedAt: isoValue(row.updated_at),
     };
 }

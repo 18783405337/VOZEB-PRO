@@ -13,7 +13,7 @@ vi.mock("@/lib/server/tenant/tenant-context", () => ({
     getTenantContext: mocks.getTenantContext,
 }));
 
-import { requirePlatformPermission, requireTenantPermission } from "./authorization-service";
+import { requirePlatformPermission, requireTenantMembership, requireTenantPermission } from "./authorization-service";
 
 function request() {
     return new Request("https://tenant.example.com/api/apps");
@@ -78,6 +78,19 @@ describe("authorization guards", () => {
             user,
         });
         expect(mocks.getTenantContext).toHaveBeenCalledWith(expect.any(Request), { user, requireMembership: true });
+    });
+
+    it("returns an active tenant membership without requiring a management permission", async () => {
+        const user = { id: "user-one", role: "user" };
+        const context = {
+            tenant: { id: "tenant-a", status: "active" },
+            source: "domain",
+            member: { roleKey: "member", status: "active", permissions: [] },
+        };
+        mocks.getCurrentUser.mockResolvedValue(user);
+        mocks.getTenantContext.mockResolvedValue(context);
+
+        await expect(requireTenantMembership(request())).resolves.toEqual({ user, ...context });
     });
 
     it("allows tenant owners to use any tenant permission", async () => {
