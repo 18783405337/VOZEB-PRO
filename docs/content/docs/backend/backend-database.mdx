@@ -44,6 +44,10 @@ VOZEB PRO 的 PostgreSQL 真实表名统一使用项目名前缀 `vozeb_pro_`。
 - `vozeb_pro_entitlement_plans`：商业套餐权益、每日额度、调用限制和功能标记；新用户不再通过套餐获得注册初始积分。
 - `vozeb_pro_users`：用户账号、角色、状态、头像存储键、最多 160 字的个人简介、当前套餐、积分余额和密码哈希；公开创作者接口只按用户名返回允许公开的资料字段，不暴露邮箱和内部用户 ID。
 - `vozeb_pro_sessions`：登录会话 token 哈希和过期时间。
+- `vozeb_pro_tenants`：租户基础信息、稳定 slug、启停状态、所有者引用和租户级设置；初始化 Schema 时创建固定 `default` 租户，承接现有单租户数据。
+- `vozeb_pro_tenant_domains`：租户自定义域名或子域名、验证令牌、验证状态和验证时间；主机名按忽略大小写唯一。
+- `vozeb_pro_tenant_roles` / `vozeb_pro_tenant_role_permissions`：租户内角色和权限集合；默认租户初始化 `owner` 与 `member` 两个系统角色。
+- `vozeb_pro_tenant_members`：用户与租户的成员关系、租户角色和成员状态；初始化 Schema 时把现有管理员映射为默认租户所有者，其他用户映射为默认成员。
 - `vozeb_pro_account_deletion_requests`：账号注销申请、用户资料快照、申请状态、管理员处理备注与处理人快照；同一用户同一时间只能存在一条待处理申请，受理不会自动停用账号或删除业务数据。
 - `vozeb_pro_rate_limits`：PostgreSQL 多实例共享的接口限流窗口，保存哈希后的业务键、原子请求计数和重置时间；数据库不可用时服务端临时退回进程内保护。
 - `vozeb_pro_email_codes`：注册、换绑邮箱、找回密码验证码及失败尝试次数。

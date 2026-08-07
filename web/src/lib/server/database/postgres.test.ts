@@ -75,11 +75,16 @@ describe("PostgreSQL schema lifecycle", () => {
         expect(ddl).toContain("conflict_count integer NOT NULL DEFAULT 0");
         expect(ddl).toContain("user_id text NOT NULL REFERENCES vozeb_pro_users(id) ON DELETE CASCADE");
         expect(ddl).toContain("CREATE TABLE IF NOT EXISTS vozeb_pro_account_deletion_requests");
+        expect(ddl).toContain("CREATE TABLE IF NOT EXISTS vozeb_pro_tenants");
+        expect(ddl).toContain("CREATE TABLE IF NOT EXISTS vozeb_pro_tenant_members");
+        expect(ddl).toContain("CREATE UNIQUE INDEX IF NOT EXISTS vozeb_pro_tenant_domains_hostname_lower_idx");
+        expect(ddl).toContain("VALUES ('default', 'default', '默认租户', 'active')");
+        expect(ddl).toContain("CREATE TRIGGER vozeb_pro_tenants_set_updated_at BEFORE UPDATE ON vozeb_pro_tenants FOR EACH ROW EXECUTE FUNCTION vozeb_pro_set_updated_at()");
         expect(ddl).toContain("'review_pending', 'reviewing', 'review_unavailable'");
         expect(ddl).toContain("task_type = 'agent' AND status = 'success' AND execution_phase IN ('review_pending', 'reviewing')");
 
         const tableNames = [...ddl.matchAll(/CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+([a-z][a-z0-9_]*)/gi)].map((match) => match[1]).sort();
-        expect(tableNames).toHaveLength(59);
+        expect(tableNames).toHaveLength(64);
         expect(tableNames.every((name) => name.startsWith("vozeb_pro_"))).toBe(true);
         expect(tableNames).not.toContain("vozeb_pro_check_ins");
         expect(ddl).toContain("DROP TABLE IF EXISTS vozeb_pro_check_ins");
@@ -88,6 +93,10 @@ describe("PostgreSQL schema lifecycle", () => {
         const indexNames = [...ddl.matchAll(/CREATE\s+(?:UNIQUE\s+)?INDEX(?:\s+IF\s+NOT\s+EXISTS)?\s+([a-z][a-z0-9_]*)/gi)].map((match) => match[1]);
         expect(indexNames.length).toBeGreaterThan(0);
         expect(indexNames.every((name) => name.startsWith("vozeb_pro_"))).toBe(true);
+
+        expect(ddl).toContain("CREATE TRIGGER vozeb_pro_tenant_domains_set_updated_at");
+        expect(ddl).toContain("CREATE TRIGGER vozeb_pro_tenant_roles_set_updated_at");
+        expect(ddl).toContain("CREATE TRIGGER vozeb_pro_tenant_members_set_updated_at");
 
         const uniqueConstraintNames = [...ddl.matchAll(/CONSTRAINT\s+([a-z][a-z0-9_]*)\s+UNIQUE\b/gi)].map((match) => match[1]);
         expect(uniqueConstraintNames.length).toBeGreaterThan(0);
