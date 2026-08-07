@@ -18,6 +18,7 @@ data/
 .DS_Store
 .idea
 .codex/
+.worktrees/
 .trellis/
 .agents/
 skills-lock.json
