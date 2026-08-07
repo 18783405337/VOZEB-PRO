@@ -31,7 +31,7 @@ export async function GET(request: Request, context: RouteContext) {
     const executionPhase = schedule?.executionPhase || settledExecutionPhase(task.status);
     if (((task.status === "pending" || task.status === "running") && executionPhase !== "needs_review") || (task.status === "cancelled" && (executionPhase === "cancel_requested" || executionPhase === "cancel_polling"))) {
         const origin = resolveInternalOrigin(new URL(request.url).origin);
-        after(() => runGenerationTaskRecoveryBatch({ origin, cookie: request.headers.get("cookie") || "", limit: 1, taskIds: [task.id] }));
+        after(() => runGenerationTaskRecoveryBatch({ origin, cookie: request.headers.get("cookie") || "", limit: 1, taskIds: [task.id], tenantId }));
     }
 
     const shouldRefund = Boolean(task.billing?.pointsRecordId && !task.billing.refunded && task.status === "error");
@@ -65,6 +65,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     const target: GenerationCancellationTarget = {
         type: "text",
         taskId: task.id,
+        tenantId,
         userId: task.userId,
         executionPhase,
         upstreamTaskId: task.upstream?.id,
@@ -74,7 +75,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     const cancelled = await transitionTextTask(task, ["pending", "running"], { status: "cancelled", error: "任务已取消", messages: [] }, cancellationExecutionPatch(target));
     if (!cancelled) return NextResponse.json({ error: "当前任务无法取消" }, { status: 409 });
     const origin = resolveInternalOrigin(new URL(request.url).origin);
-    after(() => runGenerationTaskRecoveryBatch({ origin, limit: 1, taskIds: [task.id] }));
+    after(() => runGenerationTaskRecoveryBatch({ origin, limit: 1, taskIds: [task.id], tenantId }));
     const refreshedUser = await getCurrentUser(request);
     return NextResponse.json({ task: { id: cancelled.id, status: cancelled.status, model: generationModelId(cancelled.config), result: cancelled.result, error: cancelled.error } }, { headers: pointsResponseHeaders(refreshedUser) });
 }

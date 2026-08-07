@@ -36,6 +36,7 @@ function taskSummary(record: StoredGenerationTaskRecord, user?: { accountId: str
     const pointsCost = generationTaskPointsCost(payload);
     return {
         id: record.id,
+        tenantId: record.tenantId,
         userId: record.userId,
         accountId: user?.accountId,
         username: user?.username || "",

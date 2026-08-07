@@ -4,6 +4,7 @@ import type { GenerationTaskExecutionPhase } from "@/lib/server/generation-task-
 
 export type AdminGenerationTask = {
     id: string;
+    tenantId: string;
     userId: string;
     accountId?: string;
     username: string;

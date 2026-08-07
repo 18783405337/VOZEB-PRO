@@ -84,7 +84,12 @@ describe("image task runtime submission safety", () => {
         expect(state.config.channelId).toBe("channel-two");
         expect(state.candidateConfigs).toEqual([]);
         expect(state.attempts?.map(({ status }) => status)).toEqual(["failed", "running"]);
-        expect(mocks.schedule).toHaveBeenLastCalledWith("image", "image-one", expect.objectContaining({ channelId: "channel-two", provider: "gemini" }));
+        expect(mocks.schedule).toHaveBeenLastCalledWith(
+            "image",
+            "image-one",
+            expect.objectContaining({ channelId: "channel-two", provider: "gemini" }),
+            { tenantId: "tenant-one" },
+        );
     });
 
     it("does not switch candidates when the submission outcome is unknown", async () => {
@@ -145,7 +150,7 @@ describe("image task runtime submission safety", () => {
         if (step.state !== "result_ready") throw new Error("image result was not ready");
         await expect(persistImageTaskResult(state, "http://internal", step.resultUrl)).resolves.toMatchObject({ status: "success" });
 
-        expect(mocks.mediaHeaders).toHaveBeenCalledWith({ userId: "user-one", taskType: "image", taskId: "image-one", channelId: "channel-one", upstreamModel: "image-one", url: remoteUrl });
+        expect(mocks.mediaHeaders).toHaveBeenCalledWith({ tenantId: "tenant-one", userId: "user-one", taskType: "image", taskId: "image-one", channelId: "channel-one", upstreamModel: "image-one", url: remoteUrl });
         expect(mocks.inlineResult).toHaveBeenCalledWith(proxyUrl, "http://internal", "worker-context", remoteUrl, { "x-media-auth": "signed" });
         expect(mocks.directResult).not.toHaveBeenCalled();
     });
@@ -190,6 +195,7 @@ function imageTask(): ImageTask {
     const second = { baseUrl: "https://two.example", apiKey: "two", apiFormat: "gemini" as const, model: "image-two", channelId: "channel-two" };
     return {
         id: "image-one",
+        tenantId: "tenant-one",
         userId: "user-one",
         username: "user",
         displayName: "User",

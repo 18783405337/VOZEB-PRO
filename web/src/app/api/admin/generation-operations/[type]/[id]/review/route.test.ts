@@ -33,15 +33,24 @@ describe("admin generation task review route", () => {
         mocks.getCurrentUser.mockResolvedValue({ id: "admin-one", role: "admin" });
         mocks.review.mockResolvedValue({ action: "resume_upstream", executionPhase: "submitted" });
 
-        const response = await POST(request({ action: "resume_upstream", upstreamTaskId: "upstream-one" }), context("video", "task-one"));
+        const response = await POST(request({ action: "resume_upstream", upstreamTaskId: "upstream-one", tenantId: "tenant-one" }), context("video", "task-one"));
 
         expect(response.status).toBe(200);
         expect(mocks.review).toHaveBeenCalledWith("video", "task-one", {
             action: "resume_upstream",
             upstreamTaskId: "upstream-one",
             origin: "http://internal",
-        });
+        }, "tenant-one");
         await expect(response.json()).resolves.toMatchObject({ code: 0, data: { executionPhase: "submitted" } });
+    });
+
+    it("requires an explicit tenant for a platform review", async () => {
+        mocks.getCurrentUser.mockResolvedValue({ id: "admin-one", role: "admin" });
+
+        const response = await POST(request({ action: "confirm_failed" }), context("audio", "task-one"));
+
+        expect(response.status).toBe(400);
+        expect(mocks.review).not.toHaveBeenCalled();
     });
 });
 

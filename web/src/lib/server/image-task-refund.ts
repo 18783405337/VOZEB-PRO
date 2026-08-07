@@ -8,8 +8,8 @@ export async function refundImageTask(task: ImageTask) {
     if ((task.status !== "error" && task.status !== "cancelled") || !billing?.pointsRecordId || billing.refunded) return task;
     const settings = await getAuthSettings();
     await refundUserPoints(task.userId, generationModelId(task.config), billing.pointsCost, "image", imageUnits(task.config.quality, settings.generationPointMultipliers.imageQuality), imageTaskRefundIdempotencyKey(task), billing.pointsRecordId);
-    await updateImageTask(task.id, { billing: { ...billing, refunded: true } });
-    return (await getImageTask(task.id)) || task;
+    await updateImageTask(task.id, { billing: { ...billing, refunded: true } }, task.tenantId);
+    return (await getImageTask(task.id, task.tenantId)) || task;
 }
 
 export function imageTaskRefundIdempotencyKey(task: Pick<ImageTask, "id" | "attemptNo">) {

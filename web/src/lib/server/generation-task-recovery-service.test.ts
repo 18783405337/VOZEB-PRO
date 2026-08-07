@@ -88,7 +88,7 @@ describe("generation task recovery service", () => {
         const result = await runGenerationTaskRecoveryBatch({ origin: "http://internal", workerId: "worker-one" });
 
         expect(mocks.executeAgentRun).toHaveBeenCalledWith(run, "http://internal", "worker-context:user-one");
-        expect(mocks.release).toHaveBeenCalledWith("agent", "agent-one", "worker-one", expect.objectContaining({ executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "completed" }));
+        expect(mocks.release).toHaveBeenCalledWith("agent", "agent-one", "worker-one", expect.objectContaining({ executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "completed" }), { tenantId: "tenant-one" });
         expect(result).toMatchObject({ claimed: 1, completed: 1 });
     });
 
@@ -99,7 +99,7 @@ describe("generation task recovery service", () => {
         const result = await runGenerationTaskRecoveryBatch({ origin: "http://internal", workerId: "worker-one" });
 
         expect(mocks.executeAgentRun).not.toHaveBeenCalled();
-        expect(mocks.release).toHaveBeenCalledWith("agent", "agent-one", "worker-one", expect.objectContaining({ executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "paused" }));
+        expect(mocks.release).toHaveBeenCalledWith("agent", "agent-one", "worker-one", expect.objectContaining({ executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "paused" }), { tenantId: "tenant-one" });
         expect(result).toMatchObject({ claimed: 1, failed: 1 });
     });
 
@@ -113,7 +113,7 @@ describe("generation task recovery service", () => {
 
         expect(mocks.executeAgentRun).not.toHaveBeenCalled();
         expect(mocks.processAgentRunReview).toHaveBeenCalledWith(run, "http://internal", "worker-context:user-one");
-        expect(mocks.release).toHaveBeenCalledWith("agent", "agent-one", "worker-one", { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "review_completed" });
+        expect(mocks.release).toHaveBeenCalledWith("agent", "agent-one", "worker-one", { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "review_completed" }, { tenantId: "tenant-one" });
         expect(result).toMatchObject({ claimed: 1, completed: 1 });
     });
 
@@ -132,7 +132,7 @@ describe("generation task recovery service", () => {
         const result = await runGenerationTaskRecoveryBatch({ origin: "http://internal", workerId: "worker-one" });
 
         expect(mocks.claim).toHaveBeenNthCalledWith(2, expect.objectContaining({ workerId: "worker-one:children", taskIds: ["child-one"], limit: 1 }));
-        expect(mocks.release).toHaveBeenCalledWith("image", "child-one", "worker-one:children", expect.objectContaining({ executionPhase: "completed", nextPollAt: undefined }));
+        expect(mocks.release).toHaveBeenCalledWith("image", "child-one", "worker-one:children", expect.objectContaining({ executionPhase: "completed", nextPollAt: undefined }), { tenantId: "tenant-one" });
         expect(mocks.release.mock.invocationCallOrder.find((order) => order < mocks.executeAgentRun.mock.invocationCallOrder[0]!)).toBeTruthy();
         expect(mocks.executeAgentRun).toHaveBeenCalledTimes(1);
         expect(result).toMatchObject({ claimed: 1, completed: 1 });
@@ -147,7 +147,7 @@ describe("generation task recovery service", () => {
         const result = await runGenerationTaskRecoveryBatch({ origin: "http://internal", workerId: "worker-one" });
 
         expect(mocks.queryVideoTaskUpstream).toHaveBeenCalledWith(task, "http://internal", "", task.userId);
-        expect(mocks.release).toHaveBeenCalledWith("video", task.id, "worker-one", expect.objectContaining({ executionPhase: "polling", lastUpstreamStatus: "processing" }));
+        expect(mocks.release).toHaveBeenCalledWith("video", task.id, "worker-one", expect.objectContaining({ executionPhase: "polling", lastUpstreamStatus: "processing" }), { tenantId: "tenant-one" });
         expect(result).toMatchObject({ claimed: 1, pending: 1 });
     });
 
@@ -170,6 +170,7 @@ describe("generation task recovery service", () => {
             task.id,
             "worker-one",
             expect.objectContaining({ executionPhase: "needs_review", upstreamTaskId: "upstream-one", nextPollAt: undefined, lastUpstreamStatus: expect.stringContaining("query_contract_invalid") }),
+            { tenantId: "tenant-one" },
         );
         expect(result).toMatchObject({ claimed: 1, needsReview: 1 });
         expect(mocks.refundImageTask).not.toHaveBeenCalled();
@@ -189,7 +190,7 @@ describe("generation task recovery service", () => {
 
         const result = await runGenerationTaskRecoveryBatch({ origin: "http://internal", workerId: "worker-one" });
 
-        expect(mocks.release).toHaveBeenCalledWith("text", task.id, "worker-one", expect.objectContaining({ upstreamTaskId: "upstream-one", channelId: "channel-two", provider: "custom", queryPath: "/jobs/:task_id" }));
+        expect(mocks.release).toHaveBeenCalledWith("text", task.id, "worker-one", expect.objectContaining({ upstreamTaskId: "upstream-one", channelId: "channel-two", provider: "custom", queryPath: "/jobs/:task_id" }), { tenantId: "tenant-one" });
         expect(result).toMatchObject({ claimed: 1, pending: 1 });
     });
 
@@ -207,7 +208,7 @@ describe("generation task recovery service", () => {
 
         const result = await runGenerationTaskRecoveryBatch({ origin: "http://internal", workerId: "worker-one" });
 
-        expect(mocks.release).toHaveBeenCalledWith("image", task.id, "worker-one", expect.objectContaining({ executionPhase: "cancel_polling", lastUpstreamStatus: "cancel_accepted_polling" }), { cancellation: true });
+        expect(mocks.release).toHaveBeenCalledWith("image", task.id, "worker-one", expect.objectContaining({ executionPhase: "cancel_polling", lastUpstreamStatus: "cancel_accepted_polling" }), { cancellation: true, tenantId: "tenant-one" });
         expect(result).toMatchObject({ claimed: 1, pending: 1, completed: 0 });
     });
 });
@@ -215,6 +216,7 @@ describe("generation task recovery service", () => {
 function lease() {
     return {
         id: "agent-one",
+        tenantId: "tenant-one",
         userId: "user-one",
         type: "agent",
         status: "pending",

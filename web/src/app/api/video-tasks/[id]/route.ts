@@ -26,7 +26,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     if (canReconcileVideoTask(task) || (task.status === "cancelled" && (executionPhase === "cancel_requested" || executionPhase === "cancel_polling"))) {
         const origin = resolveInternalOrigin(new URL(request.url).origin);
         const cookie = request.headers.get("cookie") || "";
-        after(() => runGenerationTaskRecoveryBatch({ origin, cookie, limit: 1, taskIds: [task!.id] }));
+        after(() => runGenerationTaskRecoveryBatch({ origin, cookie, limit: 1, taskIds: [task.id], tenantId }));
     }
     const shouldRefund = Boolean(task.upstream.pointsRecordId && !task.upstream.refunded && task.status === "error");
     const settledTask = shouldRefund ? await refundVideoTask(task) : task;
@@ -51,6 +51,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     const target: GenerationCancellationTarget = {
         type: "video",
         taskId: task.id,
+        tenantId,
         userId: task.userId,
         executionPhase,
         upstreamTaskId: task.upstream.id,
@@ -61,7 +62,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     if (!next) return NextResponse.json({ error: "当前任务状态无法修改" }, { status: 409 });
     await writeVideoGenerationLog(next, "failed", "任务已取消", false).catch((error) => console.warn("Cancelled video generation log update failed", { taskId: task.id, error }));
     const origin = resolveInternalOrigin(new URL(request.url).origin);
-    after(() => runGenerationTaskRecoveryBatch({ origin, limit: 1, taskIds: [task.id] }));
+    after(() => runGenerationTaskRecoveryBatch({ origin, limit: 1, taskIds: [task.id], tenantId }));
     const refreshedUser = await getCurrentUser();
     return NextResponse.json({ task: publicTask(next) }, { headers: pointsResponseHeaders(refreshedUser) });
 }

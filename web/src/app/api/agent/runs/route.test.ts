@@ -79,6 +79,9 @@ describe("POST /api/agent/runs", () => {
         });
         expect(mocks.scheduleGenerationTask).toHaveBeenCalledWith("agent", "new-run", expect.objectContaining({ executionPhase: "created", nextPollAt: expect.any(Number), lastUpstreamStatus: "created" }), { tenantId: "default" });
         expect(mocks.after).toHaveBeenCalledWith(expect.any(Function));
+        const recovery = mocks.after.mock.calls[0]?.[0] as () => Promise<unknown>;
+        await recovery();
+        expect(mocks.runGenerationTaskRecoveryBatch).toHaveBeenCalledWith(expect.objectContaining({ taskIds: ["new-run"], tenantId: "default" }));
     });
 });
 

@@ -142,7 +142,7 @@ export async function POST(request: Request) {
                     upstream: pendingUpstream,
                     requestedDurationSeconds: parameters.videoSeconds === -1 ? undefined : parameters.videoSeconds,
                     attempts,
-                });
+                }, tenantId);
                 localTask = { ...localTask, config: channel, upstream: pendingUpstream, requestedDurationSeconds: parameters.videoSeconds === -1 ? undefined : parameters.videoSeconds, attempts };
             }
             const submissionStartedAt = Date.now();
@@ -156,7 +156,7 @@ export async function POST(request: Request) {
             }, { tenantId });
             try {
                 const upstream = await createUpstream(user.id, origin, cookie, channel, providerPrompt, parameters, references, settings.generationPointMultipliers, billingRequestId);
-                await updateVideoTask(localTask.id, { config: channel, upstream, requestedDurationSeconds: parameters.videoSeconds === -1 ? undefined : parameters.videoSeconds, attempts });
+                await updateVideoTask(localTask.id, { config: channel, upstream, requestedDurationSeconds: parameters.videoSeconds === -1 ? undefined : parameters.videoSeconds, attempts }, tenantId);
                 const task = { ...localTask, config: channel, upstream, requestedDurationSeconds: parameters.videoSeconds === -1 ? undefined : parameters.videoSeconds, attempts };
                 const submittedAt = Date.now();
                 await scheduleGenerationTask("video", task.id, {
@@ -169,12 +169,12 @@ export async function POST(request: Request) {
                     nextPollAt: submittedAt,
                     lastUpstreamStatus: "submitted",
                 }, { tenantId });
-                after(() => runGenerationTaskRecoveryBatch({ origin, cookie, limit: 1, taskIds: [task.id] }));
+                after(() => runGenerationTaskRecoveryBatch({ origin, cookie, limit: 1, taskIds: [task.id], tenantId }));
                 return NextResponse.json({ task: publicTask(task) });
             } catch (error) {
                 lastError = error;
                 attempts = finishGenerationAttempt(attempts, started.attempt.attemptNo, { status: "failed", error: toSafeGenerationErrorMessage(error, "视频任务创建失败") });
-                await updateVideoTask(localTask.id, { attempts });
+                await updateVideoTask(localTask.id, { attempts }, tenantId);
                 if (error instanceof SafeCandidateFailure && index < channels.length - 1) continue;
                 const message = toSafeGenerationErrorMessage(error, "视频任务创建失败");
                 if (!(error instanceof SafeCandidateFailure)) {

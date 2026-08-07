@@ -72,6 +72,30 @@ describe("generation task scheduler", () => {
         await expect(claimDueGenerationTasks({ workerId: "review-worker", now: 1_000 })).resolves.toEqual([expect.objectContaining({ id: "review", status: "success", executionPhase: "review_pending" })]);
     });
 
+    it("filters file-backed claims by tenant", async () => {
+        mocks.records = [
+            { ...record("tenant-one-task", 900), tenantId: "tenant-one" },
+            { ...record("tenant-two-task", 901), tenantId: "tenant-two" },
+        ];
+
+        await expect(claimDueGenerationTasks({ workerId: "tenant-worker", now: 1_000, tenantId: "tenant-two" })).resolves.toEqual([
+            expect.objectContaining({ id: "tenant-two-task", tenantId: "tenant-two" }),
+        ]);
+    });
+
+    it("renews only leases in the requested tenant", async () => {
+        mocks.records = [
+            { ...record("tenant-one-task", 900), tenantId: "tenant-one", workerId: "tenant-worker", leaseUntil: 50_000 },
+            { ...record("tenant-two-task", 901), tenantId: "tenant-two", workerId: "tenant-worker", leaseUntil: 50_000 },
+        ];
+
+        await expect(
+            renewGenerationTaskLeases("tenant-worker", ["tenant-one-task", "tenant-two-task"], 60_000, 2_000, "tenant-two"),
+        ).resolves.toBe(1);
+        expect(mocks.records.find((item) => item.id === "tenant-one-task")).toMatchObject({ leaseUntil: 50_000, updatedAt: 100 });
+        expect(mocks.records.find((item) => item.id === "tenant-two-task")).toMatchObject({ leaseUntil: 62_000, lastHeartbeatAt: 2_000, updatedAt: 100 });
+    });
+
     it("uses SKIP LOCKED and an owner-qualified release in PostgreSQL", async () => {
         mocks.provider = "postgres";
         mocks.transactionQuery.mockResolvedValueOnce({ rows: [] });
@@ -87,7 +111,7 @@ describe("generation task scheduler", () => {
         );
 
         expect(String(mocks.transactionQuery.mock.calls[0]?.[0])).toContain("FOR UPDATE SKIP LOCKED");
-        expect(mocks.transactionQuery.mock.calls[0]?.[1]).toEqual([new Date(1_000), 20, "worker-one", ["due"], new Date(91_000)]);
+        expect(mocks.transactionQuery.mock.calls[0]?.[1]).toEqual([new Date(1_000), 20, "worker-one", ["due"], new Date(91_000), null]);
         expect(String(mocks.postgresQuery.mock.calls[0]?.[0])).toContain("worker_id = $3 AND ($14::text IS NULL OR tenant_id = $14)");
         expect(mocks.postgresQuery.mock.calls[0]?.[1]).toEqual([
             "due",

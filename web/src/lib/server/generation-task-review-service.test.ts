@@ -40,37 +40,39 @@ describe("generation task manual review", () => {
     it("rejects tasks that are no longer waiting for review", async () => {
         mocks.getRecord.mockResolvedValueOnce({ executionPhase: "polling" });
 
-        await expect(reviewGenerationTask("image", "image-one", { action: "provide_result", result: "https://cdn.example/image.png" })).rejects.toMatchObject({
+        await expect(reviewGenerationTask("image", "image-one", { action: "provide_result", result: "https://cdn.example/image.png" }, "tenant-one")).rejects.toMatchObject({
             status: 409,
             message: "当前任务不需要人工确认",
         });
+        expect(mocks.getRecord).toHaveBeenCalledWith("image", "image-one", "tenant-one");
         expect(mocks.schedule).not.toHaveBeenCalled();
     });
 
     it("attaches an existing upstream task ID without creating another task", async () => {
         mocks.getImage.mockResolvedValue({ id: "image-one", config: { baseUrl: "/api/ai/system/channel-one" } });
 
-        await expect(reviewGenerationTask("image", "image-one", { action: "resume_upstream", upstreamTaskId: "upstream-existing", origin: "http://internal" })).resolves.toEqual({
+        await expect(reviewGenerationTask("image", "image-one", { action: "resume_upstream", upstreamTaskId: "upstream-existing", origin: "http://internal" }, "tenant-one")).resolves.toEqual({
             action: "resume_upstream",
             executionPhase: "submitted",
         });
+        expect(mocks.getImage).toHaveBeenCalledWith("image-one", "tenant-one");
         expect(mocks.updateImage).toHaveBeenCalledWith("image-one", {
             upstream: {
                 id: "upstream-existing",
                 mediaBaseUrl: "http://internal/api/ai/system/channel-one",
                 pollBaseUrl: "http://internal/api/ai/system/channel-one",
             },
-        });
-        expect(mocks.schedule).toHaveBeenCalledWith("image", "image-one", expect.objectContaining({ executionPhase: "submitted", upstreamTaskId: "upstream-existing", nextPollAt: expect.any(Number) }));
+        }, "tenant-one");
+        expect(mocks.schedule).toHaveBeenCalledWith("image", "image-one", expect.objectContaining({ executionPhase: "submitted", upstreamTaskId: "upstream-existing", nextPollAt: expect.any(Number) }), { tenantId: "tenant-one" });
     });
 
     it("queues a supplied media URL for persistence and rejects unsafe schemes", async () => {
-        await expect(reviewGenerationTask("video", "video-one", { action: "provide_result", result: "javascript:alert(1)" })).rejects.toMatchObject({ status: 400 });
-        await expect(reviewGenerationTask("video", "video-one", { action: "provide_result", result: "https://cdn.example/video.mp4" })).resolves.toEqual({
+        await expect(reviewGenerationTask("video", "video-one", { action: "provide_result", result: "javascript:alert(1)" }, "tenant-one")).rejects.toMatchObject({ status: 400 });
+        await expect(reviewGenerationTask("video", "video-one", { action: "provide_result", result: "https://cdn.example/video.mp4" }, "tenant-one")).resolves.toEqual({
             action: "provide_result",
             executionPhase: "result_ready",
         });
-        expect(mocks.schedule).toHaveBeenLastCalledWith("video", "video-one", expect.objectContaining({ executionPhase: "result_ready", resultPayload: { url: "https://cdn.example/video.mp4" } }));
+        expect(mocks.schedule).toHaveBeenLastCalledWith("video", "video-one", expect.objectContaining({ executionPhase: "result_ready", resultPayload: { url: "https://cdn.example/video.mp4" } }), { tenantId: "tenant-one" });
     });
 
     it("completes a text task directly with the supplied final text", async () => {
@@ -78,21 +80,24 @@ describe("generation task manual review", () => {
         mocks.getText.mockResolvedValue(task);
         mocks.transitionText.mockResolvedValue({ ...task, status: "success" });
 
-        await expect(reviewGenerationTask("text", "text-one", { action: "provide_result", result: "人工核对后的结果" })).resolves.toEqual({
+        await expect(reviewGenerationTask("text", "text-one", { action: "provide_result", result: "人工核对后的结果" }, "tenant-one")).resolves.toEqual({
             action: "provide_result",
             executionPhase: "completed",
         });
+        expect(mocks.getText).toHaveBeenCalledWith("text-one", "tenant-one");
         expect(mocks.transitionText).toHaveBeenCalledWith(task, ["pending", "running"], expect.objectContaining({ status: "success", result: { content: "人工核对后的结果" }, messages: [], config: { apiKey: "" } }));
-        expect(mocks.schedule).toHaveBeenCalledWith("text", "text-one", expect.objectContaining({ executionPhase: "completed", nextPollAt: undefined }));
+        expect(mocks.updateText).toHaveBeenCalledWith("text-one", expect.objectContaining({ candidateConfigs: [] }), "tenant-one");
+        expect(mocks.schedule).toHaveBeenCalledWith("text", "text-one", expect.objectContaining({ executionPhase: "completed", nextPollAt: undefined }), { tenantId: "tenant-one" });
     });
 
     it("uses the normal failure path so billing is refunded exactly once", async () => {
         const task = { id: "audio-one" };
         mocks.getAudio.mockResolvedValue(task);
 
-        await reviewGenerationTask("audio", "audio-one", { action: "confirm_failed", reason: "上游确认未创建" });
+        await reviewGenerationTask("audio", "audio-one", { action: "confirm_failed", reason: "上游确认未创建" }, "tenant-one");
 
+        expect(mocks.getAudio).toHaveBeenCalledWith("audio-one", "tenant-one");
         expect(mocks.markAudioFailed).toHaveBeenCalledWith(task, "上游确认未创建");
-        expect(mocks.schedule).toHaveBeenCalledWith("audio", "audio-one", expect.objectContaining({ executionPhase: "completed", lastUpstreamStatus: "manually_failed" }));
+        expect(mocks.schedule).toHaveBeenCalledWith("audio", "audio-one", expect.objectContaining({ executionPhase: "completed", lastUpstreamStatus: "manually_failed" }), { tenantId: "tenant-one" });
     });
 });

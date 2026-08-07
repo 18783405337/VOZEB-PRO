@@ -28,7 +28,7 @@ export async function GET(request: Request) {
     const activeTaskIds = runs.filter((run) => run.status === "planning" || run.status === "running").map((run) => run.id);
     if (activeTaskIds.length) {
         const origin = resolveInternalOrigin(url.origin);
-        after(() => runGenerationTaskRecoveryBatch({ origin, cookie: request.headers.get("cookie") || "", limit: Math.min(50, activeTaskIds.length), taskIds: activeTaskIds }));
+        after(() => runGenerationTaskRecoveryBatch({ origin, cookie: request.headers.get("cookie") || "", limit: Math.min(50, activeTaskIds.length), taskIds: activeTaskIds, tenantId }));
     }
     return NextResponse.json({ code: 0, data: { runs }, msg: "OK" });
 }
@@ -49,7 +49,7 @@ export async function POST(request: Request) {
             if (created.created) {
                 const origin = resolveInternalOrigin(new URL(request.url).origin);
                 await scheduleGenerationTask("agent", created.run.id, { executionPhase: "created", nextPollAt: Date.now(), lastUpstreamStatus: "created" }, { tenantId });
-                after(() => runGenerationTaskRecoveryBatch({ origin, cookie: request.headers.get("cookie") || "", limit: 1, taskIds: [created.run.id] }));
+                after(() => runGenerationTaskRecoveryBatch({ origin, cookie: request.headers.get("cookie") || "", limit: 1, taskIds: [created.run.id], tenantId }));
             }
             return NextResponse.json({ code: 0, data: { run: created.run, conversation: created.conversation, created: created.created }, msg: created.created ? "Agent 任务已创建" : "Agent 任务已存在" });
         }, tenantId);

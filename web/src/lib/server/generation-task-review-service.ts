@@ -12,17 +12,19 @@ import { getVideoTask, updateVideoTask } from "@/lib/server/video-task-store";
 export type ReviewableGenerationTaskType = Extract<GenerationTaskType, "text" | "image" | "video" | "audio">;
 export type GenerationTaskReviewInput = { action: "resume_upstream"; upstreamTaskId: string; origin: string } | { action: "provide_result"; result: string } | { action: "confirm_failed"; reason?: string };
 
-export async function reviewGenerationTask(type: ReviewableGenerationTaskType, id: string, input: GenerationTaskReviewInput) {
-    const record = await getStoredGenerationTaskRecord(type, id);
+export async function reviewGenerationTask(type: ReviewableGenerationTaskType, id: string, input: GenerationTaskReviewInput, tenantId: string) {
+    const scopedTenantId = clean(tenantId, 120);
+    if (!scopedTenantId) throw new GenerationTaskReviewError(400, "缺少租户信息");
+    const record = await getStoredGenerationTaskRecord(type, id, scopedTenantId);
     if (!record) throw new GenerationTaskReviewError(404, "生成任务不存在或已过期");
     if (record.executionPhase !== "needs_review") throw new GenerationTaskReviewError(409, "当前任务不需要人工确认");
 
     if (input.action === "resume_upstream") {
         const upstreamTaskId = clean(input.upstreamTaskId, 500);
         if (!upstreamTaskId) throw new GenerationTaskReviewError(400, "请输入上游任务 ID");
-        await attachUpstreamTask(type, id, upstreamTaskId, input.origin);
+        await attachUpstreamTask(type, id, upstreamTaskId, input.origin, scopedTenantId);
         const now = Date.now();
-        await scheduleGenerationTask(type, id, { executionPhase: "submitted", upstreamTaskId, submittedAt: record.submittedAt || now, nextPollAt: now, lastUpstreamStatus: "manually_confirmed" });
+        await scheduleGenerationTask(type, id, { executionPhase: "submitted", upstreamTaskId, submittedAt: record.submittedAt || now, nextPollAt: now, lastUpstreamStatus: "manually_confirmed" }, { tenantId: scopedTenantId });
         return { action: input.action, executionPhase: "submitted" as const };
     }
 
@@ -30,67 +32,67 @@ export async function reviewGenerationTask(type: ReviewableGenerationTaskType, i
         const result = clean(input.result, 20_000);
         if (!result) throw new GenerationTaskReviewError(400, type === "text" ? "请输入文本结果" : "请输入结果地址");
         if (type === "text") {
-            const task = await requireTextTask(id);
+            const task = await requireTextTask(id, scopedTenantId);
             const completed = await transitionTextTask(task, ["pending", "running"], { status: "success", result: { content: result }, messages: [], config: { ...task.config, apiKey: "" } });
             if (!completed) throw new GenerationTaskReviewError(409, "文本任务状态已变化");
-            await updateTextTask(id, { config: { ...task.config, apiKey: "" }, candidateConfigs: [] });
-            await scheduleGenerationTask(type, id, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "manual_result" });
+            await updateTextTask(id, { config: { ...task.config, apiKey: "" }, candidateConfigs: [] }, scopedTenantId);
+            await scheduleGenerationTask(type, id, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "manual_result" }, { tenantId: scopedTenantId });
             return { action: input.action, executionPhase: "completed" as const };
         }
         if (!isResultUrl(result)) throw new GenerationTaskReviewError(400, "结果地址必须是 http(s)、data: 或站内媒体路径");
-        await scheduleGenerationTask(type, id, { executionPhase: "result_ready", resultPayload: { url: result }, nextPollAt: Date.now(), lastUpstreamStatus: "manual_result" });
+        await scheduleGenerationTask(type, id, { executionPhase: "result_ready", resultPayload: { url: result }, nextPollAt: Date.now(), lastUpstreamStatus: "manual_result" }, { tenantId: scopedTenantId });
         return { action: input.action, executionPhase: "result_ready" as const };
     }
 
     const reason = clean(input.reason, 500) || "管理员已确认上游未创建任务";
-    await failTask(type, id, reason);
-    await scheduleGenerationTask(type, id, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "manually_failed" });
+    await failTask(type, id, reason, scopedTenantId);
+    await scheduleGenerationTask(type, id, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "manually_failed" }, { tenantId: scopedTenantId });
     return { action: input.action, executionPhase: "completed" as const };
 }
 
-async function attachUpstreamTask(type: ReviewableGenerationTaskType, id: string, upstreamTaskId: string, origin: string) {
+async function attachUpstreamTask(type: ReviewableGenerationTaskType, id: string, upstreamTaskId: string, origin: string, tenantId: string) {
     if (type === "text") {
-        const task = await requireTextTask(id);
-        await updateTextTask(id, { upstream: { id: upstreamTaskId, createPath: task.config.advancedConfig?.createPath || "" } });
+        const task = await requireTextTask(id, tenantId);
+        await updateTextTask(id, { upstream: { id: upstreamTaskId, createPath: task.config.advancedConfig?.createPath || "" } }, tenantId);
         return;
     }
     if (type === "image") {
-        const task = await getImageTask(id);
+        const task = await getImageTask(id, tenantId);
         if (!task) throw new GenerationTaskReviewError(404, "图片任务不存在或已过期");
         const baseUrl = absoluteProviderBase(task.config.baseUrl, origin);
-        await updateImageTask(id, { upstream: { id: upstreamTaskId, mediaBaseUrl: baseUrl, pollBaseUrl: baseUrl } });
+        await updateImageTask(id, { upstream: { id: upstreamTaskId, mediaBaseUrl: baseUrl, pollBaseUrl: baseUrl } }, tenantId);
         return;
     }
     if (type === "audio") {
-        const task = await getAudioTask(id);
+        const task = await getAudioTask(id, tenantId);
         if (!task) throw new GenerationTaskReviewError(404, "音频任务不存在或已过期");
-        await updateAudioTask(id, { upstream: { id: upstreamTaskId, createPath: task.config.advancedConfig?.createPath || "/audio/speech" } });
+        await updateAudioTask(id, { upstream: { id: upstreamTaskId, createPath: task.config.advancedConfig?.createPath || "/audio/speech" } }, tenantId);
         return;
     }
-    const task = await getVideoTask(id);
+    const task = await getVideoTask(id, tenantId);
     if (!task) throw new GenerationTaskReviewError(404, "视频任务不存在或已过期");
-    await updateVideoTask(id, { upstream: { ...task.upstream, id: upstreamTaskId } });
+    await updateVideoTask(id, { upstream: { ...task.upstream, id: upstreamTaskId } }, tenantId);
 }
 
-async function failTask(type: ReviewableGenerationTaskType, id: string, reason: string) {
-    if (type === "text") return markTextTaskFailed(await requireTextTask(id), reason);
+async function failTask(type: ReviewableGenerationTaskType, id: string, reason: string, tenantId: string) {
+    if (type === "text") return markTextTaskFailed(await requireTextTask(id, tenantId), reason);
     if (type === "image") {
-        const task = await getImageTask(id);
+        const task = await getImageTask(id, tenantId);
         if (!task) throw new GenerationTaskReviewError(404, "图片任务不存在或已过期");
         return markImageTaskFailed(task, reason);
     }
     if (type === "audio") {
-        const task = await getAudioTask(id);
+        const task = await getAudioTask(id, tenantId);
         if (!task) throw new GenerationTaskReviewError(404, "音频任务不存在或已过期");
         return markAudioTaskFailed(task, reason);
     }
-    const task = await getVideoTask(id);
+    const task = await getVideoTask(id, tenantId);
     if (!task) throw new GenerationTaskReviewError(404, "视频任务不存在或已过期");
     return failVideoTaskFromWorker(task, reason);
 }
 
-async function requireTextTask(id: string) {
-    const task = await getTextTask(id);
+async function requireTextTask(id: string, tenantId: string) {
+    const task = await getTextTask(id, tenantId);
     if (!task) throw new GenerationTaskReviewError(404, "文本任务不存在或已过期");
     return task;
 }

@@ -6,6 +6,6 @@ export async function refundVideoTask(task: VideoTask) {
     const upstream = task.upstream;
     if ((task.status !== "error" && task.status !== "cancelled") || upstream.pointsCost === undefined || !upstream.pointsRecordId || upstream.refunded) return task;
     await refundUserPoints(task.userId, generationModelId(task.config), upstream.pointsCost, "video", upstream.pointsUnits || 1, `video-task:${task.id}:refund`, upstream.pointsRecordId);
-    await updateVideoTask(task.id, { upstream: { ...upstream, refunded: true } });
-    return (await getVideoTask(task.id)) || task;
+    await updateVideoTask(task.id, { upstream: { ...upstream, refunded: true } }, task.tenantId);
+    return (await getVideoTask(task.id, task.tenantId)) || task;
 }

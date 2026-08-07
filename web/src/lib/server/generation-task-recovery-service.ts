@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { generationTaskNextPollAt, claimDueGenerationTasks, releaseGenerationTaskLease, renewGenerationTaskLeases, scheduleGenerationTask, type GenerationTaskLease } from "@/lib/server/generation-task-scheduler";
+import { generationTaskNextPollAt, claimDueGenerationTasks, releaseGenerationTaskLease, renewGenerationTaskLeases, scheduleGenerationTask, type GenerationTaskLease, type GenerationTaskSchedulePatch } from "@/lib/server/generation-task-scheduler";
 import { failVideoTaskFromWorker, persistVideoTaskResult, queryVideoTaskUpstream } from "@/lib/server/video-task-runtime";
 import { getVideoTask, type VideoTask } from "@/lib/server/video-task-store";
 import { createAudioTaskUpstreamStep, markAudioTaskFailed, persistAudioTaskResult, queryAudioTaskUpstreamStep } from "@/lib/server/audio-task-runtime";
@@ -22,14 +22,24 @@ import { refundVideoTask } from "@/lib/server/video-task-refund";
 
 type RecoveryResult = "pending" | "result_ready" | "completed" | "failed" | "needs_review" | "deferred";
 
-export async function runGenerationTaskRecoveryBatch(input: { origin: string; publicOrigin?: string; cookie?: string; limit?: number; taskIds?: string[]; workerId?: string }) {
+export async function runGenerationTaskRecoveryBatch(input: { origin: string; publicOrigin?: string; cookie?: string; limit?: number; taskIds?: string[]; workerId?: string; tenantId?: string }) {
     const workerId = input.workerId?.trim().slice(0, 160) || `generation-worker:${process.pid}:${randomUUID()}`;
-    const leases = await claimDueGenerationTasks({ workerId, limit: input.limit, taskIds: input.taskIds, leaseMs: 90_000 });
+    const leases = await claimDueGenerationTasks({ workerId, limit: input.limit, taskIds: input.taskIds, leaseMs: 90_000, tenantId: input.tenantId });
     if (!leases.length) return { claimed: 0, pending: 0, resultReady: 0, completed: 0, failed: 0, needsReview: 0, deferred: 0 };
 
-    const taskIds = leases.map((lease) => lease.id);
     const heartbeat = setInterval(() => {
-        void renewGenerationTaskLeases(workerId, taskIds, 90_000).catch((error) => console.error("Generation worker lease heartbeat failed", { workerId, error }));
+        const leasesByTenant = new Map<string, string[]>();
+        for (const lease of leases) {
+            const tenantId = lease.tenantId || "default";
+            const taskIds = leasesByTenant.get(tenantId) || [];
+            taskIds.push(lease.id);
+            leasesByTenant.set(tenantId, taskIds);
+        }
+        for (const [tenantId, taskIds] of leasesByTenant) {
+            void renewGenerationTaskLeases(workerId, taskIds, 90_000, Date.now(), tenantId).catch((error) =>
+                console.error("Generation worker lease heartbeat failed", { workerId, tenantId, error }),
+            );
+        }
     }, 25_000);
     try {
         const persistence = leases.filter(needsPersistence);
@@ -51,7 +61,7 @@ async function processGenerationTaskLease(lease: GenerationTaskLease, workerId: 
     if (lease.type === "audio") return processAudioLease(lease, workerId, origin, cookie);
     if (lease.type === "agent") return processAgentLease(lease, workerId, origin, cookie);
     if (lease.type !== "video") {
-        await releaseGenerationTaskLease(lease.type, lease.id, workerId, { executionPhase: "needs_review", nextPollAt: undefined, lastUpstreamStatus: "worker_handler_missing" });
+        await releaseLease(lease, workerId, { executionPhase: "needs_review", nextPollAt: undefined, lastUpstreamStatus: "worker_handler_missing" });
         return "needs_review";
     }
     return processVideoLease(lease, workerId, origin, cookie);
@@ -60,7 +70,7 @@ async function processGenerationTaskLease(lease: GenerationTaskLease, workerId: 
 async function processCancelledLease(lease: GenerationTaskLease, workerId: string, origin: string): Promise<RecoveryResult> {
     const target = await cancelledTaskTarget(lease);
     if (!target) {
-        await releaseGenerationTaskLease(lease.type, lease.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "cancelled_task_missing" }, { cancellation: true });
+        await releaseLease(lease, workerId, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "cancelled_task_missing" }, { cancellation: true });
         return "completed";
     }
     const now = Date.now();
@@ -76,9 +86,8 @@ async function processCancelledLease(lease: GenerationTaskLease, workerId: strin
             await finishCancelledLease(target, lease, workerId, "cancelled_before_submission");
             return "completed";
         }
-        await releaseGenerationTaskLease(
-            lease.type,
-            lease.id,
+        await releaseLease(
+            lease,
             workerId,
             {
                 executionPhase: "cancel_polling",
@@ -101,9 +110,8 @@ async function processCancelledLease(lease: GenerationTaskLease, workerId: strin
             await finishCancelledLease(target, lease, workerId, `cancelled_upstream_${status.status}`);
             return "completed";
         }
-        await releaseGenerationTaskLease(
-            lease.type,
-            lease.id,
+        await releaseLease(
+            lease,
             workerId,
             {
                 executionPhase: "cancel_polling",
@@ -117,9 +125,8 @@ async function processCancelledLease(lease: GenerationTaskLease, workerId: strin
         return "pending";
     } catch (error) {
         const count = errorCount(lease.lastUpstreamStatus) + 1;
-        await releaseGenerationTaskLease(
-            lease.type,
-            lease.id,
+        await releaseLease(
+            lease,
             workerId,
             {
                 executionPhase: "cancel_polling",
@@ -138,85 +145,85 @@ async function processCancelledLease(lease: GenerationTaskLease, workerId: strin
 async function cancelledTaskTarget(lease: GenerationTaskLease): Promise<GenerationCancellationTarget | null> {
     const submissionPhase = cancellationSubmissionPhase(lease);
     if (lease.type === "image") {
-        const task = await getImageTask(lease.id);
-        return task ? { type: "image", taskId: task.id, userId: task.userId, executionPhase: submissionPhase, upstreamTaskId: task.upstream?.id || lease.upstreamTaskId, queryPath: task.config.advancedConfig?.queryPath, config: task.config } : null;
+        const task = await getImageTask(lease.id, lease.tenantId);
+        return task ? { type: "image", taskId: task.id, tenantId: lease.tenantId, userId: task.userId, executionPhase: submissionPhase, upstreamTaskId: task.upstream?.id || lease.upstreamTaskId, queryPath: task.config.advancedConfig?.queryPath, config: task.config } : null;
     }
     if (lease.type === "video") {
-        const task = await getVideoTask(lease.id);
-        return task ? { type: "video", taskId: task.id, userId: task.userId, executionPhase: submissionPhase, upstreamTaskId: task.upstream.id || lease.upstreamTaskId, queryPath: task.config.advancedConfig?.queryPath, config: task.config } : null;
+        const task = await getVideoTask(lease.id, lease.tenantId);
+        return task ? { type: "video", taskId: task.id, tenantId: lease.tenantId, userId: task.userId, executionPhase: submissionPhase, upstreamTaskId: task.upstream.id || lease.upstreamTaskId, queryPath: task.config.advancedConfig?.queryPath, config: task.config } : null;
     }
     if (lease.type === "audio") {
-        const task = await getAudioTask(lease.id);
-        return task ? { type: "audio", taskId: task.id, userId: task.userId, executionPhase: submissionPhase, upstreamTaskId: task.upstream?.id || lease.upstreamTaskId, queryPath: task.config.advancedConfig?.queryPath, config: task.config } : null;
+        const task = await getAudioTask(lease.id, lease.tenantId);
+        return task ? { type: "audio", taskId: task.id, tenantId: lease.tenantId, userId: task.userId, executionPhase: submissionPhase, upstreamTaskId: task.upstream?.id || lease.upstreamTaskId, queryPath: task.config.advancedConfig?.queryPath, config: task.config } : null;
     }
     if (lease.type === "text") {
-        const task = await getTextTask(lease.id);
-        return task ? { type: "text", taskId: task.id, userId: task.userId, executionPhase: submissionPhase, upstreamTaskId: task.upstream?.id || lease.upstreamTaskId, queryPath: task.config.advancedConfig?.queryPath, config: task.config } : null;
+        const task = await getTextTask(lease.id, lease.tenantId);
+        return task ? { type: "text", taskId: task.id, tenantId: lease.tenantId, userId: task.userId, executionPhase: submissionPhase, upstreamTaskId: task.upstream?.id || lease.upstreamTaskId, queryPath: task.config.advancedConfig?.queryPath, config: task.config } : null;
     }
     return null;
 }
 
 async function queryCancelledUpstream(target: GenerationCancellationTarget, origin: string) {
     if (target.type === "image") {
-        const task = await getImageTask(target.taskId);
+        const task = await getImageTask(target.taskId, target.tenantId);
         return task ? queryCancelledImageTaskUpstreamStep(task, origin, "", target.userId) : { state: "terminal" as const, status: "missing" };
     }
     if (target.type === "video") {
-        const task = await getVideoTask(target.taskId);
+        const task = await getVideoTask(target.taskId, target.tenantId);
         if (!task) return { state: "terminal" as const, status: "missing" };
         const step = await queryVideoTaskUpstream(task, origin, "", target.userId);
         return step.state === "pending" ? { state: "pending" as const, status: step.status } : { state: "terminal" as const, status: step.status };
     }
     if (target.type === "audio") {
-        const task = await getAudioTask(target.taskId);
+        const task = await getAudioTask(target.taskId, target.tenantId);
         if (!task) return { state: "terminal" as const, status: "missing" };
         const step = await queryAudioTaskUpstreamStep(task, origin, "", target.userId);
         return step.state === "pending" ? { state: "pending" as const, status: step.status } : { state: "terminal" as const, status: "status" in step ? step.status : "completed" };
     }
-    const task = await getTextTask(target.taskId);
-    return task ? queryCancelledTextTaskUpstreamStep(task, origin, maintenanceWorkerContext(target.userId)) : { state: "terminal" as const, status: "missing" };
+    const task = await getTextTask(target.taskId, target.tenantId);
+    return task ? queryCancelledTextTaskUpstreamStep(task, origin, maintenanceWorkerContext(target.userId, target.tenantId)) : { state: "terminal" as const, status: "missing" };
 }
 
 async function finishCancelledLease(target: GenerationCancellationTarget, lease: GenerationTaskLease, workerId: string, status: string) {
     if (status !== "cancel_unconfirmed" && status !== "cancelled_task_missing") await refundCancelledTask(target);
-    await releaseGenerationTaskLease(lease.type, lease.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastPollAt: Date.now(), lastUpstreamStatus: status }, { cancellation: true });
+    await releaseLease(lease, workerId, { executionPhase: "completed", nextPollAt: undefined, lastPollAt: Date.now(), lastUpstreamStatus: status }, { cancellation: true });
     await redactCancelledTaskSecret(target).catch((error) => console.warn("Cancelled generation task secret cleanup failed", { taskId: target.taskId, type: target.type, error: safeError(error) }));
 }
 
 async function refundCancelledTask(target: GenerationCancellationTarget) {
     if (target.type === "image") {
-        const task = await getImageTask(target.taskId);
+        const task = await getImageTask(target.taskId, target.tenantId);
         if (task) await refundImageTask(task);
         return;
     }
     if (target.type === "video") {
-        const task = await getVideoTask(target.taskId);
+        const task = await getVideoTask(target.taskId, target.tenantId);
         if (task) await refundVideoTask(task);
         return;
     }
     if (target.type === "audio") {
-        const task = await getAudioTask(target.taskId);
+        const task = await getAudioTask(target.taskId, target.tenantId);
         if (task) await refundAudioTask(task);
         return;
     }
-    const task = await getTextTask(target.taskId);
+    const task = await getTextTask(target.taskId, target.tenantId);
     if (task) await refundTextTask(task);
 }
 
 async function redactCancelledTaskSecret(target: GenerationCancellationTarget) {
     if (target.type === "video") return;
     if (target.type === "image") {
-        const task = await getImageTask(target.taskId);
-        if (task) await updateImageTask(target.taskId, { config: { ...task.config, apiKey: "" } });
+        const task = await getImageTask(target.taskId, target.tenantId);
+        if (task) await updateImageTask(target.taskId, { config: { ...task.config, apiKey: "" } }, target.tenantId);
         return;
     }
     if (target.type === "audio") {
-        const task = await getAudioTask(target.taskId);
-        if (task) await updateAudioTask(target.taskId, { config: { ...task.config, apiKey: "" } });
+        const task = await getAudioTask(target.taskId, target.tenantId);
+        if (task) await updateAudioTask(target.taskId, { config: { ...task.config, apiKey: "" } }, target.tenantId);
         return;
     }
-    const task = await getTextTask(target.taskId);
-    if (task) await updateTextTask(target.taskId, { config: { ...task.config, apiKey: "" } });
+    const task = await getTextTask(target.taskId, target.tenantId);
+    if (task) await updateTextTask(target.taskId, { config: { ...task.config, apiKey: "" } }, target.tenantId);
 }
 
 function cancellationRequestedAt(lease: GenerationTaskLease, fallback: number) {
@@ -230,11 +237,11 @@ function cancellationSubmissionPhase(lease: GenerationTaskLease) {
 }
 
 async function processAgentLease(lease: GenerationTaskLease, workerId: string, origin: string, cookie: string): Promise<RecoveryResult> {
-    const run = await getAgentRun(lease.id);
+    const run = await getAgentRun(lease.id, lease.tenantId);
     if (run?.status === "completed" && !run.reviewed && (lease.executionPhase === "review_pending" || lease.executionPhase === "reviewing")) {
-        const result = await processAgentRunReview(run, origin, cookie || maintenanceWorkerContext(run.userId));
+        const result = await processAgentRunReview(run, origin, cookie || maintenanceWorkerContext(run.userId, run.tenantId || lease.tenantId));
         if (result.status === "retry") {
-            await releaseGenerationTaskLease("agent", run.id, workerId, {
+            await releaseLease(lease, workerId, {
                 executionPhase: "review_pending",
                 nextPollAt: generationTaskNextPollAt({ consecutiveErrors: result.attempts }),
                 lastPollAt: Date.now(),
@@ -242,7 +249,7 @@ async function processAgentLease(lease: GenerationTaskLease, workerId: string, o
             });
             return "deferred";
         }
-        await releaseGenerationTaskLease("agent", run.id, workerId, {
+        await releaseLease(lease, workerId, {
             executionPhase: result.status === "unavailable" ? "review_unavailable" : "completed",
             nextPollAt: undefined,
             lastUpstreamStatus: result.status === "unavailable" ? "review_unavailable" : "review_completed",
@@ -250,7 +257,7 @@ async function processAgentLease(lease: GenerationTaskLease, workerId: string, o
         return "completed";
     }
     if (!run || run.status === "completed" || run.status === "failed" || run.status === "cancelled" || run.status === "paused") {
-        await releaseGenerationTaskLease("agent", lease.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: run?.status || "missing" });
+        await releaseLease(lease, workerId, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: run?.status || "missing" });
         return run?.status === "completed" ? "completed" : "failed";
     }
     try {
@@ -258,19 +265,20 @@ async function processAgentLease(lease: GenerationTaskLease, workerId: string, o
         if (childTaskIds.length) {
             await runGenerationTaskRecoveryBatch({
                 origin,
-                cookie: cookie || maintenanceWorkerContext(run.userId),
+                cookie: cookie || maintenanceWorkerContext(run.userId, run.tenantId || lease.tenantId),
                 limit: childTaskIds.length,
                 taskIds: childTaskIds,
                 workerId: `${workerId}:children`.slice(0, 160),
+                tenantId: run.tenantId || lease.tenantId,
             });
         }
-        await executeAgentRun(run, origin, cookie || maintenanceWorkerContext(run.userId));
-        const latest = await getAgentRun(run.id);
+        await executeAgentRun(run, origin, cookie || maintenanceWorkerContext(run.userId, run.tenantId || lease.tenantId));
+        const latest = await getAgentRun(run.id, lease.tenantId);
         if (!latest || latest.status === "completed" || latest.status === "failed" || latest.status === "cancelled" || latest.status === "paused") {
-            await releaseGenerationTaskLease("agent", run.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: latest?.status || "missing" });
+            await releaseLease(lease, workerId, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: latest?.status || "missing" });
             return latest?.status === "completed" ? "completed" : "failed";
         }
-        await releaseGenerationTaskLease("agent", run.id, workerId, {
+        await releaseLease(lease, workerId, {
             executionPhase: "polling",
             nextPollAt: generationTaskNextPollAt({ submittedAt: lease.submittedAt || run.createdAt }),
             lastPollAt: Date.now(),
@@ -278,13 +286,13 @@ async function processAgentLease(lease: GenerationTaskLease, workerId: string, o
         });
         return "pending";
     } catch (error) {
-        const latest = await getAgentRun(run.id);
+        const latest = await getAgentRun(run.id, lease.tenantId);
         if (latest?.status === "failed") {
-            await releaseGenerationTaskLease("agent", run.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "failed" });
+            await releaseLease(lease, workerId, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "failed" });
             return "failed";
         }
         const count = errorCount(lease.lastUpstreamStatus) + 1;
-        await releaseGenerationTaskLease("agent", run.id, workerId, {
+        await releaseLease(lease, workerId, {
             executionPhase: "polling",
             nextPollAt: generationTaskNextPollAt({ consecutiveErrors: count }),
             lastPollAt: Date.now(),
@@ -308,17 +316,17 @@ export function pendingAgentChildTaskIds(run: Pick<AgentRun, "tasks">) {
 }
 
 async function processTextLease(lease: GenerationTaskLease, workerId: string, origin: string, cookie: string): Promise<RecoveryResult> {
-    const task = await getTextTask(lease.id);
+    const task = await getTextTask(lease.id, lease.tenantId);
     if (!task || task.status === "success" || task.status === "error" || task.status === "cancelled") {
-        await releaseGenerationTaskLease("text", lease.id, workerId, { executionPhase: "completed", nextPollAt: undefined });
+        await releaseLease(lease, workerId, { executionPhase: "completed", nextPollAt: undefined });
         return task?.status === "success" ? "completed" : "failed";
     }
     if (lease.executionPhase === "submitting" && task.status === "running" && !task.upstream?.id) {
-        await releaseGenerationTaskLease("text", lease.id, workerId, { executionPhase: "needs_review", nextPollAt: undefined, lastUpstreamStatus: "submission_outcome_unknown" });
+        await releaseLease(lease, workerId, { executionPhase: "needs_review", nextPollAt: undefined, lastUpstreamStatus: "submission_outcome_unknown" });
         return "needs_review";
     }
     if (!task.upstream?.id)
-        await scheduleGenerationTask("text", task.id, {
+        await scheduleLease(lease, {
             executionPhase: "submitting",
             channelId: task.config.channelId,
             provider: task.config.advancedConfig?.protocol || task.config.apiFormat,
@@ -327,23 +335,23 @@ async function processTextLease(lease: GenerationTaskLease, workerId: string, or
             lastUpstreamStatus: "submitting",
         });
     try {
-        const step = await runTextTaskStep(task, origin, cookie || maintenanceWorkerContext(task.userId));
+        const step = await runTextTaskStep(task, origin, cookie || maintenanceWorkerContext(task.userId, task.tenantId || lease.tenantId));
         if (step.state === "completed") {
-            await releaseGenerationTaskLease("text", task.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "completed" });
+            await releaseLease(lease, workerId, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "completed" });
             return "completed";
         }
         if (step.state === "failed") {
-            await releaseGenerationTaskLease("text", task.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "failed" });
+            await releaseLease(lease, workerId, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "failed" });
             return "failed";
         }
         if (step.state === "needs_review") {
-            await releaseGenerationTaskLease("text", task.id, workerId, { executionPhase: "needs_review", nextPollAt: undefined, lastUpstreamStatus: "submission_outcome_unknown" });
+            await releaseLease(lease, workerId, { executionPhase: "needs_review", nextPollAt: undefined, lastUpstreamStatus: "submission_outcome_unknown" });
             console.warn("Text task submission needs review", { taskId: task.id, error: step.error });
             return "needs_review";
         }
-        const latest = (await getTextTask(task.id)) || task;
+        const latest = (await getTextTask(task.id, lease.tenantId)) || task;
         const submittedAt = lease.submittedAt || Date.now();
-        await releaseGenerationTaskLease("text", task.id, workerId, {
+        await releaseLease(lease, workerId, {
             executionPhase: lease.submittedAt ? "polling" : "submitted",
             upstreamTaskId: step.upstreamTaskId,
             channelId: latest.config.channelId,
@@ -356,10 +364,10 @@ async function processTextLease(lease: GenerationTaskLease, workerId: string, or
         });
         return "pending";
     } catch (error) {
-        const latest = await getTextTask(task.id);
+        const latest = await getTextTask(task.id, lease.tenantId);
         const upstreamTaskId = latest?.upstream?.id || lease.upstreamTaskId;
         const count = errorCount(lease.lastUpstreamStatus) + 1;
-        await releaseGenerationTaskLease("text", task.id, workerId, {
+        await releaseLease(lease, workerId, {
             executionPhase: upstreamTaskId ? "polling" : "needs_review",
             upstreamTaskId,
             nextPollAt: upstreamTaskId ? generationTaskNextPollAt({ submittedAt: lease.submittedAt, consecutiveErrors: count }) : undefined,
@@ -372,13 +380,13 @@ async function processTextLease(lease: GenerationTaskLease, workerId: string, or
 }
 
 async function processImageLease(lease: GenerationTaskLease, workerId: string, origin: string, publicOrigin: string, cookie: string): Promise<RecoveryResult> {
-    const task = await getImageTask(lease.id);
+    const task = await getImageTask(lease.id, lease.tenantId);
     if (!task || task.status === "success" || task.status === "cancelled") {
-        await releaseGenerationTaskLease("image", lease.id, workerId, { executionPhase: "completed", nextPollAt: undefined });
+        await releaseLease(lease, workerId, { executionPhase: "completed", nextPollAt: undefined });
         return "completed";
     }
     if (lease.executionPhase === "submitting" && !lease.upstreamTaskId && task.status === "running") {
-        await releaseGenerationTaskLease("image", lease.id, workerId, { executionPhase: "needs_review", nextPollAt: undefined, lastUpstreamStatus: "submission_outcome_unknown" });
+        await releaseLease(lease, workerId, { executionPhase: "needs_review", nextPollAt: undefined, lastUpstreamStatus: "submission_outcome_unknown" });
         return "needs_review";
     }
     if (needsPersistence(lease)) return persistImageLease(task, lease, workerId, origin, cookie);
@@ -387,12 +395,12 @@ async function processImageLease(lease: GenerationTaskLease, workerId: string, o
         const now = Date.now();
         if (step.state === "failed") {
             await markImageTaskFailed(task, step.error);
-            await releaseGenerationTaskLease("image", task.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastPollAt: now, lastUpstreamStatus: step.status });
+            await releaseLease(lease, workerId, { executionPhase: "completed", nextPollAt: undefined, lastPollAt: now, lastUpstreamStatus: step.status });
             return "failed";
         }
         if (step.state === "needs_review") {
-            const latest = (await getImageTask(task.id)) || task;
-            await releaseGenerationTaskLease("image", task.id, workerId, {
+            const latest = (await getImageTask(task.id, lease.tenantId)) || task;
+            await releaseLease(lease, workerId, {
                 executionPhase: "needs_review",
                 upstreamTaskId: latest.upstream?.id || lease.upstreamTaskId,
                 channelId: latest.config.channelId,
@@ -405,15 +413,15 @@ async function processImageLease(lease: GenerationTaskLease, workerId: string, o
             return "needs_review";
         }
         if (step.state === "completed") {
-            await releaseGenerationTaskLease("image", task.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "persisted" });
+            await releaseLease(lease, workerId, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "persisted" });
             return "completed";
         }
         if (step.state === "result_ready") {
-            await releaseGenerationTaskLease("image", task.id, workerId, { executionPhase: "result_ready", nextPollAt: now, lastPollAt: now, lastUpstreamStatus: step.status, resultPayload: { url: step.resultUrl } });
+            await releaseLease(lease, workerId, { executionPhase: "result_ready", nextPollAt: now, lastPollAt: now, lastUpstreamStatus: step.status, resultPayload: { url: step.resultUrl } });
             return "result_ready";
         }
-        const latest = (await getImageTask(task.id)) || task;
-        await releaseGenerationTaskLease("image", task.id, workerId, {
+        const latest = (await getImageTask(task.id, lease.tenantId)) || task;
+        await releaseLease(lease, workerId, {
             executionPhase: latest.upstream?.id ? "polling" : "submitted",
             upstreamTaskId: step.upstream.id,
             channelId: latest.config.channelId,
@@ -426,10 +434,10 @@ async function processImageLease(lease: GenerationTaskLease, workerId: string, o
         });
         return "pending";
     } catch (error) {
-        const latest = await getImageTask(task.id);
+        const latest = await getImageTask(task.id, lease.tenantId);
         const count = errorCount(lease.lastUpstreamStatus) + 1;
         const submitted = Boolean(latest?.upstream?.id || lease.upstreamTaskId);
-        await releaseGenerationTaskLease("image", task.id, workerId, {
+        await releaseLease(lease, workerId, {
             executionPhase: submitted ? "polling" : "needs_review",
             nextPollAt: submitted ? generationTaskNextPollAt({ consecutiveErrors: count }) : undefined,
             lastPollAt: Date.now(),
@@ -444,31 +452,31 @@ async function persistImageLease(task: ImageTask, lease: GenerationTaskLease, wo
     const resultUrl = typeof lease.resultPayload?.url === "string" ? lease.resultPayload.url.trim() : "";
     if (!resultUrl) {
         await markImageTaskFailed(task, "图片任务已完成但没有返回图片地址");
-        await releaseGenerationTaskLease("image", task.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "result_url_missing" });
+        await releaseLease(lease, workerId, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "result_url_missing" });
         return "failed";
     }
-    await scheduleGenerationTask("image", task.id, { executionPhase: "persisting", nextPollAt: lease.nextPollAt });
+    await scheduleLease(lease, { executionPhase: "persisting", nextPollAt: lease.nextPollAt });
     try {
         const completed = await persistImageTaskResult(task, origin, resultUrl, cookie, cookie ? "" : task.userId);
         if (!completed || completed.status !== "success") throw new Error("图片结果保存后未进入成功状态");
-        await releaseGenerationTaskLease("image", task.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "persisted" });
+        await releaseLease(lease, workerId, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "persisted" });
         return "completed";
     } catch (error) {
         const count = errorCount(lease.lastUpstreamStatus) + 1;
-        await releaseGenerationTaskLease("image", task.id, workerId, { executionPhase: "persisting", nextPollAt: generationTaskNextPollAt({ consecutiveErrors: count }), lastUpstreamStatus: `persist_error:${count}` });
+        await releaseLease(lease, workerId, { executionPhase: "persisting", nextPollAt: generationTaskNextPollAt({ consecutiveErrors: count }), lastUpstreamStatus: `persist_error:${count}` });
         console.warn("Image result persistence deferred", { taskId: task.id, error: safeError(error) });
         return "deferred";
     }
 }
 
 async function processAudioLease(lease: GenerationTaskLease, workerId: string, origin: string, cookie: string): Promise<RecoveryResult> {
-    const task = await getAudioTask(lease.id);
+    const task = await getAudioTask(lease.id, lease.tenantId);
     if (!task || task.status === "success" || task.status === "cancelled") {
-        await releaseGenerationTaskLease("audio", lease.id, workerId, { executionPhase: "completed", nextPollAt: undefined });
+        await releaseLease(lease, workerId, { executionPhase: "completed", nextPollAt: undefined });
         return "completed";
     }
     if (lease.executionPhase === "submitting" && !lease.upstreamTaskId && task.status === "running") {
-        await releaseGenerationTaskLease("audio", lease.id, workerId, { executionPhase: "needs_review", nextPollAt: undefined, lastUpstreamStatus: "submission_outcome_unknown" });
+        await releaseLease(lease, workerId, { executionPhase: "needs_review", nextPollAt: undefined, lastUpstreamStatus: "submission_outcome_unknown" });
         return "needs_review";
     }
     if (needsPersistence(lease)) return persistAudioLease(task, lease, workerId, origin, cookie);
@@ -477,19 +485,19 @@ async function processAudioLease(lease: GenerationTaskLease, workerId: string, o
         const now = Date.now();
         if (step.state === "failed") {
             await markAudioTaskFailed(task, step.error);
-            await releaseGenerationTaskLease("audio", task.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastPollAt: now, lastUpstreamStatus: step.status });
+            await releaseLease(lease, workerId, { executionPhase: "completed", nextPollAt: undefined, lastPollAt: now, lastUpstreamStatus: step.status });
             return "failed";
         }
         if (step.state === "completed") {
-            await releaseGenerationTaskLease("audio", task.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "persisted" });
+            await releaseLease(lease, workerId, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "persisted" });
             return "completed";
         }
         if (step.state === "result_ready") {
-            await releaseGenerationTaskLease("audio", task.id, workerId, { executionPhase: "result_ready", nextPollAt: now, lastPollAt: now, lastUpstreamStatus: step.status, resultPayload: { url: step.resultUrl } });
+            await releaseLease(lease, workerId, { executionPhase: "result_ready", nextPollAt: now, lastPollAt: now, lastUpstreamStatus: step.status, resultPayload: { url: step.resultUrl } });
             return "result_ready";
         }
-        const latest = (await getAudioTask(task.id)) || task;
-        await releaseGenerationTaskLease("audio", task.id, workerId, {
+        const latest = (await getAudioTask(task.id, lease.tenantId)) || task;
+        await releaseLease(lease, workerId, {
             executionPhase: latest.upstream?.id ? "polling" : "submitted",
             upstreamTaskId: step.upstreamTaskId,
             channelId: latest.config.channelId,
@@ -501,9 +509,9 @@ async function processAudioLease(lease: GenerationTaskLease, workerId: string, o
             lastUpstreamStatus: step.status,
         });
         return "pending";
-    } catch (error) {
+    } catch {
         const count = errorCount(lease.lastUpstreamStatus) + 1;
-        await releaseGenerationTaskLease("audio", task.id, workerId, {
+        await releaseLease(lease, workerId, {
             executionPhase: task.upstream?.id ? "polling" : "needs_review",
             nextPollAt: task.upstream?.id ? generationTaskNextPollAt({ consecutiveErrors: count }) : undefined,
             lastPollAt: Date.now(),
@@ -517,31 +525,31 @@ async function persistAudioLease(task: AudioTask, lease: GenerationTaskLease, wo
     const resultUrl = typeof lease.resultPayload?.url === "string" ? lease.resultPayload.url.trim() : "";
     if (!resultUrl) {
         await markAudioTaskFailed(task, "音频任务已完成但没有返回音频地址");
-        await releaseGenerationTaskLease("audio", task.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "result_url_missing" });
+        await releaseLease(lease, workerId, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "result_url_missing" });
         return "failed";
     }
-    await scheduleGenerationTask("audio", task.id, { executionPhase: "persisting", nextPollAt: lease.nextPollAt });
+    await scheduleLease(lease, { executionPhase: "persisting", nextPollAt: lease.nextPollAt });
     try {
         const completed = await persistAudioTaskResult(task, origin, resultUrl, cookie, cookie ? "" : task.userId);
         if (!completed || completed.status !== "success") throw new Error("音频结果保存后未进入成功状态");
-        await releaseGenerationTaskLease("audio", task.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "persisted" });
+        await releaseLease(lease, workerId, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "persisted" });
         return "completed";
     } catch (error) {
         const count = errorCount(lease.lastUpstreamStatus) + 1;
-        await releaseGenerationTaskLease("audio", task.id, workerId, { executionPhase: "persisting", nextPollAt: generationTaskNextPollAt({ consecutiveErrors: count }), lastUpstreamStatus: `persist_error:${count}` });
+        await releaseLease(lease, workerId, { executionPhase: "persisting", nextPollAt: generationTaskNextPollAt({ consecutiveErrors: count }), lastUpstreamStatus: `persist_error:${count}` });
         console.warn("Audio result persistence deferred", { taskId: task.id, error: safeError(error) });
         return "deferred";
     }
 }
 
 async function processVideoLease(lease: GenerationTaskLease, workerId: string, origin: string, cookie: string): Promise<RecoveryResult> {
-    const task = await getVideoTask(lease.id);
+    const task = await getVideoTask(lease.id, lease.tenantId);
     if (!task || task.status === "success" || task.status === "cancelled") {
-        await releaseGenerationTaskLease("video", lease.id, workerId, { executionPhase: "completed", nextPollAt: undefined });
+        await releaseLease(lease, workerId, { executionPhase: "completed", nextPollAt: undefined });
         return "completed";
     }
     if (lease.executionPhase === "submitting" && !lease.upstreamTaskId) {
-        await releaseGenerationTaskLease("video", lease.id, workerId, { executionPhase: "needs_review", nextPollAt: undefined, lastUpstreamStatus: "submission_outcome_unknown" });
+        await releaseLease(lease, workerId, { executionPhase: "needs_review", nextPollAt: undefined, lastUpstreamStatus: "submission_outcome_unknown" });
         return "needs_review";
     }
     if (needsPersistence(lease)) return persistVideoLease(task, lease, workerId, origin, cookie);
@@ -551,11 +559,11 @@ async function processVideoLease(lease: GenerationTaskLease, workerId: string, o
         const now = Date.now();
         if (step.state === "failed") {
             await failVideoTaskFromWorker(task, step.error, true);
-            await releaseGenerationTaskLease("video", task.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastPollAt: now, lastUpstreamStatus: step.status });
+            await releaseLease(lease, workerId, { executionPhase: "completed", nextPollAt: undefined, lastPollAt: now, lastUpstreamStatus: step.status });
             return "failed";
         }
         if (step.state === "result_ready") {
-            await releaseGenerationTaskLease("video", task.id, workerId, {
+            await releaseLease(lease, workerId, {
                 executionPhase: "result_ready",
                 nextPollAt: now,
                 lastPollAt: now,
@@ -564,7 +572,7 @@ async function processVideoLease(lease: GenerationTaskLease, workerId: string, o
             });
             return "result_ready";
         }
-        await releaseGenerationTaskLease("video", task.id, workerId, {
+        await releaseLease(lease, workerId, {
             executionPhase: "polling",
             nextPollAt: generationTaskNextPollAt({ submittedAt: lease.submittedAt, now }),
             lastPollAt: now,
@@ -573,7 +581,7 @@ async function processVideoLease(lease: GenerationTaskLease, workerId: string, o
         return "pending";
     } catch (error) {
         const count = errorCount(lease.lastUpstreamStatus) + 1;
-        await releaseGenerationTaskLease("video", task.id, workerId, {
+        await releaseLease(lease, workerId, {
             executionPhase: "polling",
             nextPollAt: generationTaskNextPollAt({ submittedAt: lease.submittedAt, consecutiveErrors: count }),
             lastPollAt: Date.now(),
@@ -584,22 +592,35 @@ async function processVideoLease(lease: GenerationTaskLease, workerId: string, o
     }
 }
 
+async function releaseLease(
+    lease: GenerationTaskLease,
+    workerId: string,
+    patch: GenerationTaskSchedulePatch,
+    options: { cancellation?: boolean } = {},
+) {
+    return releaseGenerationTaskLease(lease.type, lease.id, workerId, patch, { ...options, tenantId: lease.tenantId });
+}
+
+async function scheduleLease(lease: GenerationTaskLease, patch: GenerationTaskSchedulePatch) {
+    return scheduleGenerationTask(lease.type, lease.id, patch, { tenantId: lease.tenantId });
+}
+
 async function persistVideoLease(task: VideoTask, lease: GenerationTaskLease, workerId: string, origin: string, cookie: string): Promise<RecoveryResult> {
     const resultUrl = typeof lease.resultPayload?.url === "string" ? lease.resultPayload.url.trim() : "";
     if (!resultUrl) {
         await failVideoTaskFromWorker(task, "视频任务已完成但没有返回视频地址");
-        await releaseGenerationTaskLease("video", task.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "result_url_missing" });
+        await releaseLease(lease, workerId, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "result_url_missing" });
         return "failed";
     }
-    await scheduleGenerationTask("video", task.id, { executionPhase: "persisting", nextPollAt: lease.nextPollAt });
+    await scheduleLease(lease, { executionPhase: "persisting", nextPollAt: lease.nextPollAt });
     try {
         const completed = await persistVideoTaskResult(task, resultUrl, origin, cookie, cookie ? "" : task.userId);
         if (!completed || completed.status !== "success") throw new Error("视频结果保存后未进入成功状态");
-        await releaseGenerationTaskLease("video", task.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "persisted" });
+        await releaseLease(lease, workerId, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "persisted" });
         return "completed";
     } catch (error) {
         const count = errorCount(lease.lastUpstreamStatus) + 1;
-        await releaseGenerationTaskLease("video", task.id, workerId, {
+        await releaseLease(lease, workerId, {
             executionPhase: "persisting",
             nextPollAt: generationTaskNextPollAt({ consecutiveErrors: count }),
             lastUpstreamStatus: `persist_error:${count}`,

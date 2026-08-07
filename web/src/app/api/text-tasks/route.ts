@@ -46,7 +46,7 @@ export async function POST(request: Request) {
         const cookie = request.headers.get("cookie") || "";
         const origin = resolveInternalOrigin(new URL(request.url).origin);
         await scheduleGenerationTask("text", task.id, { executionPhase: "created", channelId: task.config.channelId, provider: task.config.advancedConfig?.protocol || task.config.apiFormat, nextPollAt: Date.now(), lastUpstreamStatus: "created" }, { tenantId });
-        after(() => runGenerationTaskRecoveryBatch({ origin, cookie, limit: 1, taskIds: [task.id] }));
+        after(() => runGenerationTaskRecoveryBatch({ origin, cookie, limit: 1, taskIds: [task.id], tenantId }));
         return NextResponse.json({ task: publicTask(task) });
     }, tenantId);
     return response || NextResponse.json({ error: "当前用户文本任务已达到并发上限" }, { status: 429 });

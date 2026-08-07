@@ -50,7 +50,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (action === "cancel") await cancelChildTasks(run.tasks, origin, cookie);
     if (action === "resume" || action === "retry") {
         await scheduleGenerationTask("agent", updated.id, { executionPhase: "created", nextPollAt: Date.now(), lastUpstreamStatus: action }, { tenantId });
-        after(() => runGenerationTaskRecoveryBatch({ origin, cookie, limit: 1, taskIds: [updated.id] }));
+        after(() => runGenerationTaskRecoveryBatch({ origin, cookie, limit: 1, taskIds: [updated.id], tenantId }));
     } else {
         await scheduleGenerationTask("agent", updated.id, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: action }, { tenantId });
     }

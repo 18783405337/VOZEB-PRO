@@ -11,7 +11,7 @@ export async function refundAudioTask(task: AudioTask) {
         status: task.status,
         billing: { ...billing, refunded: true },
     });
-    return (await getAudioTask(task.id)) || task;
+    return (await getAudioTask(task.id, task.tenantId)) || task;
 }
 
 export function audioTaskRefundIdempotencyKey(task: Pick<AudioTask, "id" | "attemptNo">) {

@@ -2,6 +2,7 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
 const MIN_TOKEN_LENGTH = 32;
 const WORKER_USER_HEADER = "x-vozeb-pro-worker-user-id";
+const WORKER_TENANT_HEADER = "x-vozeb-pro-worker-tenant-id";
 const WORKER_CONTEXT_PREFIX = "vozeb-worker-v1";
 
 export function isMaintenanceTokenConfigured() {
@@ -19,11 +20,11 @@ export function isAuthorizedMaintenanceRequest(request: Request) {
     return timingSafeEqual(digest(configured), digest(provided));
 }
 
-export function maintenanceWorkerHeaders(userId: string) {
+export function maintenanceWorkerHeaders(userId: string, tenantId = "default") {
     const token = maintenanceToken();
     const normalizedUserId = userId.trim().slice(0, 160);
     if (token.length < MIN_TOKEN_LENGTH || !normalizedUserId) throw new Error("生成任务 Worker 需要配置维护令牌");
-    return { authorization: `Bearer ${token}`, [WORKER_USER_HEADER]: normalizedUserId };
+    return { authorization: `Bearer ${token}`, [WORKER_USER_HEADER]: normalizedUserId, [WORKER_TENANT_HEADER]: tenantId.trim().slice(0, 160) || "default" };
 }
 
 export function authorizedMaintenanceUserId(request: Request) {
@@ -31,13 +32,18 @@ export function authorizedMaintenanceUserId(request: Request) {
     return request.headers.get(WORKER_USER_HEADER)?.trim().slice(0, 160) || "";
 }
 
-export function maintenanceWorkerContext(userId: string) {
+export function authorizedMaintenanceTenantId(request: Request) {
+    if (!isAuthorizedMaintenanceRequest(request)) return "";
+    return request.headers.get(WORKER_TENANT_HEADER)?.trim().slice(0, 160) || "";
+}
+
+export function maintenanceWorkerContext(userId: string, tenantId = "default") {
     const token = maintenanceToken();
     const normalizedUserId = userId.trim().slice(0, 160);
     if (token.length < MIN_TOKEN_LENGTH || !normalizedUserId) throw new Error("生成任务 Worker 需要配置维护令牌");
-    const encodedUserId = Buffer.from(normalizedUserId, "utf8").toString("base64url");
-    const signature = createHmac("sha256", token).update(`${WORKER_CONTEXT_PREFIX}:${encodedUserId}`).digest("base64url");
-    return `${WORKER_CONTEXT_PREFIX}.${encodedUserId}.${signature}`;
+    const encodedContext = Buffer.from(JSON.stringify({ userId: normalizedUserId, tenantId: tenantId.trim().slice(0, 160) || "default" }), "utf8").toString("base64url");
+    const signature = createHmac("sha256", token).update(`${WORKER_CONTEXT_PREFIX}:${encodedContext}`).digest("base64url");
+    return `${WORKER_CONTEXT_PREFIX}.${encodedContext}.${signature}`;
 }
 
 export function maintenanceWorkerContextHeaders(value: string) {
@@ -46,20 +52,24 @@ export function maintenanceWorkerContextHeaders(value: string) {
     if (prefix !== WORKER_CONTEXT_PREFIX || token.length < MIN_TOKEN_LENGTH || !encodedUserId || !signature) return null;
     const expected = createHmac("sha256", token).update(`${WORKER_CONTEXT_PREFIX}:${encodedUserId}`).digest("base64url");
     if (!timingSafeEqual(digest(signature), digest(expected))) return null;
-    let userId = "";
+    let context: { userId?: string; tenantId?: string } = {};
     try {
-        userId = Buffer.from(encodedUserId, "base64url").toString("utf8").trim().slice(0, 160);
+        const parsed = JSON.parse(Buffer.from(encodedUserId, "base64url").toString("utf8")) as { userId?: unknown; tenantId?: unknown };
+        context = {
+            userId: typeof parsed.userId === "string" ? parsed.userId.trim().slice(0, 160) : "",
+            tenantId: typeof parsed.tenantId === "string" ? parsed.tenantId.trim().slice(0, 160) : "",
+        };
     } catch {
         return null;
     }
-    return userId ? maintenanceWorkerHeaders(userId) : null;
+    return context.userId && context.tenantId ? maintenanceWorkerHeaders(context.userId, context.tenantId) : null;
 }
 
 export function requestRuntimeCredential(request: Request, userId: string) {
     const cookie = request.headers.get("cookie")?.trim();
     if (cookie) return cookie;
     const normalizedUserId = userId.trim().slice(0, 160);
-    return normalizedUserId && authorizedMaintenanceUserId(request) === normalizedUserId ? maintenanceWorkerContext(normalizedUserId) : "";
+    return normalizedUserId && authorizedMaintenanceUserId(request) === normalizedUserId ? maintenanceWorkerContext(normalizedUserId, authorizedMaintenanceTenantId(request) || "default") : "";
 }
 
 function maintenanceToken() {

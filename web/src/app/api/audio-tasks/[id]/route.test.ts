@@ -45,6 +45,9 @@ describe("audio task cancellation refund", () => {
 
         expect(response.status).toBe(200);
         expect(after).toHaveBeenCalledOnce();
+        const recovery = vi.mocked(after).mock.calls[0]?.[0] as () => Promise<unknown>;
+        await recovery();
+        expect(mocks.recover).toHaveBeenCalledWith(expect.objectContaining({ taskIds: ["audio-one"], tenantId: "default" }));
     });
 
     it("keeps billing refundable while cancellation awaits an upstream terminal state", async () => {

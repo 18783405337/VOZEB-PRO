@@ -18,7 +18,7 @@ import { adaptGlobalAiOpcTextRequest, adaptGlobalAiOpcTextResponse, isGlobalAiOp
 import { readVerifiedSystemAiBusinessRequestId, SYSTEM_AI_LOGICAL_MODEL_HEADER, SYSTEM_AI_UPSTREAM_MODEL_HEADER, systemAiPointsIdempotencyKey, systemAiRequestFingerprint } from "@/lib/server/system-ai-billing";
 import { isAgnesApiBaseUrl } from "@/lib/agnes-model-catalog";
 import { channelConnectionReady, protocolAuthHeaders, resolveChannelModelConfig } from "@/lib/channel-protocol-registry";
-import { authorizedMaintenanceUserId } from "@/lib/server/maintenance-auth";
+import { authorizedMaintenanceTenantId, authorizedMaintenanceUserId } from "@/lib/server/maintenance-auth";
 import { authorizeGenerationMediaProxyRequest } from "@/lib/server/generation-media-access";
 import { userOwnsGenerationUpstreamTask } from "@/lib/server/generation-task-authorization";
 import { authorizeSystemAiProxyRequest } from "@/lib/server/system-ai-proxy-policy";
@@ -67,7 +67,7 @@ export async function DELETE(request: Request, context: RouteContext) {
 async function proxySystemRequest(request: Request, context: RouteContext) {
     const currentUser = await getCurrentUser();
     const userId = currentUser?.id || authorizedMaintenanceUserId(request);
-    const tenantId = currentUser ? await getTrustedTenantId(request, currentUser) : "default";
+    const tenantId = currentUser ? await getTrustedTenantId(request, currentUser) : authorizedMaintenanceTenantId(request) || "default";
     if (!userId) return NextResponse.json({ error: "请先登录" }, { status: 401 });
 
     const { channelId, path } = await context.params;
@@ -78,7 +78,7 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
     if (isMediaProxyPath(path)) {
         const rate = await checkMediaProxyRateLimit(userId, request);
         if (!rate.allowed) return NextResponse.json({ error: "媒体访问过于频繁，请稍后重试" }, { status: 429, headers: rateLimitHeaders(rate) });
-        return proxySystemMediaRequest(request, channel, userId);
+        return proxySystemMediaRequest(request, channel, userId, tenantId);
     }
 
     const contentType = request.headers.get("content-type");
@@ -237,10 +237,10 @@ function channelHasModel(models: string[], requested: string) {
 
 type SystemMediaChannel = { id: string; baseUrl: string; apiFormat: ApiCallFormat; apiKey: string; advancedConfig?: import("@/lib/auth/store").SystemChannelAdvancedConfig };
 
-async function proxySystemMediaRequest(request: Request, channel: SystemMediaChannel, userId: string) {
+async function proxySystemMediaRequest(request: Request, channel: SystemMediaChannel, userId: string, tenantId: string) {
     if (request.method !== "GET" && request.method !== "HEAD") return NextResponse.json({ error: "Media proxy only supports GET and HEAD" }, { status: 405 });
     const rawUrl = new URL(request.url).searchParams.get("url") || "";
-    if (!(await authorizeGenerationMediaProxyRequest(request, { userId, channelId: channel.id, url: rawUrl }))) return NextResponse.json({ error: "媒体路径未获任务授权" }, { status: 403 });
+    if (!(await authorizeGenerationMediaProxyRequest(request, { tenantId, userId, channelId: channel.id, url: rawUrl }))) return NextResponse.json({ error: "媒体路径未获任务授权" }, { status: 403 });
     const target = mediaTargetRequest(channel.baseUrl, channel.apiFormat, rawUrl, isGlobalAiOpcChannel(channel.advancedConfig));
     if (!target) return NextResponse.json({ error: "Invalid media url" }, { status: 400 });
     if (!(await isSafeOutboundUrl(target.url, { allowCredentials: false }))) return NextResponse.json({ error: "媒体地址不允许访问内网或保留地址" }, { status: 400 });

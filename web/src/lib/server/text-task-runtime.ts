@@ -58,7 +58,7 @@ type ClaudePayload = {
 };
 
 export async function runTextTaskStep(task: TextTask, origin: string, cookie: string): Promise<TextTaskStep> {
-    const current = await getTextTask(task.id);
+    const current = await getTextTask(task.id, task.tenantId);
     if (!current || current.status === "success") return { state: "completed" };
     if (current.status === "error" || current.status === "cancelled") return { state: "failed", error: current.error || "文本任务已结束" };
     const running = current.status === "pending" ? await transitionTextTask(current, ["pending"], { status: "running" }) : current;
@@ -72,7 +72,7 @@ export async function runTextTaskStep(task: TextTask, origin: string, cookie: st
         const started = startGenerationAttempt(attempts, { channelId: config.channelId, model: generationModelId(config), capability: "text" });
         attempts = started.attempts;
         const candidateTask = { ...running, config, candidateConfigs: candidates.slice(index + 1), attemptNo: started.attempt.attemptNo, attempts };
-        await updateTextTask(task.id, { config, candidateConfigs: candidateTask.candidateConfigs, attemptNo: candidateTask.attemptNo, attempts });
+        await updateTextTask(task.id, { config, candidateConfigs: candidateTask.candidateConfigs, attemptNo: candidateTask.attemptNo, attempts }, task.tenantId);
         await scheduleGenerationTask("text", task.id, {
             executionPhase: "submitting",
             channelId: config.channelId,
@@ -80,28 +80,28 @@ export async function runTextTaskStep(task: TextTask, origin: string, cookie: st
             queryPath: config.advancedConfig?.queryPath,
             nextPollAt: Date.now(),
             lastUpstreamStatus: "submitting",
-        });
+        }, { tenantId: task.tenantId });
         try {
             const protocol = resolveTextProtocol({ model: config.model, apiFormat: config.apiFormat, advancedConfig: config.advancedConfig, throughSystemProxy: config.baseUrl.startsWith("/") });
             const result = await runResolvedTextTask(candidateTask, origin, cookie, protocol);
             if ("state" in result) {
                 const billing = hasSystemAiCharge(result) ? { pointsCost: result.pointsCost, pointsRecordId: result.pointsRecordId, refunded: false } : undefined;
-                await updateTextTask(task.id, { upstream: { id: result.upstreamTaskId, createPath: result.createPath }, billing });
+                await updateTextTask(task.id, { upstream: { id: result.upstreamTaskId, createPath: result.createPath }, billing }, task.tenantId);
                 return { state: "pending", status: result.status, upstreamTaskId: result.upstreamTaskId, createPath: result.createPath };
             }
             return completeTextTask(candidateTask, result.content, result, attempts);
         } catch (error) {
             latestError = error;
             const message = toSafeGenerationErrorMessage(error, "文本生成失败");
-            const latest = await getTextTask(task.id);
+            const latest = await getTextTask(task.id, task.tenantId);
             if (latest?.status === "cancelled" || latest?.status === "success") return latest.status === "success" ? { state: "completed" } : { state: "failed", error: latest.error || "任务已取消" };
             if (error instanceof GenerationSubmissionUncertainError) return { state: "needs_review", error: message };
             if (!(error instanceof GenerationSubmissionSafeFailure)) return { state: "needs_review", error: generationSubmissionUncertainError(error, message).message };
             attempts = finishGenerationAttempt(attempts, candidateTask.attemptNo, { status: "failed", error: message });
-            await updateTextTask(task.id, { attempts, attemptNo: candidateTask.attemptNo });
+            await updateTextTask(task.id, { attempts, attemptNo: candidateTask.attemptNo }, task.tenantId);
         }
     }
-    return failTextTask((await getTextTask(task.id)) || running, latestError instanceof Error ? latestError.message : "没有可用的文本渠道", attempts);
+    return failTextTask((await getTextTask(task.id, task.tenantId)) || running, latestError instanceof Error ? latestError.message : "没有可用的文本渠道", attempts);
 }
 
 function runResolvedTextTask(task: TextTask, origin: string, cookie: string, protocol: ResolvedTextProtocol) {
@@ -327,7 +327,7 @@ async function completeTextTask(task: TextTask, content: string, billing: { poin
         pointsCost: billing.pointsCost,
         pointsRecordId: billing.pointsRecordId,
     });
-    const current = await getTextTask(task.id);
+    const current = await getTextTask(task.id, task.tenantId);
     if (!current || current.status === "cancelled") {
         if (current?.status === "cancelled" && current.billing?.pointsRecordId) await refundTextTask(current);
         else if (hasSystemAiCharge(billing)) await refundUserPoints(task.userId, generationModelId(task.config), billing.pointsCost, "text", 1, textTaskRefundIdempotencyKey(task), billing.pointsRecordId);
@@ -341,18 +341,18 @@ async function completeTextTask(task: TextTask, content: string, billing: { poin
         config: clearSecret(current.config),
         billing: hasSystemAiCharge(billing) ? { pointsCost: billing.pointsCost, pointsRecordId: billing.pointsRecordId, refunded: false } : current.billing,
     });
-    await updateTextTask(task.id, { config: clearSecret(current.config), candidateConfigs: [], attempts: succeeded, attemptNo: task.attemptNo || succeeded.at(-1)?.attemptNo });
+    await updateTextTask(task.id, { config: clearSecret(current.config), candidateConfigs: [], attempts: succeeded, attemptNo: task.attemptNo || succeeded.at(-1)?.attemptNo }, current.tenantId);
     if (!completed && hasSystemAiCharge(billing)) await refundUserPoints(task.userId, generationModelId(task.config), billing.pointsCost, "text", 1, textTaskRefundIdempotencyKey(task), billing.pointsRecordId);
     return completed ? { state: "completed" } : { state: "failed", error: "文本任务状态已变化" };
 }
 
 async function failTextTask(task: TextTask, error: string, attempts: NonNullable<TextTask["attempts"]>): Promise<TextTaskStep> {
-    const current = (await getTextTask(task.id)) || task;
+    const current = (await getTextTask(task.id, task.tenantId)) || task;
     if (current.status === "success") return { state: "completed" };
     if (current.status === "cancelled") return { state: "failed", error: current.error || "文本任务已取消" };
     if (current.billing?.pointsRecordId && !current.billing.refunded) {
         await refundUserPoints(current.userId, generationModelId(current.config), current.billing.pointsCost, "text", 1, undefined, current.billing.pointsRecordId);
-        await updateTextTask(current.id, { billing: { ...current.billing, refunded: true } });
+        await updateTextTask(current.id, { billing: { ...current.billing, refunded: true } }, current.tenantId);
     }
     const message = toSafeGenerationErrorMessage(error, "文本生成失败");
     const failedAttempts = finishGenerationAttempt(attempts, current.attemptNo || attempts.at(-1)?.attemptNo || 1, {
@@ -362,7 +362,7 @@ async function failTextTask(task: TextTask, error: string, attempts: NonNullable
         pointsRecordId: current.billing?.pointsRecordId,
     });
     await transitionTextTask(current, ["pending", "running"], { status: "error", error: message, messages: [], config: clearSecret(current.config), billing: current.billing ? { ...current.billing, refunded: true } : undefined });
-    await updateTextTask(current.id, { config: clearSecret(current.config), candidateConfigs: [], attempts: failedAttempts, attemptNo: failedAttempts.at(-1)?.attemptNo });
+    await updateTextTask(current.id, { config: clearSecret(current.config), candidateConfigs: [], attempts: failedAttempts, attemptNo: failedAttempts.at(-1)?.attemptNo }, current.tenantId);
     return { state: "failed", error: message };
 }
 
@@ -548,7 +548,7 @@ async function parseTextSubmissionJson<T>(task: TextTask, response: Response): P
 
 async function persistTextResponseBilling(task: TextTask, headers: Headers) {
     const billing = readSystemAiBilling(headers);
-    if (hasSystemAiCharge(billing)) await updateTextTask(task.id, { billing: { pointsCost: billing.pointsCost, pointsRecordId: billing.pointsRecordId, refunded: false } });
+    if (hasSystemAiCharge(billing)) await updateTextTask(task.id, { billing: { pointsCost: billing.pointsCost, pointsRecordId: billing.pointsRecordId, refunded: false } }, task.tenantId);
 }
 
 function geminiHeaders(config: TextTaskConfig, cookie: string, pointsIdempotencyKey?: string) {

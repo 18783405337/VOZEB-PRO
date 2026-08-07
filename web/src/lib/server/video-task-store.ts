@@ -37,20 +37,20 @@ export async function getVideoTask(id: string, tenantId?: string) {
     return getStoredGenerationTask<VideoTask>("video", id, tenantId);
 }
 
-export function claimVideoTaskPoll(id: string, intervalMs: number) {
+export function claimVideoTaskPoll(id: string, intervalMs: number, tenantId?: string) {
     const now = Date.now();
     return mutateStoredGenerationTask<VideoTask>("video", id, GENERATION_TASK_RETENTION_MS, (task) => {
         if (!canReconcileVideoTask(task) || Number(task.polling?.nextAttemptAt || 0) > now) return null;
         return { ...task, polling: { lastAttemptAt: now, nextAttemptAt: now + Math.max(1_000, intervalMs) } };
-    });
+    }, tenantId);
 }
 
-export function completeReconciledVideoTask(id: string, result: NonNullable<VideoTask["result"]>) {
-    return mutateStoredGenerationTask<VideoTask>("video", id, GENERATION_TASK_RETENTION_MS, (task) => (canReconcileVideoTask(task) ? { ...task, status: "success", result, error: undefined, retryable: false } : null));
+export function completeReconciledVideoTask(id: string, result: NonNullable<VideoTask["result"]>, tenantId?: string) {
+    return mutateStoredGenerationTask<VideoTask>("video", id, GENERATION_TASK_RETENTION_MS, (task) => (canReconcileVideoTask(task) ? { ...task, status: "success", result, error: undefined, retryable: false } : null), tenantId);
 }
 
-export function failReconciledVideoTask(id: string, error: string, retryable = false) {
-    return mutateStoredGenerationTask<VideoTask>("video", id, GENERATION_TASK_RETENTION_MS, (task) => (canReconcileVideoTask(task) ? { ...task, status: "error", result: undefined, error, retryable } : null));
+export function failReconciledVideoTask(id: string, error: string, retryable = false, tenantId?: string) {
+    return mutateStoredGenerationTask<VideoTask>("video", id, GENERATION_TASK_RETENTION_MS, (task) => (canReconcileVideoTask(task) ? { ...task, status: "error", result: undefined, error, retryable } : null), tenantId);
 }
 
 export function transitionVideoTask(

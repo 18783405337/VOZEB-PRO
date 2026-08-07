@@ -198,7 +198,7 @@ export async function POST(request: Request) {
         const origin = resolveInternalOrigin(new URL(request.url).origin);
         const publicOrigin = requestPublicOrigin(request);
         await scheduleGenerationTask("image", task.id, { executionPhase: "created", channelId: task.config.channelId, provider: task.config.advancedConfig?.protocol || task.config.apiFormat, nextPollAt: Date.now(), lastUpstreamStatus: "created" }, { tenantId });
-        after(() => runGenerationTaskRecoveryBatch({ origin, publicOrigin, cookie, limit: 1, taskIds: [task.id] }));
+        after(() => runGenerationTaskRecoveryBatch({ origin, publicOrigin, cookie, limit: 1, taskIds: [task.id], tenantId }));
 
         return NextResponse.json({ task: publicTask(task) });
     }, tenantId);

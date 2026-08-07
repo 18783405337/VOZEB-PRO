@@ -10,11 +10,18 @@ export async function POST(request: Request, { params }: { params: Promise<{ typ
     if (user.role !== "admin") return NextResponse.json({ code: 403, data: null, msg: "需要管理员权限" }, { status: 403 });
     const { type, id } = await params;
     if (!isReviewableType(type)) return NextResponse.json({ code: 400, data: null, msg: "任务类型不支持人工确认" }, { status: 400 });
-    const body = (await request.json().catch(() => null)) as Omit<GenerationTaskReviewInput, "origin"> | null;
+    const body = (await request.json().catch(() => null)) as ReviewRequestBody | null;
     if (!body || (body.action !== "resume_upstream" && body.action !== "provide_result" && body.action !== "confirm_failed")) return NextResponse.json({ code: 400, data: null, msg: "人工确认操作无效" }, { status: 400 });
+    const tenantId = typeof body.tenantId === "string" ? body.tenantId.trim() : "";
+    if (!tenantId) return NextResponse.json({ code: 400, data: null, msg: "缺少租户信息" }, { status: 400 });
     try {
-        const input = body.action === "resume_upstream" ? { ...body, origin: resolveInternalOrigin(new URL(request.url).origin) } : body;
-        const data = await reviewGenerationTask(type, id, input as GenerationTaskReviewInput);
+        const input =
+            body.action === "resume_upstream"
+                ? { action: body.action, upstreamTaskId: body.upstreamTaskId, origin: resolveInternalOrigin(new URL(request.url).origin) }
+                : body.action === "provide_result"
+                  ? { action: body.action, result: body.result }
+                  : { action: body.action, reason: body.reason };
+        const data = await reviewGenerationTask(type, id, input as GenerationTaskReviewInput, tenantId);
         return NextResponse.json({ code: 0, data, msg: "任务接管状态已更新" });
     } catch (error) {
         if (error instanceof GenerationTaskReviewError) return NextResponse.json({ code: error.status, data: null, msg: error.message }, { status: error.status });
@@ -26,3 +33,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ typ
 function isReviewableType(value: string): value is ReviewableGenerationTaskType {
     return value === "text" || value === "image" || value === "video" || value === "audio";
 }
+
+type ReviewRequestBody = {
+    action?: unknown;
+    tenantId?: unknown;
+    upstreamTaskId?: unknown;
+    result?: unknown;
+    reason?: unknown;
+};

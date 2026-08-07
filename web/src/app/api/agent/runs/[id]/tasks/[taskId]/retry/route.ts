@@ -51,6 +51,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const origin = resolveInternalOrigin(new URL(request.url).origin);
     const cookie = request.headers.get("cookie") || "";
     await scheduleGenerationTask("agent", updated.id, { executionPhase: "created", nextPollAt: Date.now(), lastUpstreamStatus: "task_retry" }, { tenantId });
-    after(() => runGenerationTaskRecoveryBatch({ origin, cookie, limit: 1, taskIds: [updated.id] }));
+    after(() => runGenerationTaskRecoveryBatch({ origin, cookie, limit: 1, taskIds: [updated.id], tenantId }));
     return NextResponse.json({ code: 0, data: { run: updated }, msg: "OK" });
 }

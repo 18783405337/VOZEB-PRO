@@ -67,6 +67,7 @@ describe("Agent child task retry concurrency", () => {
         const tasks = mocks.updateAgentRunById.mock.calls[0]?.[1]?.tasks;
         expect(tasks).toEqual([expect.objectContaining({ id: "task", status: "ready", attempts: 3, taskId: undefined, taskIds: undefined, childTasks: undefined, result: undefined, error: undefined })]);
         expect(mocks.scheduleGenerationTask).toHaveBeenCalledWith("agent", "run", expect.objectContaining({ executionPhase: "created", nextPollAt: expect.any(Number), lastUpstreamStatus: "task_retry" }), { tenantId: "default" });
+        expect(mocks.runGenerationTaskRecoveryBatch).toHaveBeenCalledWith(expect.objectContaining({ taskIds: ["run"], tenantId: "default" }));
     });
 
     it("repairs legacy canvas image references and invalid ratios before retrying", async () => {

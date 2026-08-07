@@ -129,18 +129,38 @@ CREATE TRIGGER tenant_members_set_updated_at BEFORE UPDATE ON tenant_members FOR
 
 export const POSTGRESQL_SAAS_RESOURCE_SCHEMA_SQL = `
 ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS tenant_id text REFERENCES tenants(id);
+UPDATE generation_tasks SET tenant_id = 'default' WHERE tenant_id IS NULL;
+ALTER TABLE generation_tasks ALTER COLUMN tenant_id SET NOT NULL;
 DROP INDEX IF EXISTS generation_tasks_user_client_request_idx;
 CREATE UNIQUE INDEX IF NOT EXISTS generation_tasks_tenant_user_client_request_idx
 ON generation_tasks (tenant_id, user_id, task_type, client_request_id, COALESCE(attempt_no, 0))
 WHERE client_request_id IS NOT NULL;
 
 ALTER TABLE generation_logs ADD COLUMN IF NOT EXISTS tenant_id text REFERENCES tenants(id);
+UPDATE generation_logs SET tenant_id = 'default' WHERE tenant_id IS NULL;
+ALTER TABLE generation_logs ALTER COLUMN tenant_id SET NOT NULL;
 ALTER TABLE creative_conversations ADD COLUMN IF NOT EXISTS tenant_id text REFERENCES tenants(id);
+UPDATE creative_conversations SET tenant_id = 'default' WHERE tenant_id IS NULL;
+ALTER TABLE creative_conversations ALTER COLUMN tenant_id SET NOT NULL;
 ALTER TABLE creative_assets ADD COLUMN IF NOT EXISTS tenant_id text REFERENCES tenants(id);
+UPDATE creative_assets SET tenant_id = 'default' WHERE tenant_id IS NULL;
+ALTER TABLE creative_assets ALTER COLUMN tenant_id SET NOT NULL;
 ALTER TABLE local_media_assets ADD COLUMN IF NOT EXISTS tenant_id text REFERENCES tenants(id);
+UPDATE local_media_assets SET tenant_id = 'default' WHERE tenant_id IS NULL;
+ALTER TABLE local_media_assets ALTER COLUMN tenant_id SET NOT NULL;
 ALTER TABLE canvas_projects ADD COLUMN IF NOT EXISTS tenant_id text REFERENCES tenants(id);
+UPDATE canvas_projects SET tenant_id = 'default' WHERE tenant_id IS NULL;
+ALTER TABLE canvas_projects ALTER COLUMN tenant_id SET NOT NULL;
 ALTER TABLE library_assets ADD COLUMN IF NOT EXISTS tenant_id text REFERENCES tenants(id);
+UPDATE library_assets SET tenant_id = 'default' WHERE tenant_id IS NULL;
+ALTER TABLE library_assets ALTER COLUMN tenant_id SET NOT NULL;
 ALTER TABLE drama_projects ADD COLUMN IF NOT EXISTS tenant_id text REFERENCES tenants(id);
+UPDATE drama_projects SET tenant_id = 'default' WHERE tenant_id IS NULL;
+ALTER TABLE drama_projects ALTER COLUMN tenant_id SET NOT NULL;
 ALTER TABLE published_works ADD COLUMN IF NOT EXISTS tenant_id text REFERENCES tenants(id);
+UPDATE published_works SET tenant_id = 'default' WHERE tenant_id IS NULL;
+ALTER TABLE published_works ALTER COLUMN tenant_id SET NOT NULL;
 ALTER TABLE billing_orders ADD COLUMN IF NOT EXISTS tenant_id text REFERENCES tenants(id);
+UPDATE billing_orders SET tenant_id = 'default' WHERE tenant_id IS NULL;
+ALTER TABLE billing_orders ALTER COLUMN tenant_id SET NOT NULL;
 `;

@@ -13,6 +13,7 @@ export type CancellableGenerationTaskType = Extract<GenerationTaskType, "text" |
 export type GenerationCancellationTarget = {
     type: CancellableGenerationTaskType;
     taskId: string;
+    tenantId: string;
     userId: string;
     executionPhase?: GenerationTaskExecutionPhase;
     upstreamTaskId?: string;
@@ -50,7 +51,7 @@ export function cancellationExecutionPatch(target: GenerationCancellationTarget,
 }
 
 export function scheduleCancelledGenerationTask(target: GenerationCancellationTarget) {
-    return scheduleGenerationTask(target.type, target.taskId, cancellationExecutionPatch(target), { cancellation: true });
+    return scheduleGenerationTask(target.type, target.taskId, cancellationExecutionPatch(target), { cancellation: true, tenantId: target.tenantId });
 }
 
 export async function requestUpstreamGenerationCancellation(target: GenerationCancellationTarget, origin: string, cookie = "", workerUserId = ""): Promise<UpstreamCancellationResult> {
@@ -82,7 +83,7 @@ async function cancellationFetch(target: GenerationCancellationTarget, origin: s
     const url = `${internal ? `${origin}${target.config.baseUrl}` : target.config.baseUrl}`.replace(/\/+$/, "") + (path.startsWith("/") ? path : `/${path}`);
     const headers = new Headers();
     if (internal) {
-        if (workerUserId) Object.entries(maintenanceWorkerHeaders(workerUserId)).forEach(([key, value]) => headers.set(key, value));
+        if (workerUserId) Object.entries(maintenanceWorkerHeaders(workerUserId, target.tenantId)).forEach(([key, value]) => headers.set(key, value));
         else if (cookie) headers.set("cookie", cookie);
         Object.entries(systemAiBillingHeaders(target.config.logicalModel || target.config.model, undefined, target.config.model)).forEach(([key, value]) => headers.set(key, value));
         return fetchInternalApi(url, { method, headers, cache: "no-store", signal: AbortSignal.timeout(10_000) });

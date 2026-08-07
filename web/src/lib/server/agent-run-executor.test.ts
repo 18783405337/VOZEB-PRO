@@ -138,7 +138,12 @@ describe("executeAgentRun backend settings", () => {
         expect(mocks.run?.reviewStatus).toBe("review_pending");
         expect(mocks.events.at(-1)?.type).toBe("run.completed");
         expect(mocks.reviewCreativeOutputs).not.toHaveBeenCalled();
-        expect(mocks.scheduleGenerationTask).toHaveBeenCalledWith("agent", "agent-run", expect.objectContaining({ executionPhase: "review_pending", lastUpstreamStatus: "review_pending" }));
+        expect(mocks.scheduleGenerationTask).toHaveBeenCalledWith(
+            "agent",
+            "agent-run",
+            expect.objectContaining({ executionPhase: "review_pending", lastUpstreamStatus: "review_pending" }),
+            { tenantId: "default" },
+        );
     });
 
     it("settles a persistent review as unavailable after the third failed attempt", async () => {

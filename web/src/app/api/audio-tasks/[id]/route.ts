@@ -21,7 +21,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     if (!task || (task.userId !== user.id && user.role !== "admin")) return NextResponse.json({ error: "任务不存在或已过期" }, { status: 404 });
     if (((task.status === "pending" || task.status === "running") && task.executionPhase !== "needs_review") || (task.status === "cancelled" && (task.executionPhase === "cancel_requested" || task.executionPhase === "cancel_polling"))) {
         const origin = resolveInternalOrigin(new URL(request.url).origin);
-        after(() => runGenerationTaskRecoveryBatch({ origin, cookie: request.headers.get("cookie") || "", limit: 1, taskIds: [task.id] }));
+        after(() => runGenerationTaskRecoveryBatch({ origin, cookie: request.headers.get("cookie") || "", limit: 1, taskIds: [task.id], tenantId }));
     }
     const shouldRefund = Boolean(task.billing?.pointsRecordId && !task.billing.refunded && task.status === "error");
     const settledTask = shouldRefund ? await refundAudioTask(task) : task;
@@ -39,6 +39,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     const target: GenerationCancellationTarget = {
         type: "audio",
         taskId: task.id,
+        tenantId,
         userId: task.userId,
         executionPhase: task.executionPhase,
         upstreamTaskId: task.upstream?.id,
@@ -48,7 +49,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     const next = await transitionAudioTask(task, ["pending", "running"], { status: "cancelled", error: "任务已取消", billing: task.billing }, cancellationExecutionPatch(target));
     if (!next) return NextResponse.json({ error: "当前任务无法取消" }, { status: 409 });
     const origin = resolveInternalOrigin(new URL(request.url).origin);
-    after(() => runGenerationTaskRecoveryBatch({ origin, limit: 1, taskIds: [task.id] }));
+    after(() => runGenerationTaskRecoveryBatch({ origin, limit: 1, taskIds: [task.id], tenantId }));
     const refreshedUser = await getCurrentUser(request);
     return NextResponse.json({ task: publicTask(next) }, { headers: pointsResponseHeaders(refreshedUser) });
 }

@@ -84,12 +84,14 @@ export function GenerationOperationsClient() {
         if (!reviewingTask) return;
         setReviewing(true);
         try {
-            const body =
-                reviewAction === "resume_upstream"
+            const body = {
+                tenantId: reviewingTask.tenantId,
+                ...(reviewAction === "resume_upstream"
                     ? { action: reviewAction, upstreamTaskId: reviewValue.trim() }
                     : reviewAction === "provide_result"
                       ? { action: reviewAction, result: reviewValue.trim() }
-                      : { action: reviewAction, reason: reviewValue.trim() };
+                      : { action: reviewAction, reason: reviewValue.trim() }),
+            };
             const response = await fetch(`/api/admin/generation-operations/${reviewingTask.type}/${encodeURIComponent(reviewingTask.id)}/review`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },

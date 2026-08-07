@@ -64,13 +64,14 @@ export async function scheduleGenerationTask(type: GenerationTaskType, id: strin
     });
 }
 
-export async function claimDueGenerationTasks(input: { workerId: string; now?: number; limit?: number; leaseMs?: number; taskIds?: string[] }): Promise<GenerationTaskLease[]> {
+export async function claimDueGenerationTasks(input: { workerId: string; now?: number; limit?: number; leaseMs?: number; taskIds?: string[]; tenantId?: string }): Promise<GenerationTaskLease[]> {
     const workerId = clean(input.workerId, 160);
     if (!workerId) throw new Error("Worker ID is required");
     const now = finiteTime(input.now) || Date.now();
     const limit = Math.max(1, Math.min(50, Math.floor(Number(input.limit) || 20)));
     const leaseUntil = now + Math.max(30_000, Math.min(5 * 60_000, Math.floor(Number(input.leaseMs) || 90_000)));
     const taskIds = Array.from(new Set((input.taskIds || []).map((id) => clean(id, 160)).filter((id): id is string => Boolean(id)))).slice(0, 50);
+    const tenantId = clean(input.tenantId, 160) || null;
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
         return withPostgresTransaction(async (client) => {
@@ -85,6 +86,7 @@ export async function claimDueGenerationTasks(input: { workerId: string; now?: n
                       AND next_poll_at IS NOT NULL AND next_poll_at <= $1
                       AND (lease_until IS NULL OR lease_until <= $1)
                       AND (cardinality($4::text[]) = 0 OR id = ANY($4::text[]))
+                      AND ($6::text IS NULL OR tenant_id = $6)
                     ORDER BY next_poll_at ASC, id ASC
                     FOR UPDATE SKIP LOCKED
                     LIMIT $2
@@ -94,14 +96,14 @@ export async function claimDueGenerationTasks(input: { workerId: string; now?: n
                  FROM due
                  WHERE task.id = due.id
                  RETURNING task.*`,
-                [new Date(now), limit, workerId, taskIds, new Date(leaseUntil)],
+                [new Date(now), limit, workerId, taskIds, new Date(leaseUntil), tenantId],
             );
             return result.rows.map(mapLease);
         });
     }
     return withGenerationTaskFileMutation(async (tasks) => {
         const eligible = tasks
-            .filter((task) => isDue(task, now, taskIds))
+            .filter((task) => isDue(task, now, taskIds, tenantId || undefined))
             .sort((a, b) => Number(a.nextPollAt || 0) - Number(b.nextPollAt || 0) || a.id.localeCompare(b.id))
             .slice(0, limit);
         const claimedIds = new Set(eligible.map((task) => task.id));
@@ -110,20 +112,24 @@ export async function claimDueGenerationTasks(input: { workerId: string; now?: n
     });
 }
 
-export async function renewGenerationTaskLeases(workerId: string, taskIds: string[], leaseMs = 90_000, now = Date.now()) {
+export async function renewGenerationTaskLeases(workerId: string, taskIds: string[], leaseMs = 90_000, now = Date.now(), tenantId?: string) {
     const owner = clean(workerId, 160);
     const ids = Array.from(new Set(taskIds.map((id) => clean(id, 160)).filter((id): id is string => Boolean(id)))).slice(0, 50);
     if (!owner || !ids.length) return 0;
+    const normalizedTenantId = clean(tenantId, 160) || null;
     const leaseUntil = now + Math.max(30_000, Math.min(5 * 60_000, Math.floor(leaseMs)));
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
-        const result = await postgresQuery("UPDATE generation_tasks SET lease_until = $3, last_heartbeat_at = $4 WHERE worker_id = $1 AND id = ANY($2::text[]) AND lease_until > $4", [owner, ids, new Date(leaseUntil), new Date(now)]);
+        const result = await postgresQuery(
+            "UPDATE generation_tasks SET lease_until = $3, last_heartbeat_at = $4 WHERE worker_id = $1 AND id = ANY($2::text[]) AND lease_until > $4 AND ($5::text IS NULL OR tenant_id = $5)",
+            [owner, ids, new Date(leaseUntil), new Date(now), normalizedTenantId],
+        );
         return result.rowCount || 0;
     }
     let count = 0;
     await withGenerationTaskFileMutation(async (tasks) => ({
         tasks: tasks.map((task) => {
-            if (task.workerId !== owner || !ids.includes(task.id) || Number(task.leaseUntil || 0) <= now) return task;
+            if (task.workerId !== owner || !ids.includes(task.id) || Number(task.leaseUntil || 0) <= now || (normalizedTenantId && task.tenantId !== normalizedTenantId)) return task;
             count += 1;
             return { ...task, leaseUntil, lastHeartbeatAt: now };
         }),
@@ -222,11 +228,11 @@ function applyPatch(task: StoredGenerationTaskRecord, patch: GenerationTaskSched
     };
 }
 
-function isDue(task: StoredGenerationTaskRecord, now: number, taskIds: string[]) {
+function isDue(task: StoredGenerationTaskRecord, now: number, taskIds: string[], tenantId?: string) {
     const active = (task.status === "pending" || task.status === "running") && ACTIVE_PHASES.has(task.executionPhase || "created");
     const review = task.type === "agent" && task.status === "success" && REVIEW_PHASES.has(task.executionPhase || "created");
     const cancellation = task.status === "cancelled" && CANCELLATION_PHASES.has(task.executionPhase || "created");
-    return SCHEDULABLE_TYPES.has(task.type) && (active || review || cancellation) && Number(task.nextPollAt || 0) > 0 && Number(task.nextPollAt) <= now && Number(task.leaseUntil || 0) <= now && (!taskIds.length || taskIds.includes(task.id));
+    return SCHEDULABLE_TYPES.has(task.type) && (active || review || cancellation) && Number(task.nextPollAt || 0) > 0 && Number(task.nextPollAt) <= now && Number(task.leaseUntil || 0) <= now && (!taskIds.length || taskIds.includes(task.id)) && (!tenantId || task.tenantId === tenantId);
 }
 
 function canApplySchedulePatch(task: StoredGenerationTaskRecord, options: GenerationTaskScheduleOptions) {

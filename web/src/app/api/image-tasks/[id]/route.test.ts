@@ -43,7 +43,7 @@ describe("GET /api/image-tasks/[id]", () => {
         expect(after).toHaveBeenCalledOnce();
         const recovery = vi.mocked(after).mock.calls[0]?.[0] as () => Promise<unknown>;
         await recovery();
-        expect(mocks.recover).toHaveBeenCalledWith(expect.objectContaining({ taskIds: ["image-one"], origin: "http://localhost", publicOrigin: "https://public.example.com" }));
+        expect(mocks.recover).toHaveBeenCalledWith(expect.objectContaining({ taskIds: ["image-one"], origin: "http://localhost", publicOrigin: "https://public.example.com", tenantId: "default" }));
     });
 
     it.each(["success", "error", "cancelled"])("does not wake a %s task", async (status) => {

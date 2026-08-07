@@ -67,7 +67,12 @@ describe("audio task runtime submission safety", () => {
         expect(state.config.channelId).toBe("channel-two");
         expect(state.candidateConfigs).toEqual([]);
         expect(state.attempts?.map(({ status }) => status)).toEqual(["failed", "running"]);
-        expect(mocks.schedule).toHaveBeenLastCalledWith("audio", "audio-one", expect.objectContaining({ channelId: "channel-two" }));
+        expect(mocks.schedule).toHaveBeenLastCalledWith(
+            "audio",
+            "audio-one",
+            expect.objectContaining({ channelId: "channel-two" }),
+            { tenantId: "tenant-one" },
+        );
     });
 
     it("persists audio bytes returned by a live OpenAI-compatible fixture", async () => {
@@ -159,6 +164,7 @@ function audioTask(): AudioTask {
     const second = { baseUrl: "https://two.example", apiKey: "two", apiFormat: "openai" as const, model: "audio-two", channelId: "channel-two", voice: "alloy", format: "mp3", speed: "1" };
     return {
         id: "audio-one",
+        tenantId: "tenant-one",
         userId: "user-one",
         status: "pending",
         createdAt: 1,

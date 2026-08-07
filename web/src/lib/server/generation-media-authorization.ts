@@ -8,6 +8,7 @@ const TOKEN_TTL_MS = 10 * 60_000;
 
 type GenerationMediaClaim = {
     v: 1;
+    tenantId: string;
     userId: string;
     taskType: Extract<GenerationTaskType, "image" | "video" | "audio">;
     taskId: string;
@@ -20,6 +21,7 @@ type GenerationMediaClaim = {
 export function generationMediaProxyHeaders(input: Omit<GenerationMediaClaim, "v" | "expiresAt">) {
     const claim: GenerationMediaClaim = {
         v: TOKEN_VERSION,
+        tenantId: clean(input.tenantId, 160),
         userId: clean(input.userId, 160),
         taskType: input.taskType,
         taskId: clean(input.taskId, 160),
@@ -33,7 +35,7 @@ export function generationMediaProxyHeaders(input: Omit<GenerationMediaClaim, "v
     return { [HEADER]: `${payload}.${signature(payload)}` };
 }
 
-export function readGenerationMediaClaim(request: Request, expected: { userId: string; channelId: string; url: string }): GenerationMediaClaim | null {
+export function readGenerationMediaClaim(request: Request, expected: { tenantId: string; userId: string; channelId: string; url: string }): GenerationMediaClaim | null {
     const [payload, providedSignature] = (request.headers.get(HEADER) || "").split(".");
     if (!payload || !providedSignature) return null;
     try {
@@ -47,9 +49,9 @@ export function readGenerationMediaClaim(request: Request, expected: { userId: s
     } catch {
         return null;
     }
-    if (claim.v !== TOKEN_VERSION || !["image", "video", "audio"].includes(claim.taskType)) return null;
+    if (claim.v !== TOKEN_VERSION || !claim.tenantId || !["image", "video", "audio"].includes(claim.taskType)) return null;
     if (claim.expiresAt < Date.now() || claim.expiresAt > Date.now() + TOKEN_TTL_MS + 5_000) return null;
-    if (claim.userId !== expected.userId || claim.channelId !== expected.channelId || claim.url !== expected.url) return null;
+    if (claim.tenantId !== expected.tenantId || claim.userId !== expected.userId || claim.channelId !== expected.channelId || claim.url !== expected.url) return null;
     return claim;
 }
 

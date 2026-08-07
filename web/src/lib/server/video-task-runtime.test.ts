@@ -58,6 +58,7 @@ describe("video task upstream reconciliation", () => {
         const headers = new Headers((mocks.fetchInternalApi.mock.calls[0]?.[1] as RequestInit).headers);
         expect(headers.get("authorization")).toBe(`Bearer ${token}`);
         expect(headers.get("x-vozeb-pro-worker-user-id")).toBe(task.userId);
+        expect(headers.get("x-vozeb-pro-worker-tenant-id")).toBe(task.tenantId);
         expect(headers.has("cookie")).toBe(false);
     });
 
@@ -73,7 +74,7 @@ describe("video task upstream reconciliation", () => {
 
         expect(result).toEqual(completed);
         expect(mocks.normalize).toHaveBeenCalledWith(expect.objectContaining({ url: expect.stringContaining("/_media?url="), requestedDurationSeconds: 5 }));
-        expect(mocks.complete).toHaveBeenCalledWith(task.id, expect.objectContaining({ url: "/api/reference-assets/result.mp4" }));
+        expect(mocks.complete).toHaveBeenCalledWith(task.id, expect.objectContaining({ url: "/api/reference-assets/result.mp4" }), task.tenantId);
         expect(mocks.register).toHaveBeenCalledOnce();
         expect(mocks.refund).not.toHaveBeenCalled();
     });
@@ -125,7 +126,7 @@ describe("video task upstream reconciliation", () => {
         const result = await refreshVideoTaskFromUpstream(task, "http://localhost", "session=test");
 
         expect(result).toEqual(failed);
-        expect(mocks.fail).toHaveBeenCalledWith(task.id, failed.error, true);
+        expect(mocks.fail).toHaveBeenCalledWith(task.id, failed.error, true, task.tenantId);
         expect(mocks.refund).toHaveBeenCalledOnce();
         expect(mocks.normalize).not.toHaveBeenCalled();
     });
@@ -203,6 +204,7 @@ describe("video task upstream reconciliation", () => {
 function videoTask(patch: Partial<VideoTask> = {}): VideoTask {
     return {
         id: "local-video",
+        tenantId: "tenant-one",
         userId: "user",
         status: "running",
         createdAt: Date.now(),

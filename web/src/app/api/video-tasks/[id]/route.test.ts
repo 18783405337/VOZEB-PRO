@@ -48,6 +48,9 @@ describe("GET /api/video-tasks/[id]", () => {
 
         expect(response.status).toBe(200);
         expect(after).toHaveBeenCalledOnce();
+        const recovery = vi.mocked(after).mock.calls[0]?.[0] as () => Promise<unknown>;
+        await recovery();
+        expect(mocks.recover).toHaveBeenCalledWith(expect.objectContaining({ taskIds: ["local-video"], tenantId: "default" }));
         expect((await response.json()).task).toMatchObject({ status: "running" });
     });
 

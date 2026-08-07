@@ -32,7 +32,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
                 const now = Date.now();
                 if (recovery || now < nextRecoveryAt) return;
                 nextRecoveryAt = now + 2_000;
-                recovery = runGenerationTaskRecoveryBatch({ origin, cookie, limit: 1, taskIds: [run.id] })
+                recovery = runGenerationTaskRecoveryBatch({ origin, cookie, limit: 1, taskIds: [run.id], tenantId })
                     .catch((error) => console.warn("Agent task recovery wakeup failed", { runId: run.id, error: error instanceof Error ? error.message : String(error) }))
                     .finally(() => {
                         recovery = undefined;

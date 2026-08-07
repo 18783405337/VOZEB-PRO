@@ -58,6 +58,7 @@ describe("Agent Run resume concurrency", () => {
         expect(response.status).toBe(200);
         expect(mocks.updateAgentRunById).toHaveBeenCalledWith("run", expect.objectContaining({ status: "planning", tasks: [], reviewed: false, assetIds: [] }), { type: "run.retry.requested" }, ["failed"], undefined, "default");
         expect(mocks.scheduleGenerationTask).toHaveBeenCalledWith("agent", "run", expect.objectContaining({ executionPhase: "created", nextPollAt: expect.any(Number), lastUpstreamStatus: "retry" }), { tenantId: "default" });
+        expect(mocks.runGenerationTaskRecoveryBatch).toHaveBeenCalledWith(expect.objectContaining({ taskIds: ["run"], tenantId: "default" }));
     });
 
     it("does not use whole-run retry when a failed child task exists", async () => {

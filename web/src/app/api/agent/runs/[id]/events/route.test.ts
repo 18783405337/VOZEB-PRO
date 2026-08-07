@@ -49,7 +49,7 @@ describe("Agent Run SSE", () => {
         await reader.cancel();
 
         expect(new TextDecoder().decode(first.value)).toContain("id: 12");
-        expect(mocks.recover).toHaveBeenCalledWith(expect.objectContaining({ taskIds: ["run"] }));
+        expect(mocks.recover).toHaveBeenCalledWith(expect.objectContaining({ taskIds: ["run"], tenantId: "default" }));
         expect(mocks.getLatestCreativeRunEventId).toHaveBeenCalledWith("run", "task.retry.requested");
         expect(mocks.getLatestCreativeRunEventId).toHaveBeenCalledWith("run", "run.retry.requested");
         expect(mocks.listCreativeRunEvents).toHaveBeenCalledWith("run", "11");

@@ -9,24 +9,24 @@ import { generationMediaProxyHeaders } from "./generation-media-authorization";
 describe("generation media proxy access", () => {
     beforeEach(() => {
         vi.stubEnv("VOZEB_PRO_ENCRYPTION_KEY", "test-encryption-key-that-is-at-least-32-characters");
-        mocks.getRecord.mockReset().mockResolvedValue({ userId: "user", status: "running", payload: { config: { baseUrl: "/api/ai/system/channel", model: "vendor-video" } } });
+        mocks.getRecord.mockReset().mockResolvedValue({ tenantId: "tenant-one", userId: "user", status: "running", payload: { config: { baseUrl: "/api/ai/system/channel", model: "vendor-video" } } });
     });
 
     it("accepts only a server-signed target tied to an owned task", async () => {
         const url = "https://cdn.example.com/result.mp4";
-        const headers = generationMediaProxyHeaders({ userId: "user", taskType: "video", taskId: "task", channelId: "channel", upstreamModel: "vendor-video", url });
-        await expect(authorizeGenerationMediaProxyRequest(new Request("http://localhost", { headers }), { userId: "user", channelId: "channel", url })).resolves.toBe(true);
-        expect(mocks.getRecord).toHaveBeenCalledWith("video", "task");
+        const headers = generationMediaProxyHeaders({ tenantId: "tenant-one", userId: "user", taskType: "video", taskId: "task", channelId: "channel", upstreamModel: "vendor-video", url });
+        await expect(authorizeGenerationMediaProxyRequest(new Request("http://localhost", { headers }), { tenantId: "tenant-one", userId: "user", channelId: "channel", url })).resolves.toBe(true);
+        expect(mocks.getRecord).toHaveBeenCalledWith("video", "task", "tenant-one");
     });
 
     it("rejects unsigned, cross-user and cancelled task media", async () => {
         const url = "https://cdn.example.com/result.mp4";
-        await expect(authorizeGenerationMediaProxyRequest(new Request("http://localhost"), { userId: "user", channelId: "channel", url })).resolves.toBe(false);
+        await expect(authorizeGenerationMediaProxyRequest(new Request("http://localhost"), { tenantId: "tenant-one", userId: "user", channelId: "channel", url })).resolves.toBe(false);
 
-        const headers = generationMediaProxyHeaders({ userId: "user", taskType: "video", taskId: "task", channelId: "channel", upstreamModel: "vendor-video", url });
-        mocks.getRecord.mockResolvedValueOnce({ userId: "other", status: "running", payload: { config: { baseUrl: "/api/ai/system/channel", model: "vendor-video" } } });
-        await expect(authorizeGenerationMediaProxyRequest(new Request("http://localhost", { headers }), { userId: "user", channelId: "channel", url })).resolves.toBe(false);
-        mocks.getRecord.mockResolvedValueOnce({ userId: "user", status: "cancelled", payload: { config: { baseUrl: "/api/ai/system/channel", model: "vendor-video" } } });
-        await expect(authorizeGenerationMediaProxyRequest(new Request("http://localhost", { headers }), { userId: "user", channelId: "channel", url })).resolves.toBe(false);
+        const headers = generationMediaProxyHeaders({ tenantId: "tenant-one", userId: "user", taskType: "video", taskId: "task", channelId: "channel", upstreamModel: "vendor-video", url });
+        mocks.getRecord.mockResolvedValueOnce({ tenantId: "tenant-one", userId: "other", status: "running", payload: { config: { baseUrl: "/api/ai/system/channel", model: "vendor-video" } } });
+        await expect(authorizeGenerationMediaProxyRequest(new Request("http://localhost", { headers }), { tenantId: "tenant-one", userId: "user", channelId: "channel", url })).resolves.toBe(false);
+        mocks.getRecord.mockResolvedValueOnce({ tenantId: "tenant-one", userId: "user", status: "cancelled", payload: { config: { baseUrl: "/api/ai/system/channel", model: "vendor-video" } } });
+        await expect(authorizeGenerationMediaProxyRequest(new Request("http://localhost", { headers }), { tenantId: "tenant-one", userId: "user", channelId: "channel", url })).resolves.toBe(false);
     });
 });

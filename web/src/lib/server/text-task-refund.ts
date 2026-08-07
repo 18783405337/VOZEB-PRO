@@ -6,8 +6,8 @@ export async function refundTextTask(task: TextTask) {
     const billing = task.billing;
     if ((task.status !== "error" && task.status !== "cancelled") || !billing?.pointsRecordId || billing.refunded) return task;
     await refundUserPoints(task.userId, generationModelId(task.config), billing.pointsCost, "text", 1, textTaskRefundIdempotencyKey(task), billing.pointsRecordId);
-    await updateTextTask(task.id, { billing: { ...billing, refunded: true } });
-    return (await getTextTask(task.id)) || task;
+    await updateTextTask(task.id, { billing: { ...billing, refunded: true } }, task.tenantId);
+    return (await getTextTask(task.id, task.tenantId)) || task;
 }
 
 export function textTaskRefundIdempotencyKey(task: Pick<TextTask, "id" | "attemptNo">) {

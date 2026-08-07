@@ -18,13 +18,13 @@ export type VideoUpstreamStep = { state: "pending"; status: string } | { state: 
 
 export async function refreshVideoTaskFromUpstream(task: VideoTask, origin: string, cookie: string) {
     const polling = taskPollingPolicy(task);
-    const claimed = await claimVideoTaskPoll(task.id, polling.intervalMs);
-    if (!claimed) return getVideoTask(task.id);
+    const claimed = await claimVideoTaskPoll(task.id, polling.intervalMs, task.tenantId);
+    if (!claimed) return getVideoTask(task.id, task.tenantId);
 
     const step = await queryVideoTaskUpstream(claimed, origin, cookie);
     if (step.state === "failed") return failVideoTask(claimed, step.error);
     if (step.state === "result_ready") return persistVideoTaskResult(claimed, step.resultUrl, origin, cookie);
-    return getVideoTask(claimed.id);
+    return getVideoTask(claimed.id, claimed.tenantId);
 }
 
 export async function queryVideoTaskUpstream(task: VideoTask, origin: string, cookie = "", workerUserId = ""): Promise<VideoUpstreamStep> {
@@ -52,7 +52,7 @@ function taskPollingPolicy(task: VideoTask) {
 }
 
 async function completeVideoTask(task: VideoTask, resultUrl: string, origin: string, cookie: string, workerUserId = "") {
-    const beforePersistence = await getVideoTask(task.id);
+    const beforePersistence = await getVideoTask(task.id, task.tenantId);
     if (!beforePersistence || beforePersistence.status === "cancelled") {
         if (beforePersistence?.status === "cancelled") await refundVideoTask(beforePersistence);
         return beforePersistence;
@@ -63,11 +63,11 @@ async function completeVideoTask(task: VideoTask, resultUrl: string, origin: str
         pointsCost: task.upstream.pointsCost,
         pointsRecordId: task.upstream.pointsRecordId,
     });
-    await updateVideoTask(task.id, { attempts });
+    await updateVideoTask(task.id, { attempts }, task.tenantId);
     const channelId = task.config.channelId || systemGenerationChannelId(task.config.baseUrl);
-    const workerHeaders = new Headers(workerUserId ? maintenanceWorkerHeaders(workerUserId) : undefined);
+    const workerHeaders = new Headers(workerUserId ? maintenanceWorkerHeaders(workerUserId, task.tenantId || "default") : undefined);
     if (/^https?:\/\//i.test(resultUrl) && channelId) {
-        Object.entries(generationMediaProxyHeaders({ userId: task.userId, taskType: "video", taskId: task.id, channelId, upstreamModel: task.config.model, url: resultUrl })).forEach(([key, value]) => workerHeaders.set(key, value));
+        Object.entries(generationMediaProxyHeaders({ tenantId: task.tenantId || "default", userId: task.userId, taskType: "video", taskId: task.id, channelId, upstreamModel: task.config.model, url: resultUrl })).forEach(([key, value]) => workerHeaders.set(key, value));
     }
     const result = task.result?.url
         ? task.result
@@ -85,9 +85,9 @@ async function completeVideoTask(task: VideoTask, resultUrl: string, origin: str
               taskId: task.id,
               projectId: task.projectId,
           });
-    const completed = await completeReconciledVideoTask(task.id, result);
+    const completed = await completeReconciledVideoTask(task.id, result, task.tenantId);
     if (!completed) {
-        const latest = await getVideoTask(task.id);
+        const latest = await getVideoTask(task.id, task.tenantId);
         if (latest?.status === "cancelled") await refundVideoTask(latest);
         return latest;
     }
@@ -98,13 +98,13 @@ async function completeVideoTask(task: VideoTask, resultUrl: string, origin: str
 
 async function failVideoTask(task: VideoTask, error: string, retryable = true) {
     const attempts = finishGenerationAttempt(task.attempts || [], task.attempts?.at(-1)?.attemptNo || 1, { status: "failed", error });
-    await updateVideoTask(task.id, { attempts });
-    const failed = await failReconciledVideoTask(task.id, error, retryable);
+    await updateVideoTask(task.id, { attempts }, task.tenantId);
+    const failed = await failReconciledVideoTask(task.id, error, retryable, task.tenantId);
     if (failed) {
         await writeVideoGenerationLog({ ...failed, attempts }, "failed", error, retryable);
         if (task.status === "running") await refundVideoTask(failed);
     }
-    return failed || getVideoTask(task.id);
+    return failed || getVideoTask(task.id, task.tenantId);
 }
 
 async function registerVideoAsset(task: VideoTask) {
@@ -188,7 +188,7 @@ function videoContentReady(response: Response) {
 
 function videoProxyHeaders(task: VideoTask, cookie: string, workerUserId: string) {
     return {
-        ...(workerUserId ? maintenanceWorkerHeaders(workerUserId) : cookie ? { cookie } : {}),
+        ...(workerUserId ? maintenanceWorkerHeaders(workerUserId, task.tenantId || "default") : cookie ? { cookie } : {}),
         ...systemAiBillingHeaders(generationModelId(task.config), undefined, task.config.model),
     };
 }

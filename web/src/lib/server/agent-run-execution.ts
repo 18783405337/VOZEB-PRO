@@ -375,7 +375,9 @@ export async function executeTasks(runId: string, origin: string, cookie: string
                     ["running"],
                     executionId,
                 );
-                if (finished && backgroundReview) await scheduleGenerationTask("agent", runId, { executionPhase: "review_pending", nextPollAt: Date.now(), lastUpstreamStatus: "review_pending" });
+                if (finished && backgroundReview) {
+                    await scheduleGenerationTask("agent", runId, { executionPhase: "review_pending", nextPollAt: Date.now(), lastUpstreamStatus: "review_pending" }, { tenantId: finished.tenantId || run.tenantId });
+                }
                 return;
             }
             const blocked = run.tasks.filter((task) => task.status === "ready");

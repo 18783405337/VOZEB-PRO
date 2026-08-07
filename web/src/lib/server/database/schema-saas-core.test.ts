@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { POSTGRESQL_SAAS_CORE_SCHEMA_SQL } from "./schema-saas-core";
+import { POSTGRESQL_SAAS_CORE_SCHEMA_SQL, POSTGRESQL_SAAS_RESOURCE_SCHEMA_SQL } from "./schema-saas-core";
 
 describe("SaaS core schema", () => {
     it("creates the default tenant, membership, role, and permission tables", () => {
@@ -15,5 +15,12 @@ describe("SaaS core schema", () => {
         expect(POSTGRESQL_SAAS_CORE_SCHEMA_SQL).toContain("conrelid = 'tenant_roles'::regclass");
         expect(POSTGRESQL_SAAS_CORE_SCHEMA_SQL).toContain("conrelid = 'tenant_role_permissions'::regclass");
         expect(POSTGRESQL_SAAS_CORE_SCHEMA_SQL).toContain("conrelid = 'tenant_members'::regclass");
+    });
+
+    it("backfills legacy resource rows before enforcing tenant ownership", () => {
+        for (const table of ["generation_tasks", "generation_logs", "creative_assets", "billing_orders"]) {
+            expect(POSTGRESQL_SAAS_RESOURCE_SCHEMA_SQL).toContain(`UPDATE ${table} SET tenant_id = 'default' WHERE tenant_id IS NULL;`);
+            expect(POSTGRESQL_SAAS_RESOURCE_SCHEMA_SQL).toContain(`ALTER TABLE ${table} ALTER COLUMN tenant_id SET NOT NULL;`);
+        }
     });
 });
