@@ -53,3 +53,17 @@ export type AddTenantMemberInput = {
     roleId: string;
     status?: TenantMemberStatus;
 };
+
+export type TenantListOptions = {
+    page?: number;
+    pageSize?: number;
+    keyword?: string;
+    status?: TenantStatus;
+};
+
+export type TenantListResult = {
+    items: TenantRecord[];
+    total: number;
+    page: number;
+    pageSize: number;
+};

@@ -53,6 +53,59 @@ describe("TenantRepository", () => {
         expect(query).toHaveBeenCalledWith("UPDATE tenants SET status = $2 WHERE id = $1 RETURNING *", ["tenant-a", "disabled"]);
     });
 
+    it("lists a filtered page of tenants with a separate total", async () => {
+        const timestamp = "2026-08-07T00:00:00.000Z";
+        const query = vi
+            .fn()
+            .mockResolvedValueOnce(queryResult([{ total: "3" }]))
+            .mockResolvedValueOnce(
+                queryResult([
+                    {
+                        id: "tenant-a",
+                        slug: "tenant-a",
+                        name: "Tenant A",
+                        status: "disabled",
+                        settings: {},
+                        created_at: timestamp,
+                        updated_at: timestamp,
+                    },
+                ]),
+            );
+        const repository = new TenantRepository({ query } as unknown as QueryExecutor);
+
+        await expect(repository.list({ page: 2, pageSize: 10, keyword: "Studio", status: "disabled" })).resolves.toMatchObject({
+            items: [{ id: "tenant-a", status: "disabled" }],
+            total: 3,
+            page: 2,
+            pageSize: 10,
+        });
+        expect(query.mock.calls[0]?.[0]).toContain("lower(name) LIKE $1 OR lower(slug) LIKE $1");
+        expect(query.mock.calls[0]?.[0]).toContain("status = $2");
+        expect(query.mock.calls[0]?.[1]).toEqual(["%studio%", "disabled"]);
+        expect(query.mock.calls[1]?.[1]).toEqual(["%studio%", "disabled", 10, 10]);
+    });
+
+    it("renames only the requested tenant", async () => {
+        const timestamp = "2026-08-07T00:00:00.000Z";
+        const query = vi.fn().mockResolvedValue(
+            queryResult([
+                {
+                    id: "tenant-a",
+                    slug: "tenant-a",
+                    name: "Renamed",
+                    status: "active",
+                    settings: {},
+                    created_at: timestamp,
+                    updated_at: timestamp,
+                },
+            ]),
+        );
+        const repository = new TenantRepository({ query } as unknown as QueryExecutor);
+
+        await expect(repository.updateName("tenant-a", " Renamed ")).resolves.toMatchObject({ id: "tenant-a", name: "Renamed" });
+        expect(query).toHaveBeenCalledWith("UPDATE tenants SET name = $2 WHERE id = $1 RETURNING *", ["tenant-a", "Renamed"]);
+    });
+
     it("always scopes member lookups by tenant", async () => {
         const query = vi.fn().mockResolvedValue(queryResult());
         const repository = new TenantRepository({ query } as unknown as QueryExecutor);

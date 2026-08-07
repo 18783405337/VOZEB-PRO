@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { TENANT_PERMISSIONS } from "@/lib/server/authorization/permission-catalog";
 import type { QueryExecutor } from "@/lib/server/database/postgres";
-import type { AddTenantMemberInput, CreateTenantWithOwnerInput, TenantMemberRecord, TenantMemberStatus, TenantRecord, TenantStatus } from "@/lib/server/tenant/tenant-types";
+import type { AddTenantMemberInput, CreateTenantWithOwnerInput, TenantListOptions, TenantListResult, TenantMemberRecord, TenantMemberStatus, TenantRecord, TenantStatus } from "@/lib/server/tenant/tenant-types";
 
 import { isoValue, optionalString, stringValue } from "./repository-shared";
 
@@ -40,6 +40,39 @@ export class TenantRepository {
             [hostname.trim().toLowerCase()],
         );
         return result.rows[0] ? mapTenant(result.rows[0]) : null;
+    }
+
+    async list(options: TenantListOptions = {}): Promise<TenantListResult> {
+        const page = Math.max(1, Math.floor(Number(options.page) || 1));
+        const pageSize = Math.max(1, Math.min(100, Math.floor(Number(options.pageSize) || 20)));
+        const keyword = options.keyword?.trim().toLowerCase() || "";
+        const parameters: unknown[] = [];
+        const conditions: string[] = [];
+
+        if (keyword) {
+            parameters.push(`%${keyword}%`);
+            conditions.push(`(lower(name) LIKE $${parameters.length} OR lower(slug) LIKE $${parameters.length})`);
+        }
+        if (options.status) {
+            parameters.push(options.status);
+            conditions.push(`status = $${parameters.length}`);
+        }
+
+        const where = conditions.length ? ` WHERE ${conditions.join(" AND ")}` : "";
+        const totalResult = await this.db.query(`SELECT count(*) AS total FROM tenants${where}`, parameters);
+        const rowsResult = await this.db.query(
+            `SELECT * FROM tenants${where}
+             ORDER BY created_at DESC, id ASC
+             LIMIT $${parameters.length + 1} OFFSET $${parameters.length + 2}`,
+            [...parameters, pageSize, (page - 1) * pageSize],
+        );
+
+        return {
+            items: rowsResult.rows.map(mapTenant),
+            total: Number(totalResult.rows[0]?.total || 0),
+            page,
+            pageSize,
+        };
     }
 
     async createWithOwner(input: CreateTenantWithOwnerInput): Promise<TenantRecord> {
@@ -83,6 +116,11 @@ export class TenantRepository {
 
     async updateStatus(tenantId: string, status: TenantStatus): Promise<TenantRecord | null> {
         const result = await this.db.query("UPDATE tenants SET status = $2 WHERE id = $1 RETURNING *", [tenantId, status]);
+        return result.rows[0] ? mapTenant(result.rows[0]) : null;
+    }
+
+    async updateName(tenantId: string, name: string): Promise<TenantRecord | null> {
+        const result = await this.db.query("UPDATE tenants SET name = $2 WHERE id = $1 RETURNING *", [tenantId, requiredText(name, "Tenant name")]);
         return result.rows[0] ? mapTenant(result.rows[0]) : null;
     }
 
