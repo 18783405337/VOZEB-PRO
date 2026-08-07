@@ -26,6 +26,7 @@ import { systemAiBillingHeaders } from "@/lib/server/system-ai-billing";
 import { maintenanceWorkerContextHeaders, requestRuntimeCredential } from "@/lib/server/maintenance-auth";
 import { writeVideoGenerationLog } from "@/lib/server/video-task-log";
 import { buildOpenAiVideoFormData } from "./video-task-openai";
+import { getTrustedTenantId } from "@/lib/server/tenant/tenant-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -37,10 +38,11 @@ type CreateVideoTaskBody = { config?: Record<string, unknown>; prompt?: string; 
 export async function POST(request: Request) {
     const user = await getCurrentUser(request);
     if (!user) return NextResponse.json({ error: "请先登录" }, { status: 401 });
+    const tenantId = await getTrustedTenantId(request, user);
     const headerRequestId = clean(request.headers.get("x-vozeb-pro-client-request-id"));
     const headerAttemptNo = positiveAttemptNo(request.headers.get("x-vozeb-pro-attempt-no"));
     if (headerRequestId) {
-        const existing = await getStoredGenerationTaskByRequest<VideoTask>("video", user.id, headerRequestId, headerAttemptNo);
+        const existing = await getStoredGenerationTaskByRequest<VideoTask>("video", tenantId, user.id, headerRequestId, headerAttemptNo);
         if (existing) return NextResponse.json({ task: publicTask(existing) });
     }
     const rate = await checkGenerationRateLimit(user.id, request, "video");
@@ -53,7 +55,7 @@ export async function POST(request: Request) {
         throw error;
     }
     if (!headerRequestId && body.context?.clientRequestId) {
-        const existing = await getStoredGenerationTaskByRequest<VideoTask>("video", user.id, body.context.clientRequestId, body.context.attemptNo);
+        const existing = await getStoredGenerationTaskByRequest<VideoTask>("video", tenantId, user.id, body.context.clientRequestId, body.context.attemptNo);
         if (existing) return NextResponse.json({ task: publicTask(existing) });
     }
     if (headerRequestId) body.context = { ...(body.context || {}), clientRequestId: headerRequestId, ...(headerAttemptNo ? { attemptNo: headerAttemptNo } : {}) };
@@ -120,6 +122,8 @@ export async function POST(request: Request) {
             };
             if (!localTask) {
                 localTask = await createVideoTask({
+                    ...(body.context || {}),
+                    tenantId,
                     userId: user.id,
                     username: user.username,
                     displayName: user.displayName,
@@ -130,9 +134,8 @@ export async function POST(request: Request) {
                     prompt,
                     source: mediaTaskSource(body.source, body.context, "video-task"),
                     attempts,
-                    ...(body.context || {}),
                 });
-                await linkStoredGenerationTask("video", localTask.id, body.context || {});
+                await linkStoredGenerationTask("video", localTask.id, body.context || {}, tenantId);
             } else {
                 await updateVideoTask(localTask.id, {
                     config: channel,
@@ -150,7 +153,7 @@ export async function POST(request: Request) {
                 queryPath: channel.advancedConfig?.queryPath,
                 nextPollAt: submissionStartedAt + resolveModelRequestTimeoutMs(channel, "video"),
                 lastUpstreamStatus: "submitting",
-            });
+            }, { tenantId });
             try {
                 const upstream = await createUpstream(user.id, origin, cookie, channel, providerPrompt, parameters, references, settings.generationPointMultipliers, billingRequestId);
                 await updateVideoTask(localTask.id, { config: channel, upstream, requestedDurationSeconds: parameters.videoSeconds === -1 ? undefined : parameters.videoSeconds, attempts });
@@ -165,7 +168,7 @@ export async function POST(request: Request) {
                     submittedAt,
                     nextPollAt: submittedAt,
                     lastUpstreamStatus: "submitted",
-                });
+                }, { tenantId });
                 after(() => runGenerationTaskRecoveryBatch({ origin, cookie, limit: 1, taskIds: [task.id] }));
                 return NextResponse.json({ task: publicTask(task) });
             } catch (error) {
@@ -175,7 +178,7 @@ export async function POST(request: Request) {
                 if (error instanceof SafeCandidateFailure && index < channels.length - 1) continue;
                 const message = toSafeGenerationErrorMessage(error, "视频任务创建失败");
                 if (!(error instanceof SafeCandidateFailure)) {
-                    await scheduleGenerationTask("video", localTask.id, { executionPhase: "needs_review", nextPollAt: undefined, lastUpstreamStatus: "submission_outcome_unknown" });
+                    await scheduleGenerationTask("video", localTask.id, { executionPhase: "needs_review", nextPollAt: undefined, lastUpstreamStatus: "submission_outcome_unknown" }, { tenantId });
                     return NextResponse.json({ task: { ...publicTask({ ...localTask, attempts }), needsReview: true }, warning: `${message}；上游创建结果待确认，系统不会自动重复创建。` }, { status: 202 });
                 }
                 break;
@@ -186,10 +189,10 @@ export async function POST(request: Request) {
             const message = toSafeGenerationErrorMessage(lastError, "视频任务创建失败");
             await writeVideoGenerationLog({ ...localTask, attempts }, "failed", message, lastError instanceof SafeCandidateFailure);
             await transitionVideoTask(localTask, { status: "error", error: message, retryable: lastError instanceof SafeCandidateFailure });
-            await scheduleGenerationTask("video", localTask.id, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "create_failed" });
+            await scheduleGenerationTask("video", localTask.id, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "create_failed" }, { tenantId });
         }
         return NextResponse.json({ error: toSafeGenerationErrorMessage(lastError, "视频任务创建失败"), canRetry: lastError instanceof SafeCandidateFailure }, { status: 502 });
-    });
+    }, tenantId);
     return response || NextResponse.json({ error: "当前用户视频任务已达到并发上限" }, { status: 429 });
 }
 

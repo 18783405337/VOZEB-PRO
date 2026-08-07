@@ -42,12 +42,12 @@ export function createAudioTask(input: Omit<AudioTask, "id" | "status" | "create
     return createStoredGenerationTask("audio", { ...input, id: randomUUID(), status: "pending", createdAt: now, updatedAt: now } satisfies AudioTask, GENERATION_TASK_RETENTION_MS);
 }
 
-export async function getAudioTask(id: string) {
-    return getStoredGenerationTask<AudioTask>("audio", id);
+export async function getAudioTask(id: string, tenantId?: string) {
+    return getStoredGenerationTask<AudioTask>("audio", id, tenantId);
 }
 
-export async function updateAudioTask(id: string, patch: Partial<Pick<AudioTask, "status" | "config" | "upstream" | "result" | "billing" | "error" | "candidateConfigs" | "attempts" | "attemptNo">>) {
-    return mutateStoredGenerationTask<AudioTask>("audio", id, GENERATION_TASK_RETENTION_MS, (task) => ({ ...task, ...patch }));
+export async function updateAudioTask(id: string, patch: Partial<Pick<AudioTask, "status" | "config" | "upstream" | "result" | "billing" | "error" | "candidateConfigs" | "attempts" | "attemptNo">>, tenantId?: string) {
+    return mutateStoredGenerationTask<AudioTask>("audio", id, GENERATION_TASK_RETENTION_MS, (task) => ({ ...task, ...patch }), tenantId);
 }
 
 export function transitionAudioTask(
@@ -56,9 +56,9 @@ export function transitionAudioTask(
     patch: Partial<Pick<AudioTask, "config" | "upstream" | "result" | "billing" | "error">> & { status: AudioTask["status"] },
     executionPatch?: import("@/lib/server/generation-task-scheduler").GenerationTaskSchedulePatch,
 ) {
-    return transitionStoredGenerationTask<AudioTask>("audio", task.id, task.userId, allowedStatuses, patch, GENERATION_TASK_RETENTION_MS, executionPatch);
+    return transitionStoredGenerationTask<AudioTask>("audio", task.id, task.userId, allowedStatuses, patch, GENERATION_TASK_RETENTION_MS, executionPatch, task.tenantId);
 }
 
-export function touchAudioTask(id: string) {
-    return touchStoredGenerationTask("audio", id, Date.now(), GENERATION_TASK_RETENTION_MS);
+export function touchAudioTask(id: string, tenantId?: string) {
+    return touchStoredGenerationTask("audio", id, Date.now(), GENERATION_TASK_RETENTION_MS, tenantId);
 }

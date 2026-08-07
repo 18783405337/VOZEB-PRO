@@ -18,6 +18,7 @@ vi.mock("@/lib/server/audio-task-refund", () => ({ refundAudioTask: mocks.refund
 vi.mock("@/lib/server/internal-origin", () => ({ fetchInternalApi: vi.fn(), resolveInternalOrigin: vi.fn(() => "http://localhost") }));
 vi.mock("@/lib/server/generation-channel", () => ({ generationModelId: vi.fn(() => "voice") }));
 vi.mock("@/lib/server/generation-task-recovery-service", () => ({ runGenerationTaskRecoveryBatch: mocks.recover }));
+vi.mock("@/lib/server/tenant/tenant-context", () => ({ getTrustedTenantId: vi.fn(async () => "default") }));
 
 import { after } from "next/server";
 import { GET, PATCH } from "./route";

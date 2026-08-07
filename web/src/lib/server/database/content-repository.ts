@@ -180,7 +180,7 @@ export class PromptsRepository {
 export class GenerationLogsRepository {
     constructor(private readonly db: QueryExecutor) {}
 
-    async list(input: PageInput & { userId?: string; kind?: GenerationKind; source?: string; status?: GenerationStatus; keyword?: string; startAt?: string; endAt?: string } = {}): Promise<PageResult<GenerationLogRecord>> {
+    async list(input: PageInput & { tenantId?: string; userId?: string; kind?: GenerationKind; source?: string; status?: GenerationStatus; keyword?: string; startAt?: string; endAt?: string } = {}): Promise<PageResult<GenerationLogRecord>> {
         const page = normalizePage(input.page);
         const pageSize = normalizePageSize(input.pageSize);
         const keyword = input.keyword?.trim().toLowerCase() || "";
@@ -188,17 +188,18 @@ export class GenerationLogsRepository {
             `
             SELECT *, count(*) OVER() AS total_count
             FROM generation_logs
-            WHERE ($1::text IS NULL OR user_id = $1)
-              AND ($2::text IS NULL OR kind = $2)
-              AND ($3::text IS NULL OR source = $3)
-              AND ($4::text IS NULL OR status = $4)
-              AND ($5 = '' OR lower(title) LIKE $6 OR lower(prompt) LIKE $6 OR lower(model) LIKE $6 OR lower(username) LIKE $6 OR lower(display_name) LIKE $6 OR lower(summary) LIKE $6)
-              AND ($7::timestamptz IS NULL OR created_at >= $7)
-              AND ($8::timestamptz IS NULL OR created_at <= $8)
+            WHERE ($1::text IS NULL OR tenant_id = $1)
+              AND ($2::text IS NULL OR user_id = $2)
+              AND ($3::text IS NULL OR kind = $3)
+              AND ($4::text IS NULL OR source = $4)
+              AND ($5::text IS NULL OR status = $5)
+              AND ($6 = '' OR lower(title) LIKE $7 OR lower(prompt) LIKE $7 OR lower(model) LIKE $7 OR lower(username) LIKE $7 OR lower(display_name) LIKE $7 OR lower(summary) LIKE $7)
+              AND ($8::timestamptz IS NULL OR created_at >= $8)
+              AND ($9::timestamptz IS NULL OR created_at <= $9)
             ORDER BY created_at DESC
-            LIMIT $9 OFFSET $10
+            LIMIT $10 OFFSET $11
             `,
-            [input.userId || null, input.kind || null, input.source || null, input.status || null, keyword, `%${keyword}%`, input.startAt || null, input.endAt || null, pageSize, (page - 1) * pageSize],
+            [input.tenantId || null, input.userId || null, input.kind || null, input.source || null, input.status || null, keyword, `%${keyword}%`, input.startAt || null, input.endAt || null, pageSize, (page - 1) * pageSize],
         );
         const logs = await this.attachAssets(result.rows.map(mapGenerationLog));
         return pageResult(logs, Number(result.rows[0]?.total_count || 0), page, pageSize);
@@ -262,7 +263,7 @@ export class GenerationLogsRepository {
         };
     }
 
-    async getCreateOverview(userId: string): Promise<GenerationLogCreateOverview> {
+    async getCreateOverview(tenantId: string, userId: string): Promise<GenerationLogCreateOverview> {
         const result = await this.db.query<Record<string, unknown>>(
             `
             WITH running_rows AS (
@@ -273,7 +274,7 @@ export class GenerationLogsRepository {
                     COALESCE(NULLIF(btrim(title), ''), CASE WHEN kind = 'video' THEN '视频生成' ELSE '图片生成' END) AS title,
                     created_at
                 FROM generation_logs
-                WHERE user_id = $1 AND status = 'pending'
+                WHERE tenant_id = $1 AND user_id = $2 AND status = 'pending'
                 ORDER BY created_at DESC
                 LIMIT 4
             ),
@@ -287,7 +288,8 @@ export class GenerationLogsRepository {
                     asset.sort_order
                 FROM generation_logs log
                 JOIN generation_log_assets asset ON asset.generation_log_id = log.id
-                WHERE log.user_id = $1
+                WHERE log.tenant_id = $1
+                  AND log.user_id = $2
                   AND log.status = 'success'
                   AND COALESCE(NULLIF(asset.server_url, ''), NULLIF(asset.url, ''), NULLIF(asset.remote_url, '')) IS NOT NULL
                   AND COALESCE(NULLIF(asset.server_url, ''), NULLIF(asset.url, ''), NULLIF(asset.remote_url, '')) !~* '^(data|blob):'
@@ -320,7 +322,7 @@ export class GenerationLogsRepository {
                     FROM recent_rows
                 ), '[]'::jsonb) AS recent_assets
             `,
-            [userId],
+            [tenantId, userId],
         );
         const row = result.rows[0] || {};
         return {
@@ -342,30 +344,32 @@ export class GenerationLogsRepository {
         };
     }
 
-    async getById(id: string, forUpdate = false) {
-        const result = await this.db.query(`SELECT * FROM generation_logs WHERE id = $1${forUpdate ? " FOR UPDATE" : ""}`, [id]);
+    async getById(id: string, forUpdate = false, tenantId?: string) {
+        const result = await this.db.query(`SELECT * FROM generation_logs WHERE id = $1 AND ($2::text IS NULL OR tenant_id = $2)${forUpdate ? " FOR UPDATE" : ""}`, [id, tenantId || null]);
         return (await this.attachAssets(result.rows.map(mapGenerationLog)))[0] || null;
     }
 
-    async getByIds(ids: string[], userId?: string, forUpdate = false) {
+    async getByIds(ids: string[], userId?: string, forUpdate = false, tenantId?: string) {
         if (!ids.length) return [];
-        const result = await this.db.query(`SELECT * FROM generation_logs WHERE id = ANY($1::text[]) AND ($2::text IS NULL OR user_id = $2) ORDER BY created_at DESC${forUpdate ? " FOR UPDATE" : ""}`, [ids, userId || null]);
+        const result = await this.db.query(`SELECT * FROM generation_logs WHERE id = ANY($1::text[]) AND ($2::text IS NULL OR user_id = $2) AND ($3::text IS NULL OR tenant_id = $3) ORDER BY created_at DESC${forUpdate ? " FOR UPDATE" : ""}`, [ids, userId || null, tenantId || null]);
         return this.attachAssets(result.rows.map(mapGenerationLog));
     }
 
-    async listByUserId(userId: string, forUpdate = false) {
-        const result = await this.db.query(`SELECT * FROM generation_logs WHERE user_id = $1 ORDER BY created_at DESC${forUpdate ? " FOR UPDATE" : ""}`, [userId]);
+    async listByUserId(userId: string, forUpdate = false, tenantId?: string) {
+        const result = await this.db.query(`SELECT * FROM generation_logs WHERE user_id = $1 AND ($2::text IS NULL OR tenant_id = $2) ORDER BY created_at DESC${forUpdate ? " FOR UPDATE" : ""}`, [userId, tenantId || null]);
         return this.attachAssets(result.rows.map(mapGenerationLog));
     }
 
-    async listByUserAndAssetUrls(userId: string, urls: string[]) {
+    async listByUserAndAssetUrls(userId: string, urls: string[], tenantId?: string) {
         if (!urls.length) return [];
         const result = await this.db.query(
             `SELECT DISTINCT gl.* FROM generation_logs gl
              JOIN generation_log_assets asset ON asset.generation_log_id = gl.id
-             WHERE gl.user_id = $1 AND COALESCE(NULLIF(asset.server_url, ''), asset.url) = ANY($2::text[])
+             WHERE gl.user_id = $1
+               AND COALESCE(NULLIF(asset.server_url, ''), asset.url) = ANY($2::text[])
+               AND ($3::text IS NULL OR gl.tenant_id = $3)
              ORDER BY gl.created_at DESC`,
-            [userId, urls],
+            [userId, urls, tenantId || null],
         );
         return this.attachAssets(result.rows.map(mapGenerationLog));
     }
@@ -374,11 +378,12 @@ export class GenerationLogsRepository {
         const result = await this.db.query(
             `
             INSERT INTO generation_logs (
-                id, user_id, conversation_id, username, display_name, kind, source, status, title, prompt, model, summary,
+                id, tenant_id, user_id, conversation_id, username, display_name, kind, source, status, title, prompt, model, summary,
                 duration_ms, count, success_count, fail_count, request_snapshot, task_id, error, created_at, updated_at, completed_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb, $18, $19, $20, $21, $22)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18::jsonb, $19, $20, $21, $22, $23)
             ON CONFLICT (id) DO UPDATE SET
+                tenant_id = COALESCE(EXCLUDED.tenant_id, generation_logs.tenant_id),
                 conversation_id = EXCLUDED.conversation_id,
                 username = EXCLUDED.username,
                 display_name = EXCLUDED.display_name,
@@ -396,10 +401,12 @@ export class GenerationLogsRepository {
                 error = EXCLUDED.error,
                 completed_at = EXCLUDED.completed_at
             WHERE generation_logs.user_id = EXCLUDED.user_id
+              AND (EXCLUDED.tenant_id IS NULL OR generation_logs.tenant_id = EXCLUDED.tenant_id)
             RETURNING *
             `,
             [
                 log.id,
+                log.tenantId || null,
                 log.userId,
                 log.conversationId || null,
                 log.username,

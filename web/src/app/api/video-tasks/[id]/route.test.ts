@@ -26,6 +26,7 @@ vi.mock("@/lib/server/video-task-store", () => ({
     getVideoTask: mocks.getVideoTask,
     transitionVideoTask: mocks.transition,
 }));
+vi.mock("@/lib/server/tenant/tenant-context", () => ({ getTrustedTenantId: vi.fn(async () => "default") }));
 
 import { GET, PATCH } from "./route";
 

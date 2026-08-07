@@ -146,6 +146,7 @@ describe("setAgentRunStatus", () => {
 function canvasRun(): AgentRun {
     return {
         id: "run",
+        tenantId: "default",
         userId: "user",
         conversationId: "conversation",
         clientRequestId: "request",

@@ -6,6 +6,7 @@ import type { VideoTask } from "@/lib/server/video-task-store";
 export function writeVideoGenerationLog(task: VideoTask, status: "success" | "failed", error?: string, canRetry = false) {
     const url = task.result?.url || task.result?.remoteUrl || "";
     return recordGenerationTaskLogResult({
+        tenantId: task.tenantId,
         logId: task.generationLogId,
         slotId: task.generationSlotId,
         clientRequestId: task.clientRequestId,

@@ -5,13 +5,15 @@ import { getCurrentUser } from "@/lib/auth/session";
 import { deleteGenerationLogs, listGenerationLogs, listUserGenerationLogsForDelete } from "@/lib/server/generation-log-store";
 import { deleteGenerationLogResultsForUser, GenerationLogDraftValidationError, GenerationLogOwnershipError, recordGenerationLogDraft, renameGenerationLogForUser } from "@/lib/server/generation-log-task-service";
 import type { GenerationLogInput } from "@/lib/server/generation-log-types";
+import { getTrustedTenantId } from "@/lib/server/tenant/tenant-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
-    const currentUser = await getCurrentUser();
+    const currentUser = await getCurrentUser(request);
     if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
+    const tenantId = await getTrustedTenantId(request, currentUser);
 
     const url = new URL(request.url);
     const page = Number(url.searchParams.get("page") || 1);
@@ -20,19 +22,20 @@ export async function GET(request: Request) {
     const source = url.searchParams.get("source") || undefined;
     const status = url.searchParams.get("status") || undefined;
     const keyword = url.searchParams.get("keyword") || undefined;
-    return NextResponse.json(await listGenerationLogs({ page, pageSize, kind, source, status, keyword, userId: currentUser.id }));
+    return NextResponse.json(await listGenerationLogs({ page, pageSize, kind, source, status, keyword, tenantId, userId: currentUser.id }));
 }
 
 export async function POST(request: Request) {
-    const currentUser = await getCurrentUser();
+    const currentUser = await getCurrentUser(request);
     if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
+    const tenantId = await getTrustedTenantId(request, currentUser);
 
-    const body = await readJsonBody<Omit<GenerationLogInput, "userId" | "username" | "displayName">>(request, 5 * 1024 * 1024);
+    const body = await readJsonBody<Omit<GenerationLogInput, "tenantId" | "userId" | "username" | "displayName">>(request, 5 * 1024 * 1024);
     if (body.status !== "pending") return NextResponse.json({ error: "生成结果和终态只能由服务端任务写入" }, { status: 403 });
     if (body.assets?.length || body.taskId || body.error || body.completedAt) return NextResponse.json({ error: "浏览器不能提交生成结果、任务终态或结果地址" }, { status: 403 });
     if (body.source !== "image-workbench" && body.source !== "video-workbench") return NextResponse.json({ error: "当前入口不允许浏览器登记生成记录" }, { status: 403 });
     try {
-        const log = await recordGenerationLogDraft({ ...body, userId: currentUser.id, username: currentUser.username, displayName: currentUser.displayName });
+        const log = await recordGenerationLogDraft({ ...body, tenantId, userId: currentUser.id, username: currentUser.username, displayName: currentUser.displayName });
         return NextResponse.json({ log });
     } catch (error) {
         if (error instanceof GenerationLogDraftValidationError) return NextResponse.json({ error: error.message }, { status: 400 });
@@ -42,18 +45,19 @@ export async function POST(request: Request) {
 }
 
 export async function PATCH(request: Request) {
-    const currentUser = await getCurrentUser();
+    const currentUser = await getCurrentUser(request);
     if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
+    const tenantId = await getTrustedTenantId(request, currentUser);
     const body = await readJsonBody<{ action?: string; id?: string; title?: string; slotIds?: string[] }>(request);
     const id = String(body.id || "").trim();
     if (!id) return NextResponse.json({ error: "生成记录 ID 不能为空" }, { status: 400 });
     try {
         if (body.action === "rename") {
-            const log = await renameGenerationLogForUser(currentUser.id, id, String(body.title || ""));
+            const log = await renameGenerationLogForUser(tenantId, currentUser.id, id, String(body.title || ""));
             return log ? NextResponse.json({ log }) : NextResponse.json({ error: "生成记录不存在或标题为空" }, { status: 404 });
         }
         if (body.action === "delete-results") {
-            const log = await deleteGenerationLogResultsForUser(currentUser.id, id, Array.isArray(body.slotIds) ? body.slotIds : []);
+            const log = await deleteGenerationLogResultsForUser(tenantId, currentUser.id, id, Array.isArray(body.slotIds) ? body.slotIds : []);
             return log ? NextResponse.json({ log }) : NextResponse.json({ error: "生成记录或结果不存在" }, { status: 404 });
         }
     } catch (error) {
@@ -64,15 +68,16 @@ export async function PATCH(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-    const currentUser = await getCurrentUser();
+    const currentUser = await getCurrentUser(request);
     if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
+    const tenantId = await getTrustedTenantId(request, currentUser);
 
     const body = await readJsonBody<{ ids?: string[] }>(request);
     const requestedIds = Array.isArray(body.ids) ? Array.from(new Set(body.ids.map((id) => id.trim()).filter(Boolean))) : [];
     if (!requestedIds.length) return NextResponse.json({ deleted: 0 });
 
-    const deletableIds = (await listUserGenerationLogsForDelete(currentUser.id, requestedIds)).map((log) => log.id);
+    const deletableIds = (await listUserGenerationLogsForDelete(tenantId, currentUser.id, requestedIds)).map((log) => log.id);
     if (!deletableIds.length) return NextResponse.json({ deleted: 0 });
 
-    return NextResponse.json(await deleteGenerationLogs(deletableIds));
+    return NextResponse.json(await deleteGenerationLogs(deletableIds, tenantId));
 }

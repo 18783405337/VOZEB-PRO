@@ -20,6 +20,7 @@ vi.mock("@/lib/server/generation-task-recovery-service", () => ({ runGenerationT
 vi.mock("@/lib/server/generation-task-scheduler", () => ({ scheduleGenerationTask: mocks.scheduleGenerationTask }));
 vi.mock("@/lib/server/generation-task-store", () => ({ withGenerationConcurrencyLimit: vi.fn(async (_userId, _type, _staleMs, limit, handler) => ((await mocks.countActive()) >= limit ? null : handler())) }));
 vi.mock("@/lib/server/internal-origin", () => ({ resolveInternalOrigin: vi.fn(() => "http://localhost") }));
+vi.mock("@/lib/server/tenant/tenant-context", () => ({ getTrustedTenantId: vi.fn(async () => "default") }));
 
 import { POST } from "./route";
 
@@ -65,7 +66,7 @@ describe("Agent child task retry concurrency", () => {
         expect(response.status).toBe(200);
         const tasks = mocks.updateAgentRunById.mock.calls[0]?.[1]?.tasks;
         expect(tasks).toEqual([expect.objectContaining({ id: "task", status: "ready", attempts: 3, taskId: undefined, taskIds: undefined, childTasks: undefined, result: undefined, error: undefined })]);
-        expect(mocks.scheduleGenerationTask).toHaveBeenCalledWith("agent", "run", expect.objectContaining({ executionPhase: "created", nextPollAt: expect.any(Number), lastUpstreamStatus: "task_retry" }));
+        expect(mocks.scheduleGenerationTask).toHaveBeenCalledWith("agent", "run", expect.objectContaining({ executionPhase: "created", nextPollAt: expect.any(Number), lastUpstreamStatus: "task_retry" }), { tenantId: "default" });
     });
 
     it("repairs legacy canvas image references and invalid ratios before retrying", async () => {

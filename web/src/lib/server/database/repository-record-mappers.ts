@@ -223,6 +223,7 @@ export function mapPrompt(row: Record<string, unknown>): PromptRecord {
 export function mapGenerationLog(row: Record<string, unknown>): GenerationLogRecord {
     return {
         id: stringValue(row.id),
+        tenantId: optionalString(row.tenant_id),
         userId: stringValue(row.user_id),
         conversationId: optionalString(row.conversation_id),
         username: stringValue(row.username),

@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("@/lib/server/tenant/tenant-context", () => ({ getTrustedTenantId: vi.fn(async () => "default") }));
 
 import { POST } from "./route";
 

@@ -37,6 +37,7 @@ vi.mock("@/lib/server/audio-task-store", () => ({
     transitionAudioTask: vi.fn(),
     updateAudioTask: vi.fn(),
 }));
+vi.mock("@/lib/server/tenant/tenant-context", () => ({ getTrustedTenantId: vi.fn(async () => "default") }));
 
 import { POST } from "./route";
 

@@ -24,41 +24,43 @@ let fileMutationQueue = Promise.resolve();
 const concurrencyQueues = new Map<string, Promise<void>>();
 
 export async function createStoredGenerationTask<T extends { id: string; userId: string; status: string; createdAt: number; updatedAt: number }>(type: GenerationTaskType, task: T, ttlMs: number) {
-    await cleanupStoredGenerationTasks();
+    await cleanupStoredGenerationTasks(taskTenantId(task as { tenantId?: string }));
     return insertTask(type, task, ttlMs);
 }
 
-export async function getStoredGenerationTask<T>(type: GenerationTaskType, id: string): Promise<(T & GenerationTaskExecutionState) | null> {
+export async function getStoredGenerationTask<T>(type: GenerationTaskType, id: string, tenantId?: string): Promise<(T & GenerationTaskExecutionState) | null> {
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
-        const result = await postgresQuery<{ payload: T; execution_phase?: unknown; last_upstream_status?: unknown }>("SELECT payload, execution_phase, last_upstream_status FROM generation_tasks WHERE id = $1 AND task_type = $2 AND expires_at > now()", [
+        const result = await postgresQuery<{ payload: T; execution_phase?: unknown; last_upstream_status?: unknown }>("SELECT payload, execution_phase, last_upstream_status FROM generation_tasks WHERE id = $1 AND task_type = $2 AND ($3::text IS NULL OR tenant_id = $3) AND expires_at > now()", [
             id,
             type,
+            cleanTenantId(tenantId),
         ]);
         const row = result.rows[0];
         return row?.payload ? withExecutionState(row.payload, row.execution_phase, row.last_upstream_status) : null;
     }
     const tasks = await readFileTasks();
-    const record = tasks.find((task) => task.id === id && task.type === type && task.expiresAt > Date.now());
+    const record = tasks.find((task) => task.id === id && task.type === type && (!tenantId || task.tenantId === tenantId) && task.expiresAt > Date.now());
     return record ? withExecutionState(record.payload as T, record.executionPhase, record.lastUpstreamStatus) : null;
 }
 
-export async function getStoredGenerationTaskRecord(type: GenerationTaskType, id: string): Promise<StoredGenerationTaskRecord | null> {
+export async function getStoredGenerationTaskRecord(type: GenerationTaskType, id: string, tenantId?: string): Promise<StoredGenerationTaskRecord | null> {
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
-        const result = await postgresQuery<Record<string, unknown>>("SELECT * FROM generation_tasks WHERE id = $1 AND task_type = $2 AND expires_at > now()", [id, type]);
+        const result = await postgresQuery<Record<string, unknown>>("SELECT * FROM generation_tasks WHERE id = $1 AND task_type = $2 AND ($3::text IS NULL OR tenant_id = $3) AND expires_at > now()", [id, type, cleanTenantId(tenantId)]);
         return result.rows[0] ? mapStoredTaskRecord(result.rows[0]) : null;
     }
-    return (await readFileTasks()).find((task) => task.id === id && task.type === type && task.expiresAt > Date.now()) || null;
+    return (await readFileTasks()).find((task) => task.id === id && task.type === type && (!tenantId || task.tenantId === tenantId) && task.expiresAt > Date.now()) || null;
 }
 
-export async function getStoredGenerationTaskByRequest<T>(type: GenerationTaskType, userId: string, clientRequestId: string, attemptNo?: number): Promise<T | null> {
+export async function getStoredGenerationTaskByRequest<T>(type: GenerationTaskType, tenantId: string, userId: string, clientRequestId: string, attemptNo?: number): Promise<T | null> {
     const requestId = cleanContextText(clientRequestId);
     if (!requestId) return null;
     const attempt = normalizedAttemptNo(attemptNo);
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
-        const result = await postgresQuery<{ payload: T }>("SELECT payload FROM generation_tasks WHERE user_id = $1 AND task_type = $2 AND client_request_id = $3 AND COALESCE(attempt_no, 0) = $4 AND expires_at > now() LIMIT 1", [
+        const result = await postgresQuery<{ payload: T }>("SELECT payload FROM generation_tasks WHERE tenant_id = $1 AND user_id = $2 AND task_type = $3 AND client_request_id = $4 AND COALESCE(attempt_no, 0) = $5 AND expires_at > now() LIMIT 1", [
+            tenantId,
             userId,
             type,
             requestId,
@@ -67,10 +69,10 @@ export async function getStoredGenerationTaskByRequest<T>(type: GenerationTaskTy
         return result.rows[0]?.payload || null;
     }
     const tasks = await readFileTasks();
-    return (tasks.find((task) => sameTaskRequest(task, type, userId, requestId, attempt) && task.expiresAt > Date.now())?.payload as T | undefined) || null;
+    return (tasks.find((task) => sameTaskRequest(task, type, tenantId, userId, requestId, attempt) && task.expiresAt > Date.now())?.payload as T | undefined) || null;
 }
 
-export async function getStoredGenerationTaskByUpstream(type: GenerationTaskType, userId: string, channelId: string, upstreamTaskId: string): Promise<StoredGenerationTaskRecord | null> {
+export async function getStoredGenerationTaskByUpstream(type: GenerationTaskType, tenantId: string, userId: string, channelId: string, upstreamTaskId: string): Promise<StoredGenerationTaskRecord | null> {
     const normalizedChannelId = cleanContextText(channelId);
     const normalizedUpstreamTaskId = cleanUpstreamTaskId(upstreamTaskId);
     if (!normalizedChannelId || !normalizedUpstreamTaskId) return null;
@@ -78,24 +80,24 @@ export async function getStoredGenerationTaskByUpstream(type: GenerationTaskType
         await ensurePostgresSchema();
         const result = await postgresQuery<Record<string, unknown>>(
             `SELECT * FROM generation_tasks
-             WHERE user_id = $1 AND task_type = $2 AND channel_id = $3 AND upstream_task_id = $4 AND expires_at > now()
+             WHERE tenant_id = $1 AND user_id = $2 AND task_type = $3 AND channel_id = $4 AND upstream_task_id = $5 AND expires_at > now()
              LIMIT 1`,
-            [userId, type, normalizedChannelId, normalizedUpstreamTaskId],
+            [tenantId, userId, type, normalizedChannelId, normalizedUpstreamTaskId],
         );
         return result.rows[0] ? mapStoredTaskRecord(result.rows[0]) : null;
     }
-    return (await readFileTasks()).find((task) => task.userId === userId && task.type === type && task.channelId === normalizedChannelId && task.upstreamTaskId === normalizedUpstreamTaskId && task.expiresAt > Date.now()) || null;
+    return (await readFileTasks()).find((task) => task.tenantId === tenantId && task.userId === userId && task.type === type && task.channelId === normalizedChannelId && task.upstreamTaskId === normalizedUpstreamTaskId && task.expiresAt > Date.now()) || null;
 }
 
-export async function listStoredGenerationTasks<T>(type: GenerationTaskType, userId: string, limit = 20): Promise<T[]> {
+export async function listStoredGenerationTasks<T>(type: GenerationTaskType, tenantId: string, userId: string, limit = 20): Promise<T[]> {
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
-        const result = await postgresQuery<{ payload: T }>("SELECT payload FROM generation_tasks WHERE user_id = $1 AND task_type = $2 AND expires_at > now() ORDER BY updated_at DESC LIMIT $3", [userId, type, Math.max(1, Math.min(100, limit))]);
+        const result = await postgresQuery<{ payload: T }>("SELECT payload FROM generation_tasks WHERE tenant_id = $1 AND user_id = $2 AND task_type = $3 AND expires_at > now() ORDER BY updated_at DESC LIMIT $4", [tenantId, userId, type, Math.max(1, Math.min(100, limit))]);
         return result.rows.map((row) => row.payload);
     }
     const tasks = await readFileTasks();
     return tasks
-        .filter((task) => task.userId === userId && task.type === type && task.expiresAt > Date.now())
+        .filter((task) => task.tenantId === tenantId && task.userId === userId && task.type === type && task.expiresAt > Date.now())
         .sort((a, b) => b.updatedAt - a.updatedAt)
         .slice(0, Math.max(1, Math.min(100, limit)))
         .map((task) => task.payload as T);
@@ -109,6 +111,9 @@ export async function listStoredGenerationTaskRecords(options: GenerationTaskRec
     const page = Math.max(1, Math.floor(Number(options.page) || 1));
     const pageSize = Math.max(1, Math.min(100, Math.floor(Number(options.pageSize) || 20)));
     const includeAll = options.includeAll !== false;
+    const tenantId = cleanTenantId(options.tenantId);
+    const includeAllTenants = options.includeAllTenants === true;
+    if (!tenantId && !includeAllTenants) throw new Error("Tenant ID is required for generation task listing");
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
         const type = isTaskType(options.type) ? options.type : null;
@@ -117,14 +122,14 @@ export async function listStoredGenerationTaskRecords(options: GenerationTaskRec
         const userId = options.userId?.trim() || null;
         const search = (options.search || "").trim().slice(0, 160);
         const searchUserIds = Array.from(new Set((options.searchUserIds || []).map((id) => id.trim()).filter(Boolean))).slice(0, 100);
-        const params = [type, status, surface, projectId, userId, search, searchUserIds];
+        const params = [tenantId, type, status, surface, projectId, userId, search, searchUserIds];
         if (!includeAll) {
             const [pageResult, summaryResult] = await Promise.all([
                 postgresQuery<Record<string, unknown>>(
                     `${generationTaskSelect()}
                      ${generationTaskWhere()}
                      ORDER BY updated_at DESC
-                     LIMIT $8 OFFSET $9`,
+                     LIMIT $9 OFFSET $10`,
                     [...params, pageSize, (page - 1) * pageSize],
                 ),
                 postgresQuery<Record<string, unknown>>(`${generationTaskSummarySelect()} ${generationTaskWhere()} GROUP BY task_type, status`, params),
@@ -152,6 +157,7 @@ export async function listStoredGenerationTaskRecords(options: GenerationTaskRec
         .filter((record) => (isTaskStatus(options.status) ? record.status === options.status : true))
         .filter((record) => (isTaskSurface(options.surface) ? record.surface === options.surface : true))
         .filter((record) => (projectId ? record.projectId === projectId : true))
+        .filter((record) => (tenantId ? record.tenantId === tenantId : true))
         .filter((record) => (options.userId ? record.userId === options.userId : true))
         .filter(
             (record) =>
@@ -181,11 +187,12 @@ export function generationTaskPointsCost(payload: Record<string, unknown>) {
     );
 }
 
-export async function summarizeStoredGenerationTaskCosts(input: { userId: string; projectId: string; types: GenerationTaskType[] }): Promise<GenerationTaskCostAggregate[]> {
+export async function summarizeStoredGenerationTaskCosts(input: { tenantId: string; userId: string; projectId: string; types: GenerationTaskType[] }): Promise<GenerationTaskCostAggregate[]> {
+    const tenantId = cleanTenantId(input.tenantId);
     const userId = cleanContextText(input.userId);
     const projectId = cleanContextText(input.projectId);
     const types = Array.from(new Set(input.types.filter(isTaskType)));
-    if (!userId || !projectId || !types.length) return [];
+    if (!tenantId || !userId || !projectId || !types.length) return [];
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
         const result = await postgresQuery<Record<string, unknown>>(
@@ -193,15 +200,15 @@ export async function summarizeStoredGenerationTaskCosts(input: { userId: string
                     coalesce(sum(coalesce(${numericJsonValue("payload->>'estimatedPoints'")}, 0)), 0) AS estimated_points,
                     coalesce(sum(CASE WHEN status = 'success' THEN ${generationTaskPointsSql()} ELSE 0 END), 0) AS actual_points
              FROM generation_tasks
-             WHERE expires_at > now() AND user_id = $1 AND project_id = $2 AND task_type = ANY($3::text[])
+             WHERE expires_at > now() AND tenant_id = $1 AND user_id = $2 AND project_id = $3 AND task_type = ANY($4::text[])
              GROUP BY task_type, status`,
-            [userId, projectId, types],
+            [tenantId, userId, projectId, types],
         );
         return result.rows.flatMap(mapGenerationTaskCostAggregate);
     }
     const groups = new Map<string, GenerationTaskCostAggregate>();
     for (const record of await readFileTasks()) {
-        if (record.expiresAt <= Date.now() || record.userId !== userId || record.projectId !== projectId || !types.includes(record.type)) continue;
+        if (record.expiresAt <= Date.now() || record.tenantId !== tenantId || record.userId !== userId || record.projectId !== projectId || !types.includes(record.type)) continue;
         const key = `${record.type}:${record.status}`;
         const current = groups.get(key) || { type: record.type, status: record.status, taskCount: 0, estimatedPoints: 0, actualPoints: 0 };
         current.taskCount += 1;
@@ -218,20 +225,21 @@ function generationTaskSelect() {
 
 function generationTaskWhere() {
     return `WHERE expires_at > now()
-              AND ($1::text IS NULL OR task_type = $1)
-              AND ($2::text IS NULL OR status = $2)
-              AND ($3::text IS NULL OR surface = $3)
-              AND ($4::text IS NULL OR project_id = $4)
-              AND ($5::text IS NULL OR user_id = $5)
+              AND ($1::text IS NULL OR tenant_id = $1)
+              AND ($2::text IS NULL OR task_type = $2)
+              AND ($3::text IS NULL OR status = $3)
+              AND ($4::text IS NULL OR surface = $4)
+              AND ($5::text IS NULL OR project_id = $5)
+              AND ($6::text IS NULL OR user_id = $6)
               AND (
-                  $6 = ''
-                  OR id ILIKE '%' || $6 || '%'
-                  OR user_id ILIKE '%' || $6 || '%'
-                  OR coalesce(conversation_id, '') ILIKE '%' || $6 || '%'
-                  OR coalesce(run_id, '') ILIKE '%' || $6 || '%'
-                  OR coalesce(project_id, '') ILIKE '%' || $6 || '%'
-                  OR payload::text ILIKE '%' || $6 || '%'
-                  OR user_id = ANY($7::text[])
+                  $7 = ''
+                  OR id ILIKE '%' || $7 || '%'
+                  OR user_id ILIKE '%' || $7 || '%'
+                  OR coalesce(conversation_id, '') ILIKE '%' || $7 || '%'
+                  OR coalesce(run_id, '') ILIKE '%' || $7 || '%'
+                  OR coalesce(project_id, '') ILIKE '%' || $7 || '%'
+                  OR payload::text ILIKE '%' || $7 || '%'
+                  OR user_id = ANY($8::text[])
               )`;
 }
 
@@ -331,6 +339,7 @@ export async function transitionStoredGenerationTask<T extends { id: string; use
     patch: Partial<T> & { status: string },
     ttlMs: number,
     executionPatch?: import("@/lib/server/generation-task-scheduler").GenerationTaskSchedulePatch,
+    tenantId?: string,
 ): Promise<T | null> {
     const updatedAt = Date.now();
     const nextPatch = { ...patch, updatedAt };
@@ -339,24 +348,25 @@ export async function transitionStoredGenerationTask<T extends { id: string; use
         await ensurePostgresSchema();
         const result = await postgresQuery<{ payload: T }>(
             `UPDATE generation_tasks
-             SET status = $5, payload = payload || $6::jsonb, updated_at = $7, expires_at = $8,
-                 execution_phase = CASE WHEN $9::boolean THEN COALESCE($10, execution_phase) ELSE execution_phase END,
-                 upstream_task_id = CASE WHEN $9::boolean THEN COALESCE($11, upstream_task_id) ELSE upstream_task_id END,
-                 channel_id = CASE WHEN $9::boolean THEN COALESCE($12, channel_id) ELSE channel_id END,
-                 provider = CASE WHEN $9::boolean THEN COALESCE($13, provider) ELSE provider END,
-                 query_path = CASE WHEN $9::boolean THEN COALESCE($14, query_path) ELSE query_path END,
-                 submitted_at = CASE WHEN $9::boolean THEN COALESCE($15, submitted_at) ELSE submitted_at END,
-                 next_poll_at = CASE WHEN $9::boolean THEN $16 ELSE next_poll_at END,
-                 last_poll_at = CASE WHEN $9::boolean THEN COALESCE($17, last_poll_at) ELSE last_poll_at END,
-                 last_upstream_status = CASE WHEN $9::boolean THEN COALESCE($18, last_upstream_status) ELSE last_upstream_status END,
-                 result_payload = CASE WHEN $9::boolean THEN COALESCE($19::jsonb, result_payload) ELSE result_payload END,
-                 worker_id = CASE WHEN $9::boolean THEN NULL ELSE worker_id END,
-                 lease_until = CASE WHEN $9::boolean THEN NULL ELSE lease_until END
-             WHERE id = $1 AND task_type = $2 AND user_id = $3 AND status = ANY($4::text[]) AND expires_at > now()
+             SET status = $6, payload = payload || $7::jsonb, updated_at = $8, expires_at = $9,
+                 execution_phase = CASE WHEN $10::boolean THEN COALESCE($11, execution_phase) ELSE execution_phase END,
+                 upstream_task_id = CASE WHEN $10::boolean THEN COALESCE($12, upstream_task_id) ELSE upstream_task_id END,
+                 channel_id = CASE WHEN $10::boolean THEN COALESCE($13, channel_id) ELSE channel_id END,
+                 provider = CASE WHEN $10::boolean THEN COALESCE($14, provider) ELSE provider END,
+                 query_path = CASE WHEN $10::boolean THEN COALESCE($15, query_path) ELSE query_path END,
+                 submitted_at = CASE WHEN $10::boolean THEN COALESCE($16, submitted_at) ELSE submitted_at END,
+                 next_poll_at = CASE WHEN $10::boolean THEN $17 ELSE next_poll_at END,
+                 last_poll_at = CASE WHEN $10::boolean THEN COALESCE($18, last_poll_at) ELSE last_poll_at END,
+                 last_upstream_status = CASE WHEN $10::boolean THEN COALESCE($19, last_upstream_status) ELSE last_upstream_status END,
+                 result_payload = CASE WHEN $10::boolean THEN COALESCE($20::jsonb, result_payload) ELSE result_payload END,
+                 worker_id = CASE WHEN $10::boolean THEN NULL ELSE worker_id END,
+                 lease_until = CASE WHEN $10::boolean THEN NULL ELSE lease_until END
+             WHERE id = $1 AND task_type = $2 AND tenant_id = $3 AND user_id = $4 AND status = ANY($5::text[]) AND expires_at > now()
              RETURNING payload`,
             [
                 id,
                 type,
+                cleanTenantId(tenantId) || "default",
                 userId,
                 allowedStatuses.map(normalizeGenerationTaskStatus),
                 normalizeGenerationTaskStatus(patch.status),
@@ -382,7 +392,7 @@ export async function transitionStoredGenerationTask<T extends { id: string; use
     const allowed = new Set(allowedStatuses.map(normalizeGenerationTaskStatus));
     await mutateFileTasks((tasks) =>
         tasks.map((record) => {
-            if (record.id !== id || record.type !== type || record.userId !== userId || record.expiresAt <= updatedAt || !allowed.has(record.status)) return record;
+            if (record.id !== id || record.type !== type || record.tenantId !== (cleanTenantId(tenantId) || "default") || record.userId !== userId || record.expiresAt <= updatedAt || !allowed.has(record.status)) return record;
             transitioned = { ...(record.payload as T), ...nextPatch };
             return {
                 ...record,
@@ -398,22 +408,22 @@ export async function transitionStoredGenerationTask<T extends { id: string; use
     return transitioned;
 }
 
-export async function mutateStoredGenerationTask<T extends { id: string; userId: string; status: string; createdAt: number; updatedAt: number }>(type: GenerationTaskType, id: string, ttlMs: number, mutate: (current: T) => T | null): Promise<T | null> {
+export async function mutateStoredGenerationTask<T extends { id: string; userId: string; status: string; createdAt: number; updatedAt: number }>(type: GenerationTaskType, id: string, ttlMs: number, mutate: (current: T) => T | null, tenantId?: string): Promise<T | null> {
     const updatedAt = Date.now();
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
         return withPostgresTransaction(async (client) => {
-            const result = await client.query<{ payload: T }>("SELECT payload FROM generation_tasks WHERE id = $1 AND task_type = $2 AND expires_at > now() FOR UPDATE", [id, type]);
+            const result = await client.query<{ payload: T }>("SELECT payload FROM generation_tasks WHERE id = $1 AND task_type = $2 AND tenant_id = $3 AND expires_at > now() FOR UPDATE", [id, type, cleanTenantId(tenantId) || "default"]);
             const current = result.rows[0]?.payload;
             if (!current) return null;
             const next = normalizeMutation(current, mutate(current), updatedAt);
             if (!next) return null;
             const updated = await client.query<{ payload: T }>(
                 `UPDATE generation_tasks
-                 SET status = $3, payload = $4::jsonb, updated_at = $5, expires_at = $6
-                 WHERE id = $1 AND task_type = $2
+                 SET status = $4, payload = $5::jsonb, updated_at = $6, expires_at = $7
+                 WHERE id = $1 AND task_type = $2 AND tenant_id = $3
                  RETURNING payload`,
-                [id, type, normalizeGenerationTaskStatus(next.status), JSON.stringify(next), new Date(updatedAt), new Date(updatedAt + ttlMs)],
+                [id, type, cleanTenantId(tenantId) || "default", normalizeGenerationTaskStatus(next.status), JSON.stringify(next), new Date(updatedAt), new Date(updatedAt + ttlMs)],
             );
             return updated.rows[0]?.payload || null;
         });
@@ -421,7 +431,7 @@ export async function mutateStoredGenerationTask<T extends { id: string; userId:
     let mutated: T | null = null;
     await mutateFileTasks((tasks) =>
         tasks.map((record) => {
-            if (record.id !== id || record.type !== type || record.expiresAt <= updatedAt) return record;
+            if (record.id !== id || record.type !== type || record.tenantId !== (cleanTenantId(tenantId) || "default") || record.expiresAt <= updatedAt) return record;
             const current = record.payload as T;
             const next = normalizeMutation(current, mutate(current), updatedAt);
             if (!next) return record;
@@ -432,23 +442,24 @@ export async function mutateStoredGenerationTask<T extends { id: string; userId:
     return mutated;
 }
 
-export async function touchStoredGenerationTask(type: GenerationTaskType, id: string, updatedAt: number, ttlMs: number) {
+export async function touchStoredGenerationTask(type: GenerationTaskType, id: string, updatedAt: number, ttlMs: number, tenantId?: string) {
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
-        await postgresQuery("UPDATE generation_tasks SET updated_at = $3, expires_at = $4, payload = jsonb_set(payload, '{updatedAt}', to_jsonb($5::bigint)) WHERE id = $1 AND task_type = $2", [
+        await postgresQuery("UPDATE generation_tasks SET updated_at = $3, expires_at = $4, payload = jsonb_set(payload, '{updatedAt}', to_jsonb($5::bigint)) WHERE id = $1 AND task_type = $2 AND tenant_id = $6", [
             id,
             type,
             new Date(updatedAt),
             new Date(updatedAt + ttlMs),
             updatedAt,
+            cleanTenantId(tenantId) || "default",
         ]);
         return;
     }
-    await mutateFileTasks((tasks) => tasks.map((task) => (task.id === id && task.type === type ? { ...task, updatedAt, expiresAt: updatedAt + ttlMs, payload: { ...task.payload, updatedAt } } : task)));
+    await mutateFileTasks((tasks) => tasks.map((task) => (task.id === id && task.type === type && task.tenantId === (cleanTenantId(tenantId) || "default") ? { ...task, updatedAt, expiresAt: updatedAt + ttlMs, payload: { ...task.payload, updatedAt } } : task)));
 }
 
-export async function linkStoredGenerationTask(type: GenerationTaskType, id: string, context: GenerationTaskContext) {
-    const normalized = normalizeGenerationTaskContext(context);
+export async function linkStoredGenerationTask(type: GenerationTaskType, id: string, context: GenerationTaskContext, tenantId?: string) {
+    const normalized = normalizeGenerationTaskContext({ ...context, ...(tenantId ? { tenantId } : {}) });
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
         await postgresQuery(
@@ -456,7 +467,7 @@ export async function linkStoredGenerationTask(type: GenerationTaskType, id: str
              SET conversation_id = COALESCE($3, conversation_id), run_id = COALESCE($4, run_id), surface = COALESCE($5, surface),
                  project_id = COALESCE($6, project_id), parent_task_id = COALESCE($7, parent_task_id), attempt_no = COALESCE($8, attempt_no),
                  client_request_id = COALESCE($9, client_request_id), payload = payload || $10::jsonb
-             WHERE id = $1 AND task_type = $2`,
+             WHERE id = $1 AND task_type = $2 AND tenant_id = $11`,
             [
                 id,
                 type,
@@ -468,41 +479,42 @@ export async function linkStoredGenerationTask(type: GenerationTaskType, id: str
                 normalized.attemptNo ?? null,
                 normalized.clientRequestId || null,
                 JSON.stringify(normalized),
+                cleanTenantId(tenantId || normalized.tenantId) || "default",
             ],
         );
         return;
     }
-    await mutateFileTasks((tasks) => tasks.map((task) => (task.id === id && task.type === type ? { ...task, ...normalized, payload: { ...task.payload, ...normalized } } : task)));
+    await mutateFileTasks((tasks) => tasks.map((task) => (task.id === id && task.type === type && task.tenantId === (cleanTenantId(tenantId || normalized.tenantId) || "default") ? { ...task, ...normalized, payload: { ...task.payload, ...normalized } } : task)));
 }
 
-export async function countActiveStoredGenerationTasks(userId: string, type: GenerationTaskType, staleMs: number) {
+export async function countActiveStoredGenerationTasks(userId: string, type: GenerationTaskType, staleMs: number, tenantId?: string) {
     const activeAfter = Date.now() - staleMs;
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
         const result = await postgresQuery<{ total: string | number }>(
-            "SELECT count(*) AS total FROM generation_tasks WHERE user_id = $1 AND task_type = $2 AND status IN ('pending', 'running') AND execution_phase = ANY($4::text[]) AND updated_at >= $3 AND expires_at > now()",
-            [userId, type, new Date(activeAfter), ACTIVE_CONCURRENCY_PHASES],
+            "SELECT count(*) AS total FROM generation_tasks WHERE tenant_id = $1 AND user_id = $2 AND task_type = $3 AND status IN ('pending', 'running') AND execution_phase = ANY($5::text[]) AND updated_at >= $4 AND expires_at > now()",
+            [cleanTenantId(tenantId) || "default", userId, type, new Date(activeAfter), ACTIVE_CONCURRENCY_PHASES],
         );
         return Number(result.rows[0]?.total || 0);
     }
     const tasks = await readFileTasks();
-    return tasks.filter((task) => task.userId === userId && task.type === type && ["pending", "running"].includes(task.status) && isActiveConcurrencyPhase(task.executionPhase) && task.updatedAt >= activeAfter && task.expiresAt > Date.now()).length;
+    return tasks.filter((task) => task.tenantId === (cleanTenantId(tenantId) || "default") && task.userId === userId && task.type === type && ["pending", "running"].includes(task.status) && isActiveConcurrencyPhase(task.executionPhase) && task.updatedAt >= activeAfter && task.expiresAt > Date.now()).length;
 }
 
-export async function withGenerationConcurrencyLimit<T>(userId: string, type: GenerationTaskType, staleMs: number, limit: number, handler: () => Promise<T>): Promise<T | null> {
+export async function withGenerationConcurrencyLimit<T>(userId: string, type: GenerationTaskType, staleMs: number, limit: number, handler: () => Promise<T>, tenantId?: string): Promise<T | null> {
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
         return withPostgresTransaction(async (client) => {
-            await client.query("SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))", [userId, type]);
+            await client.query("SELECT pg_advisory_xact_lock(hashtext($1 || ':' || $2 || ':' || $3))", [cleanTenantId(tenantId) || "default", userId, type]);
             const result = await client.query<{ total: string | number }>(
-                "SELECT count(*) AS total FROM generation_tasks WHERE user_id = $1 AND task_type = $2 AND status IN ('pending', 'running') AND execution_phase = ANY($4::text[]) AND updated_at >= $3 AND expires_at > now()",
-                [userId, type, new Date(Date.now() - staleMs), ACTIVE_CONCURRENCY_PHASES],
+                "SELECT count(*) AS total FROM generation_tasks WHERE tenant_id = $1 AND user_id = $2 AND task_type = $3 AND status IN ('pending', 'running') AND execution_phase = ANY($5::text[]) AND updated_at >= $4 AND expires_at > now()",
+                [cleanTenantId(tenantId) || "default", userId, type, new Date(Date.now() - staleMs), ACTIVE_CONCURRENCY_PHASES],
             );
             return Number(result.rows[0]?.total || 0) >= limit ? null : handler();
         });
     }
 
-    const key = `${userId}:${type}`;
+    const key = `${cleanTenantId(tenantId) || "default"}:${userId}:${type}`;
     const previous = concurrencyQueues.get(key) || Promise.resolve();
     let release!: () => void;
     const current = new Promise<void>((resolve) => {
@@ -512,7 +524,7 @@ export async function withGenerationConcurrencyLimit<T>(userId: string, type: Ge
     concurrencyQueues.set(key, queued);
     await previous;
     try {
-        return (await countActiveStoredGenerationTasks(userId, type, staleMs)) >= limit ? null : handler();
+        return (await countActiveStoredGenerationTasks(userId, type, staleMs, tenantId)) >= limit ? null : handler();
     } finally {
         release();
         if (concurrencyQueues.get(key) === queued) concurrencyQueues.delete(key);
@@ -525,23 +537,25 @@ function isActiveConcurrencyPhase(phase: StoredGenerationTaskRecord["executionPh
 
 async function upsertTask<T extends { id: string; userId: string; status: string; createdAt: number; updatedAt: number }>(type: GenerationTaskType, task: T, ttlMs: number) {
     const status = normalizeGenerationTaskStatus(task.status);
-    const context = normalizeGenerationTaskContext(task as GenerationTaskContext);
+    const context = normalizeGenerationTaskContext(task as unknown as GenerationTaskContext);
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
         await postgresQuery(
             `INSERT INTO generation_tasks (
-                id, user_id, task_type, status, payload, created_at, updated_at, expires_at,
+                id, tenant_id, user_id, task_type, status, payload, created_at, updated_at, expires_at,
                 conversation_id, run_id, surface, project_id, parent_task_id, attempt_no, client_request_id
              )
-             VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+             VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
              ON CONFLICT (id) DO UPDATE SET
                 status = EXCLUDED.status, payload = EXCLUDED.payload, updated_at = EXCLUDED.updated_at, expires_at = EXCLUDED.expires_at,
+                tenant_id = COALESCE(EXCLUDED.tenant_id, generation_tasks.tenant_id),
                 conversation_id = COALESCE(EXCLUDED.conversation_id, generation_tasks.conversation_id),
                 run_id = COALESCE(EXCLUDED.run_id, generation_tasks.run_id), surface = COALESCE(EXCLUDED.surface, generation_tasks.surface),
                 project_id = COALESCE(EXCLUDED.project_id, generation_tasks.project_id), parent_task_id = COALESCE(EXCLUDED.parent_task_id, generation_tasks.parent_task_id),
                 attempt_no = COALESCE(EXCLUDED.attempt_no, generation_tasks.attempt_no), client_request_id = COALESCE(EXCLUDED.client_request_id, generation_tasks.client_request_id)`,
             [
                 task.id,
+                taskTenantId(task as { tenantId?: string }),
                 task.userId,
                 type,
                 status,
@@ -564,6 +578,7 @@ async function upsertTask<T extends { id: string; userId: string; status: string
         const previous = tasks.find((item) => item.id === task.id);
         const record: StoredGenerationTaskRecord = {
             id: task.id,
+            tenantId: taskTenantId(task as { tenantId?: string }),
             userId: task.userId,
             type,
             status,
@@ -580,30 +595,31 @@ async function upsertTask<T extends { id: string; userId: string; status: string
 
 async function insertTask<T extends { id: string; userId: string; status: string; createdAt: number; updatedAt: number }>(type: GenerationTaskType, task: T, ttlMs: number): Promise<T> {
     const status = normalizeGenerationTaskStatus(task.status);
-    const context = normalizeGenerationTaskContext(task as GenerationTaskContext);
+        const context = normalizeGenerationTaskContext(task as unknown as GenerationTaskContext);
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
         const values = taskValues(type, task, ttlMs, status, context);
         const inserted = await postgresQuery<{ payload: T }>(
             `INSERT INTO generation_tasks (
-                id, user_id, task_type, status, payload, created_at, updated_at, expires_at,
+                id, tenant_id, user_id, task_type, status, payload, created_at, updated_at, expires_at,
                 conversation_id, run_id, surface, project_id, parent_task_id, attempt_no, client_request_id
              )
-             VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+             VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
              ON CONFLICT DO NOTHING
              RETURNING payload`,
             values,
         );
         if (inserted.rows[0]?.payload) return inserted.rows[0].payload;
-        const existing = context.clientRequestId ? await getStoredGenerationTaskByRequest<T>(type, task.userId, context.clientRequestId, context.attemptNo) : await getStoredGenerationTask<T>(type, task.id);
+        const existing = context.clientRequestId ? await getStoredGenerationTaskByRequest<T>(type, taskTenantId(task as { tenantId?: string }), task.userId, context.clientRequestId, context.attemptNo) : await getStoredGenerationTask<T>(type, task.id, taskTenantId(task as { tenantId?: string }));
         if (existing) return existing;
         throw new Error("生成任务写入冲突，请重试");
     }
     return withGenerationTaskFileMutation(async (tasks) => {
-        const duplicate = tasks.find((item) => item.id === task.id || (context.clientRequestId && sameTaskRequest(item, type, task.userId, context.clientRequestId, normalizedAttemptNo(context.attemptNo))));
+        const duplicate = tasks.find((item) => item.id === task.id || (context.clientRequestId && sameTaskRequest(item, type, taskTenantId(task as { tenantId?: string }), task.userId, context.clientRequestId, normalizedAttemptNo(context.attemptNo))));
         if (duplicate) return { tasks, result: duplicate.payload as T };
         const record: StoredGenerationTaskRecord = {
             id: task.id,
+            tenantId: taskTenantId(task as { tenantId?: string }),
             userId: task.userId,
             type,
             status,
@@ -621,6 +637,7 @@ async function insertTask<T extends { id: string; userId: string; status: string
 function taskValues<T extends { id: string; userId: string; createdAt: number; updatedAt: number }>(type: GenerationTaskType, task: T, ttlMs: number, status: GenerationTaskStatus, context: GenerationTaskContext) {
     return [
         task.id,
+        taskTenantId(task as { tenantId?: string }),
         task.userId,
         type,
         status,
@@ -638,17 +655,20 @@ function taskValues<T extends { id: string; userId: string; createdAt: number; u
     ];
 }
 
-async function cleanupStoredGenerationTasks() {
+async function cleanupStoredGenerationTasks(tenantId: string) {
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
-        await postgresQuery("DELETE FROM generation_tasks WHERE expires_at <= now()");
+        await postgresQuery("DELETE FROM generation_tasks WHERE tenant_id = $1 AND expires_at <= now()", [tenantId]);
         return;
     }
-    await mutateFileTasks((tasks) => tasks.filter((task) => task.expiresAt > Date.now()));
+    await mutateFileTasks((tasks) => tasks.filter((task) => task.tenantId !== tenantId || task.expiresAt > Date.now()));
 }
 
 async function readFileTasks() {
-    return readJsonDataFile<StoredGenerationTaskRecord[]>(TASK_FILE, []);
+    return (await readJsonDataFile<StoredGenerationTaskRecord[]>(TASK_FILE, [])).map((task) => ({
+        ...task,
+        tenantId: cleanTenantId(task.tenantId) || "default",
+    }));
 }
 
 function mutateFileTasks(mutator: (tasks: StoredGenerationTaskRecord[]) => StoredGenerationTaskRecord[]) {
@@ -673,6 +693,7 @@ export function withGenerationTaskFileMutation<T>(mutator: (tasks: StoredGenerat
 function normalizeGenerationTaskContext(context: GenerationTaskContext): GenerationTaskContext {
     const attempt = Number(context.attemptNo);
     return {
+        tenantId: cleanTenantId(context.tenantId),
         conversationId: cleanContextText(context.conversationId),
         runId: cleanContextText(context.runId),
         surface: context.surface === "chat" || context.surface === "canvas" || context.surface === "drama" ? context.surface : undefined,
@@ -690,6 +711,7 @@ function normalizeGenerationTaskContext(context: GenerationTaskContext): Generat
 
 function preserveTaskContext(previous: StoredGenerationTaskRecord | undefined, next: GenerationTaskContext): GenerationTaskContext {
     return {
+        tenantId: next.tenantId || previous?.tenantId,
         conversationId: next.conversationId || previous?.conversationId,
         runId: next.runId || previous?.runId,
         surface: next.surface || previous?.surface,
@@ -728,6 +750,14 @@ function cleanContextText(value?: string) {
     return value?.trim().slice(0, 160) || undefined;
 }
 
+function cleanTenantId(value?: string) {
+    return value?.trim().slice(0, 160) || undefined;
+}
+
+function taskTenantId(task: { tenantId?: string } | GenerationTaskContext) {
+    return cleanTenantId(task.tenantId) || "default";
+}
+
 function cleanUpstreamTaskId(value?: string) {
     return value?.trim().slice(0, 500) || undefined;
 }
@@ -737,8 +767,8 @@ function normalizedAttemptNo(value: unknown) {
     return Number.isFinite(attempt) && attempt >= 0 ? Math.floor(attempt) : 0;
 }
 
-function sameTaskRequest(task: StoredGenerationTaskRecord, type: GenerationTaskType, userId: string, clientRequestId: string, attemptNo: number) {
-    return task.type === type && task.userId === userId && task.clientRequestId === clientRequestId && normalizedAttemptNo(task.attemptNo) === attemptNo;
+function sameTaskRequest(task: StoredGenerationTaskRecord, type: GenerationTaskType, tenantId: string, userId: string, clientRequestId: string, attemptNo: number) {
+    return task.type === type && task.tenantId === tenantId && task.userId === userId && task.clientRequestId === clientRequestId && normalizedAttemptNo(task.attemptNo) === attemptNo;
 }
 
 function positiveContextNumber(value: unknown) {
@@ -761,6 +791,7 @@ function mapStoredTaskRecord(row: Record<string, unknown>): StoredGenerationTask
     const payload = row.payload && typeof row.payload === "object" ? (row.payload as Record<string, unknown>) : {};
     return {
         id: String(row.id || ""),
+        tenantId: cleanTenantId(String(row.tenant_id || "")) || "default",
         userId: String(row.user_id || ""),
         type: isTaskType(row.task_type) ? row.task_type : "text",
         status: isTaskStatus(row.status) ? row.status : "error",

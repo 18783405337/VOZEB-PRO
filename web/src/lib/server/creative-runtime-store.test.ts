@@ -51,7 +51,7 @@ describe("creative runtime file provider", () => {
 
         expect(first.created).toBe(true);
         expect(duplicate).toMatchObject({ created: false, run: { id: "run-one" } });
-        expect(await getCreativeRunByClientRequestId<AgentRun>("user", "request-one")).toMatchObject({ id: "run-one" });
+        expect(await getCreativeRunByClientRequestId<AgentRun>("default", "user", "request-one")).toMatchObject({ id: "run-one" });
         expect(await listCreativeMessages("conversation", 0, 10)).toMatchObject([
             { sequence: 1, role: "user", status: "completed", content: "生成一张图" },
             { sequence: 2, role: "assistant", status: "running", runId: "run-one" },
@@ -271,6 +271,7 @@ function run(patch: Partial<AgentRun> = {}): AgentRun {
     const now = Date.now();
     return {
         id: "run-one",
+        tenantId: "default",
         userId: "user",
         conversationId: "conversation",
         clientRequestId: "request-one",

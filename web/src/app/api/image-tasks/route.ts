@@ -22,6 +22,7 @@ import { registerGenerationTaskAssetsForUser } from "@/lib/server/creative-runti
 import { createSignedReferenceAssetUrl, signReferenceAssetInputUrl } from "@/lib/server/reference-asset-access";
 import { assertCapabilityConstraints } from "@/lib/server/capability-constraints";
 import { checkGenerationRateLimit, rateLimitHeaders } from "@/lib/server/security";
+import { getTrustedTenantId } from "@/lib/server/tenant/tenant-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -130,10 +131,11 @@ import {
 export async function POST(request: Request) {
     const currentUser = await getCurrentUser(request);
     if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
+    const tenantId = await getTrustedTenantId(request, currentUser);
     const headerRequestId = request.headers.get("x-vozeb-pro-client-request-id")?.trim();
     const headerAttemptNo = positiveAttemptNo(request.headers.get("x-vozeb-pro-attempt-no"));
     if (headerRequestId) {
-        const existing = await getStoredGenerationTaskByRequest<ImageTask>("image", currentUser.id, headerRequestId, headerAttemptNo);
+        const existing = await getStoredGenerationTaskByRequest<ImageTask>("image", tenantId, currentUser.id, headerRequestId, headerAttemptNo);
         if (existing) return NextResponse.json({ task: publicTask(existing) });
     }
     const rate = await checkGenerationRateLimit(currentUser.id, request, "image");
@@ -147,7 +149,7 @@ export async function POST(request: Request) {
     }
     const requestId = headerRequestId || resolvedBody.context?.clientRequestId?.trim();
     if (!headerRequestId && requestId) {
-        const existing = await getStoredGenerationTaskByRequest<ImageTask>("image", currentUser.id, requestId, resolvedBody.context?.attemptNo);
+        const existing = await getStoredGenerationTaskByRequest<ImageTask>("image", tenantId, currentUser.id, requestId, resolvedBody.context?.attemptNo);
         if (existing) return NextResponse.json({ task: publicTask(existing) });
     }
     if (requestId) resolvedBody.context = { ...(resolvedBody.context || {}), clientRequestId: requestId, ...(headerAttemptNo ? { attemptNo: headerAttemptNo } : {}) };
@@ -178,6 +180,7 @@ export async function POST(request: Request) {
         const config = compatibleConfigs[0];
         const task = await createImageTask({
             ...(resolvedBody.context || {}),
+            tenantId,
             userId: currentUser.id,
             username: currentUser.username,
             displayName: currentUser.displayName,
@@ -190,15 +193,15 @@ export async function POST(request: Request) {
             references,
             mask: resolvedBody.mask?.dataUrl || resolvedBody.mask?.url || resolvedBody.mask?.remoteUrl || resolvedBody.mask?.serverUrl ? resolvedBody.mask : undefined,
         });
-        await linkStoredGenerationTask("image", task.id, resolvedBody.context || {});
+        await linkStoredGenerationTask("image", task.id, resolvedBody.context || {}, tenantId);
         const cookie = request.headers.get("cookie") || "";
         const origin = resolveInternalOrigin(new URL(request.url).origin);
         const publicOrigin = requestPublicOrigin(request);
-        await scheduleGenerationTask("image", task.id, { executionPhase: "created", channelId: task.config.channelId, provider: task.config.advancedConfig?.protocol || task.config.apiFormat, nextPollAt: Date.now(), lastUpstreamStatus: "created" });
+        await scheduleGenerationTask("image", task.id, { executionPhase: "created", channelId: task.config.channelId, provider: task.config.advancedConfig?.protocol || task.config.apiFormat, nextPollAt: Date.now(), lastUpstreamStatus: "created" }, { tenantId });
         after(() => runGenerationTaskRecoveryBatch({ origin, publicOrigin, cookie, limit: 1, taskIds: [task.id] }));
 
         return NextResponse.json({ task: publicTask(task) });
-    });
+    }, tenantId);
     return response || NextResponse.json({ error: "当前用户生图任务已达到并发上限，请稍后再试" }, { status: 429 });
 }
 

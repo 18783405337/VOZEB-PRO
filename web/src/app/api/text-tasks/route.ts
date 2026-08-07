@@ -12,6 +12,7 @@ import { resolveLogicalModelCandidates } from "@/lib/server/logical-model-router
 import { checkGenerationRateLimit, rateLimitHeaders } from "@/lib/server/security";
 import { createTextTask, type TextTask, type TextTaskConfig } from "@/lib/server/text-task-store";
 import type { AiTextMessage } from "@/types/ai";
+import { getTrustedTenantId } from "@/lib/server/tenant/tenant-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,6 +26,7 @@ type CreateTextTaskBody = {
 export async function POST(request: Request) {
     const currentUser = await getCurrentUser(request);
     if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
+    const tenantId = await getTrustedTenantId(request, currentUser);
     const rate = await checkGenerationRateLimit(currentUser.id, request, "text");
     if (!rate.allowed) return NextResponse.json({ error: "文本生成请求过于频繁，请稍后重试" }, { status: 429, headers: rateLimitHeaders(rate) });
     const settings = await getAuthSettings();
@@ -40,13 +42,13 @@ export async function POST(request: Request) {
         const messages = sanitizeMessages(body.messages);
         if (!configs.length || !messages.length) return NextResponse.json({ error: "任务参数不完整" }, { status: 400 });
 
-        const task = await createTextTask({ userId: currentUser.id, config: configs[0], candidateConfigs: configs.slice(1), messages });
+        const task = await createTextTask({ tenantId, userId: currentUser.id, config: configs[0], candidateConfigs: configs.slice(1), messages });
         const cookie = request.headers.get("cookie") || "";
         const origin = resolveInternalOrigin(new URL(request.url).origin);
-        await scheduleGenerationTask("text", task.id, { executionPhase: "created", channelId: task.config.channelId, provider: task.config.advancedConfig?.protocol || task.config.apiFormat, nextPollAt: Date.now(), lastUpstreamStatus: "created" });
+        await scheduleGenerationTask("text", task.id, { executionPhase: "created", channelId: task.config.channelId, provider: task.config.advancedConfig?.protocol || task.config.apiFormat, nextPollAt: Date.now(), lastUpstreamStatus: "created" }, { tenantId });
         after(() => runGenerationTaskRecoveryBatch({ origin, cookie, limit: 1, taskIds: [task.id] }));
         return NextResponse.json({ task: publicTask(task) });
-    });
+    }, tenantId);
     return response || NextResponse.json({ error: "当前用户文本任务已达到并发上限" }, { status: 429 });
 }
 

@@ -5,8 +5,8 @@ import { readGenerationLogDb, stableAssetUrl } from "@/lib/server/generation-log
 import type { StoredGenerationLog } from "@/lib/server/generation-log-types";
 import { listAgentRuns, type AgentRun } from "@/lib/server/agent-run-store";
 
-export async function getCreateWorkbenchOverview(userId: string): Promise<CreateWorkbenchOverviewPayload> {
-    const [latestProject, generation, agentRuns] = await Promise.all([getLatestCanvasProjectOverview(userId), getCreateGenerationOverview(userId), listAgentRuns(userId, 20)]);
+export async function getCreateWorkbenchOverview(tenantId: string, userId: string): Promise<CreateWorkbenchOverviewPayload> {
+    const [latestProject, generation, agentRuns] = await Promise.all([getLatestCanvasProjectOverview(userId), getCreateGenerationOverview(tenantId, userId), listAgentRuns(tenantId, userId, 20)]);
     const runningTasks = [...buildCreateAgentRunOverview(agentRuns), ...generation.runningTasks]
         .filter((task, index, tasks) => tasks.findIndex((candidate) => candidate.id === task.id) === index)
         .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))
@@ -60,11 +60,11 @@ export function buildCreateGenerationOverview(logs: StoredGenerationLog[]): Pick
     return { runningTasks, recentAssets };
 }
 
-async function getCreateGenerationOverview(userId: string) {
+async function getCreateGenerationOverview(tenantId: string, userId: string) {
     if (isPostgresDatabaseEnabled()) {
         await ensurePostgresSchema();
-        return createPostgresRepositories().generationLogs.getCreateOverview(userId);
+        return createPostgresRepositories().generationLogs.getCreateOverview(tenantId, userId);
     }
-    const logs = (await readGenerationLogDb()).logs.filter((log) => log.userId === userId);
+    const logs = (await readGenerationLogDb()).logs.filter((log) => (log.tenantId || "default") === tenantId && log.userId === userId);
     return buildCreateGenerationOverview(logs);
 }

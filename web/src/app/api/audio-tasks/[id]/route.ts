@@ -7,6 +7,7 @@ import { resolveInternalOrigin } from "@/lib/server/internal-origin";
 import { generationModelId } from "@/lib/server/generation-channel";
 import { runGenerationTaskRecoveryBatch } from "@/lib/server/generation-task-recovery-service";
 import { cancellationExecutionPatch, type GenerationCancellationTarget } from "@/lib/server/generation-task-cancellation-service";
+import { getTrustedTenantId } from "@/lib/server/tenant/tenant-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,7 +16,8 @@ export const maxDuration = 2400;
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
     const user = await getCurrentUser(request);
     if (!user) return NextResponse.json({ error: "请先登录" }, { status: 401 });
-    const task = await getAudioTask((await params).id);
+    const tenantId = await getTrustedTenantId(request, user);
+    const task = await getAudioTask((await params).id, tenantId);
     if (!task || (task.userId !== user.id && user.role !== "admin")) return NextResponse.json({ error: "任务不存在或已过期" }, { status: 404 });
     if (((task.status === "pending" || task.status === "running") && task.executionPhase !== "needs_review") || (task.status === "cancelled" && (task.executionPhase === "cancel_requested" || task.executionPhase === "cancel_polling"))) {
         const origin = resolveInternalOrigin(new URL(request.url).origin);
@@ -29,7 +31,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
     const user = await getCurrentUser(request);
-    const task = user ? await getAudioTask((await params).id) : null;
+    const tenantId = user ? await getTrustedTenantId(request, user) : "";
+    const task = user ? await getAudioTask((await params).id, tenantId) : null;
     if (!user || !task || (task.userId !== user.id && user.role !== "admin")) return NextResponse.json({ error: "任务不存在或已过期" }, { status: user ? 404 : 401 });
     const body = (await request.json().catch(() => ({}))) as { status?: string };
     if (body.status !== "cancelled" || !["pending", "running"].includes(task.status)) return NextResponse.json({ error: "当前任务无法取消" }, { status: 409 });

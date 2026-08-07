@@ -78,12 +78,34 @@ describe("generation task scheduler", () => {
         mocks.postgresQuery.mockResolvedValueOnce({ rows: [] });
 
         await claimDueGenerationTasks({ workerId: "worker-one", now: 1_000, taskIds: ["due"] });
-        await releaseGenerationTaskLease("image", "due", "worker-one", { executionPhase: "polling", nextPollAt: 2_000 });
+        await releaseGenerationTaskLease(
+            "image",
+            "due",
+            "worker-one",
+            { executionPhase: "polling", nextPollAt: 2_000 },
+            { tenantId: "tenant-one" },
+        );
 
         expect(String(mocks.transactionQuery.mock.calls[0]?.[0])).toContain("FOR UPDATE SKIP LOCKED");
         expect(mocks.transactionQuery.mock.calls[0]?.[1]).toEqual([new Date(1_000), 20, "worker-one", ["due"], new Date(91_000)]);
-        expect(String(mocks.postgresQuery.mock.calls[0]?.[0])).toContain("worker_id = $3");
-        expect(mocks.postgresQuery.mock.calls[0]?.[1]).toHaveLength(14);
+        expect(String(mocks.postgresQuery.mock.calls[0]?.[0])).toContain("worker_id = $3 AND ($14::text IS NULL OR tenant_id = $14)");
+        expect(mocks.postgresQuery.mock.calls[0]?.[1]).toEqual([
+            "due",
+            "image",
+            "worker-one",
+            "polling",
+            null,
+            null,
+            null,
+            null,
+            null,
+            new Date(2_000),
+            null,
+            null,
+            null,
+            "tenant-one",
+            false,
+        ]);
     });
 
     it("uses adaptive polling and bounded network-error backoff", () => {

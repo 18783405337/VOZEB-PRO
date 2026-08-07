@@ -7,6 +7,7 @@ vi.mock("@/lib/server/agent-run-store", () => ({ getAgentRun: mocks.getAgentRun 
 vi.mock("@/lib/server/creative-runtime-store", () => ({ getLatestCreativeRunEventId: mocks.getLatestCreativeRunEventId, listCreativeRunEvents: mocks.listCreativeRunEvents }));
 vi.mock("@/lib/server/generation-task-recovery-service", () => ({ runGenerationTaskRecoveryBatch: mocks.recover }));
 vi.mock("@/lib/server/internal-origin", () => ({ resolveInternalOrigin: vi.fn(() => "http://localhost") }));
+vi.mock("@/lib/server/tenant/tenant-context", () => ({ getTrustedTenantId: vi.fn(async () => "default") }));
 
 import { GET } from "./route";
 

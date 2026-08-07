@@ -877,7 +877,7 @@ describe("split Postgres repositories", () => {
             ],
         ]);
 
-        const overview = await createPostgresRepositories(executor).generationLogs.getCreateOverview("user-one");
+        const overview = await createPostgresRepositories(executor).generationLogs.getCreateOverview("tenant-one", "user-one");
 
         expect(overview).toEqual({
             runningTasks: [{ id: "pending-one", kind: "video", source: "agent", title: "生成短片", createdAt: timestamp }],
@@ -888,7 +888,7 @@ describe("split Postgres repositories", () => {
         expect(String(statement)).toContain("LIMIT 4");
         expect(String(statement)).toContain("LIMIT 6");
         expect(String(statement)).not.toMatch(/SELECT\s+\*|\bprompt\b|\berror\b/i);
-        expect(params).toEqual(["user-one"]);
+        expect(params).toEqual(["tenant-one", "user-one"]);
     });
 
     it("pushes prompt filtering and pagination into PostgreSQL", async () => {

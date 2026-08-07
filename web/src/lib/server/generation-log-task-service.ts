@@ -38,7 +38,7 @@ export async function recordGenerationLogDraft(input: GenerationLogInput) {
     const id = normalizeText(input.id, randomUUID(), 120);
     const requestSnapshot = normalizeGenerationLogRequestSnapshot(input.requestSnapshot);
     if (!requestSnapshot?.slots.some((slot) => slot.status === "pending" && slot.clientRequestId)) throw new GenerationLogDraftValidationError();
-    return mutateOwnedGenerationLog(id, input.userId, (existing) => buildGenerationLogDraft({ ...input, requestSnapshot }, id, existing));
+    return mutateOwnedGenerationLog(id, input.tenantId, input.userId, (existing) => buildGenerationLogDraft({ ...input, requestSnapshot }, id, existing));
 }
 
 export async function recordGenerationTaskLogResult(input: GenerationTaskLogResultInput): Promise<{ log?: StoredGenerationLog; asset?: GenerationLogAsset; assets?: GenerationLogAsset[] }> {
@@ -52,7 +52,7 @@ export async function recordGenerationTaskLogResult(input: GenerationTaskLogResu
     let missing = false;
     let asset: GenerationLogAsset | undefined;
     let assets: GenerationLogAsset[] = [];
-    const log = await mutateOwnedGenerationLog(logId, input.userId, async (current) => {
+    const log = await mutateOwnedGenerationLog(logId, input.tenantId, input.userId, async (current) => {
         if (!current) {
             missing = true;
             return undefined;
@@ -74,17 +74,17 @@ export async function recordGenerationTaskLogResult(input: GenerationTaskLogResu
     return { log: log || undefined, asset, assets };
 }
 
-export function renameGenerationLogForUser(userId: string, id: string, title: string) {
+export function renameGenerationLogForUser(tenantId: string, userId: string, id: string, title: string) {
     const normalizedTitle = normalizeText(title, "", 80);
     if (!normalizedTitle) return Promise.resolve<StoredGenerationLog | null>(null);
-    return mutateOwnedGenerationLog(normalizeText(id, "", 120), userId, (current) => (current ? { ...current, title: normalizedTitle, updatedAt: new Date().toISOString() } : undefined));
+    return mutateOwnedGenerationLog(normalizeText(id, "", 120), tenantId, userId, (current) => (current ? { ...current, title: normalizedTitle, updatedAt: new Date().toISOString() } : undefined));
 }
 
-export async function deleteGenerationLogResultsForUser(userId: string, id: string, slotIds: string[]) {
+export async function deleteGenerationLogResultsForUser(tenantId: string, userId: string, id: string, slotIds: string[]) {
     const selected = new Set(slotIds.map((slotId) => normalizeText(slotId, "", 200)).filter(Boolean));
     if (!selected.size) return null;
     let removedAssets: GenerationLogAsset[] = [];
-    const log = await mutateOwnedGenerationLog(normalizeText(id, "", 120), userId, (current) => {
+    const log = await mutateOwnedGenerationLog(normalizeText(id, "", 120), tenantId, userId, (current) => {
         if (!current?.requestSnapshot) return current;
         const snapshot = current.requestSnapshot;
         const removedSlots = snapshot.slots.filter((slot) => selected.has(slot.id));
@@ -105,25 +105,26 @@ export async function deleteGenerationLogResultsForUser(userId: string, id: stri
     return log;
 }
 
-async function mutateOwnedGenerationLog(id: string, userId: string, mutate: (current: StoredGenerationLog | undefined) => StoredGenerationLog | undefined | Promise<StoredGenerationLog | undefined>): Promise<StoredGenerationLog | null> {
+async function mutateOwnedGenerationLog(id: string, tenantId: string | undefined, userId: string, mutate: (current: StoredGenerationLog | undefined) => StoredGenerationLog | undefined | Promise<StoredGenerationLog | undefined>): Promise<StoredGenerationLog | null> {
     if (!id || !userId) return null;
     if (isPostgresDatabaseEnabled()) {
         await ensurePostgresSchema();
         return withPostgresTransaction(async (client) => {
             const repository = createPostgresRepositories(client).generationLogs;
-            const record = await repository.getById(id, true);
+            const record = await repository.getById(id, true, tenantId);
             const current = record ? normalizeStoredLog(record as Partial<StoredGenerationLog>) : undefined;
-            if (current && current.userId !== userId) throw new GenerationLogOwnershipError();
+            if (current && (current.userId !== userId || (tenantId && (current.tenantId || "default") !== tenantId))) throw new GenerationLogOwnershipError();
             const next = await mutate(current);
-            return next ? normalizeStoredLog((await repository.upsert(next)) as Partial<StoredGenerationLog>) : null;
+            return next ? normalizeStoredLog((await repository.upsert({ ...next, tenantId: next.tenantId || tenantId })) as Partial<StoredGenerationLog>) : null;
         });
     }
     return mutateGenerationLogDb(async (db) => {
-        const current = db.logs.find((log) => log.id === id);
+        const current = db.logs.find((log) => log.id === id && (!tenantId || (log.tenantId || "default") === tenantId));
         if (current && current.userId !== userId) throw new GenerationLogOwnershipError();
         const next = await mutate(current);
         if (!next) return null;
-        db.logs = [next, ...db.logs.filter((log) => log.id !== id)].slice(0, MAX_LOGS);
+        const scopedTenantId = next.tenantId || tenantId || "default";
+        db.logs = [{ ...next, tenantId: next.tenantId || tenantId }, ...db.logs.filter((log) => log.id !== id || (log.tenantId || "default") !== scopedTenantId)].slice(0, MAX_LOGS);
         return next;
     });
 }
@@ -134,6 +135,7 @@ function buildGenerationLogDraft(input: GenerationLogInput, id: string, existing
     if (existing) return finalizeGenerationLog({ ...existing, requestSnapshot, count: Math.max(existing.count, requestSnapshot?.slots.length || 0, 1), updatedAt: now }, requestSnapshot?.slots || []);
     return normalizeStoredLog({
         id,
+        tenantId: input.tenantId,
         userId: input.userId,
         username: input.username,
         displayName: input.displayName,
@@ -210,6 +212,7 @@ function normalizeTaskResultAssets(input: GenerationTaskLogResultInput, existing
 function recordStandaloneGenerationTaskLog(input: GenerationTaskLogResultInput) {
     return recordGenerationLog({
         id: `${input.kind}-task:${input.taskId}`,
+        tenantId: input.tenantId,
         taskId: input.taskId,
         userId: input.userId,
         username: input.username,

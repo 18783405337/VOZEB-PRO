@@ -16,6 +16,7 @@ export type RuntimeFileDatabase = {
 
 export type AgentRunBase = {
     id: string;
+    tenantId?: string;
     userId: string;
     conversationId: string;
     clientRequestId: string;
@@ -70,7 +71,7 @@ const CREATIVE_RUN_NOTIFY_CHANNEL = "vozeb_pro_run_events";
 export async function createPostgresRunBundle<T extends AgentRunBase>(userId: string, input: CreateRunBundleInput<T>) {
     await ensurePostgresSchema();
     return withPostgresTransaction(async (client) => {
-        const existing = await client.query<{ payload: T }>("SELECT payload FROM generation_tasks WHERE user_id = $1 AND client_request_id = $2 AND task_type = 'agent'", [userId, input.run.clientRequestId]);
+        const existing = await client.query<{ payload: T }>("SELECT payload FROM generation_tasks WHERE tenant_id = $1 AND user_id = $2 AND client_request_id = $3 AND task_type = 'agent'", [input.run.tenantId || "default", userId, input.run.clientRequestId]);
         if (existing.rows[0]) return { run: existing.rows[0].payload, created: false };
         const conversation = await resolvePostgresConversation(client, userId, input);
         await validatePostgresAssets(client, input.assetIds, userId);
@@ -83,10 +84,10 @@ export async function createPostgresRunBundle<T extends AgentRunBase>(userId: st
         await insertPostgresMessage(client, assistantMessage);
         await client.query(
             `INSERT INTO generation_tasks (
-                id, user_id, task_type, status, payload, created_at, updated_at, expires_at,
+                id, tenant_id, user_id, task_type, status, payload, created_at, updated_at, expires_at,
                 conversation_id, run_id, surface, project_id, client_request_id
-             ) VALUES ($1, $2, 'agent', 'pending', $3::jsonb, $4, $4, $5, $6, $1, $7, $8, $9)`,
-            [input.run.id, userId, JSON.stringify(input.run), new Date(now), new Date(now + input.ttlMs), conversation.id, input.run.surface, input.run.projectId || null, input.run.clientRequestId],
+             ) VALUES ($1, $2, $3, 'agent', 'pending', $4::jsonb, $5, $5, $6, $7, $1, $8, $9, $10)`,
+            [input.run.id, input.run.tenantId || "default", userId, JSON.stringify(input.run), new Date(now), new Date(now + input.ttlMs), conversation.id, input.run.surface, input.run.projectId || null, input.run.clientRequestId],
         );
         const eventResult = await client.query("INSERT INTO creative_run_events (run_id, type, data, created_at) VALUES ($1, 'run.created', NULL, $2) RETURNING *", [input.run.id, new Date(now)]);
         await client.query(`SELECT pg_notify('${CREATIVE_RUN_NOTIFY_CHANNEL}', $1)`, [input.run.id]);
@@ -96,17 +97,17 @@ export async function createPostgresRunBundle<T extends AgentRunBase>(userId: st
     });
 }
 
-export async function mutatePostgresRun<T extends AgentRunBase>(id: string, ttlMs: number, mutate: (current: T) => RunMutation<T> | null, allowedStatuses?: string[], expectedExecutionId?: string) {
+export async function mutatePostgresRun<T extends AgentRunBase>(id: string, ttlMs: number, mutate: (current: T) => RunMutation<T> | null, allowedStatuses?: string[], expectedExecutionId?: string, tenantId?: string) {
     await ensurePostgresSchema();
     return withPostgresTransaction(async (client) => {
-        const result = await client.query<{ payload: T & { executionId?: string } }>("SELECT payload FROM generation_tasks WHERE id = $1 AND task_type = 'agent' AND expires_at > now() FOR UPDATE", [id]);
+        const result = await client.query<{ payload: T & { executionId?: string } }>("SELECT payload FROM generation_tasks WHERE id = $1 AND ($2::text IS NULL OR tenant_id = $2) AND task_type = 'agent' AND expires_at > now() FOR UPDATE", [id, tenantId || null]);
         const current = result.rows[0]?.payload;
         if (!current || (allowedStatuses && !allowedStatuses.includes(current.status)) || (expectedExecutionId && current.executionId !== expectedExecutionId)) return null;
         const mutation = mutate(current as T);
         if (!mutation) return null;
         const now = Date.now();
         const run = { ...mutation.run, id: current.id, userId: current.userId, createdAt: current.createdAt, updatedAt: now };
-        await client.query("UPDATE generation_tasks SET status = $2, payload = $3::jsonb, updated_at = $4, expires_at = $5 WHERE id = $1", [id, normalizeTaskStatus(run.status), JSON.stringify(run), new Date(now), new Date(now + ttlMs)]);
+        await client.query("UPDATE generation_tasks SET status = $3, payload = $4::jsonb, updated_at = $5, expires_at = $6 WHERE id = $1 AND ($2::text IS NULL OR tenant_id = $2)", [id, tenantId || null, normalizeTaskStatus(run.status), JSON.stringify(run), new Date(now), new Date(now + ttlMs)]);
         if (mutation.event) {
             await client.query("INSERT INTO creative_run_events (run_id, type, data, created_at) VALUES ($1, $2, $3::jsonb, $4)", [id, mutation.event.type, mutation.event.data === undefined ? null : JSON.stringify(mutation.event.data), new Date(now)]);
             await client.query(`SELECT pg_notify('${CREATIVE_RUN_NOTIFY_CHANNEL}', $1)`, [id]);
@@ -281,6 +282,7 @@ export async function upsertPostgresAsset(client: QueryExecutor, input: NewAsset
 export function taskRecord<T extends AgentRunBase>(run: T, ttlMs: number): StoredGenerationTaskRecord {
     return {
         id: run.id,
+        tenantId: run.tenantId || "default",
         userId: run.userId,
         type: "agent",
         status: normalizeTaskStatus(run.status),

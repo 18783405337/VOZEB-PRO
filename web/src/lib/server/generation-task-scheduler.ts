@@ -5,6 +5,7 @@ export type GenerationTaskExecutionPhase = "created" | "submitting" | "submitted
 
 export type GenerationTaskLease = Pick<
     StoredGenerationTaskRecord,
+    | "tenantId"
     | "id"
     | "userId"
     | "type"
@@ -26,7 +27,7 @@ export type GenerationTaskLease = Pick<
 >;
 
 export type GenerationTaskSchedulePatch = Partial<Pick<GenerationTaskLease, "executionPhase" | "upstreamTaskId" | "channelId" | "provider" | "queryPath" | "submittedAt" | "nextPollAt" | "lastPollAt" | "lastUpstreamStatus" | "resultPayload">>;
-type GenerationTaskScheduleOptions = { cancellation?: boolean };
+type GenerationTaskScheduleOptions = { cancellation?: boolean; tenantId?: string };
 
 const SCHEDULABLE_TYPES = new Set<GenerationTaskType>(["image", "video", "audio", "text", "agent"]);
 const ACTIVE_PHASES = new Set<GenerationTaskExecutionPhase>(["created", "submitting", "submitted", "polling", "result_ready", "persisting"]);
@@ -43,17 +44,17 @@ export async function scheduleGenerationTask(type: GenerationTaskType, id: strin
                  channel_id = COALESCE($5, channel_id), provider = COALESCE($6, provider), query_path = COALESCE($7, query_path),
                  submitted_at = COALESCE($8, submitted_at), next_poll_at = $9, last_poll_at = COALESCE($10, last_poll_at),
                  last_upstream_status = COALESCE($11, last_upstream_status), result_payload = COALESCE($12::jsonb, result_payload)
-             WHERE id = $1 AND task_type = $2
-               AND ($13::boolean OR status <> 'cancelled' OR execution_phase NOT IN ('cancel_requested', 'cancel_polling'))
+             WHERE id = $1 AND task_type = $2 AND ($13::text IS NULL OR tenant_id = $13)
+               AND ($14::boolean OR status <> 'cancelled' OR execution_phase NOT IN ('cancel_requested', 'cancel_polling'))
              RETURNING *`,
-            [...scheduleValues(id, type, normalized), options.cancellation === true],
+            [...scheduleValues(id, type, normalized), clean(options.tenantId, 160) || null, options.cancellation === true],
         );
         return result.rows[0] ? mapLease(result.rows[0]) : null;
     }
     return withGenerationTaskFileMutation(async (tasks) => {
         let result: GenerationTaskLease | null = null;
         const next = tasks.map((task) => {
-            if (task.id !== id || task.type !== type) return task;
+            if (task.id !== id || task.type !== type || (options.tenantId && task.tenantId !== options.tenantId)) return task;
             if (!canApplySchedulePatch(task, options)) return task;
             const updated = applyPatch(task, normalized);
             result = toLease(updated);
@@ -143,17 +144,17 @@ export async function releaseGenerationTaskLease(type: GenerationTaskType, id: s
                  submitted_at = COALESCE($9, submitted_at), next_poll_at = $10, last_poll_at = COALESCE($11, last_poll_at),
                  last_upstream_status = COALESCE($12, last_upstream_status), result_payload = COALESCE($13::jsonb, result_payload),
                  worker_id = NULL, lease_until = NULL
-             WHERE id = $1 AND task_type = $2 AND worker_id = $3
-               AND ($14::boolean OR status <> 'cancelled' OR execution_phase NOT IN ('cancel_requested', 'cancel_polling'))
+             WHERE id = $1 AND task_type = $2 AND worker_id = $3 AND ($14::text IS NULL OR tenant_id = $14)
+               AND ($15::boolean OR status <> 'cancelled' OR execution_phase NOT IN ('cancel_requested', 'cancel_polling'))
              RETURNING *`,
-            [id, type, owner, ...scheduleValues("", type, normalized).slice(2), options.cancellation === true],
+            [id, type, owner, ...scheduleValues("", type, normalized).slice(2), clean(options.tenantId, 160) || null, options.cancellation === true],
         );
         return result.rows[0] ? mapLease(result.rows[0]) : null;
     }
     return withGenerationTaskFileMutation(async (tasks) => {
         let result: GenerationTaskLease | null = null;
         const next = tasks.map((task) => {
-            if (task.id !== id || task.type !== type || task.workerId !== owner) return task;
+            if (task.id !== id || task.type !== type || task.workerId !== owner || (options.tenantId && task.tenantId !== options.tenantId)) return task;
             if (!canApplySchedulePatch(task, options)) return task;
             const updated = { ...applyPatch(task, normalized), workerId: undefined, leaseUntil: undefined };
             result = toLease(updated);
@@ -235,6 +236,7 @@ function canApplySchedulePatch(task: StoredGenerationTaskRecord, options: Genera
 function mapLease(row: Record<string, unknown>): GenerationTaskLease {
     return {
         id: String(row.id || ""),
+        tenantId: clean(row.tenant_id, 160) || "default",
         userId: String(row.user_id || ""),
         type: isTaskType(row.task_type) ? row.task_type : "text",
         status: row.status === "pending" || row.status === "running" || row.status === "success" || row.status === "error" || row.status === "paused" || row.status === "cancelled" ? row.status : "error",

@@ -300,14 +300,14 @@ export async function createCreativeRunBundle<T extends AgentRunBase>(userId: st
             return result;
         } catch (error) {
             if (!isUniqueViolation(error)) throw error;
-            const run = await getCreativeRunByClientRequestId<T>(userId, input.run.clientRequestId);
+            const run = await getCreativeRunByClientRequestId<T>(input.run.tenantId || "default", userId, input.run.clientRequestId);
             if (run) return { run, created: false };
             throw error;
         }
     }
     const result = await queueRuntimeFileOperation(() =>
         withGenerationTaskFileMutation<CreativeRunBundleResult<T>>(async (tasks) => {
-            const existing = tasks.find((item) => item.userId === userId && item.clientRequestId === input.run.clientRequestId && item.type === "agent");
+            const existing = tasks.find((item) => item.tenantId === (input.run.tenantId || "default") && item.userId === userId && item.clientRequestId === input.run.clientRequestId && item.type === "agent");
             if (existing) return { tasks, result: { run: existing.payload as T, created: false } };
             const db = await readRuntimeFile();
             const conversation = resolveFileConversation(db, userId, input);
@@ -333,27 +333,27 @@ export async function createCreativeRunBundle<T extends AgentRunBase>(userId: st
     return result;
 }
 
-export async function getCreativeRunByClientRequestId<T extends AgentRunBase>(userId: string, clientRequestId: string) {
+export async function getCreativeRunByClientRequestId<T extends AgentRunBase>(tenantId: string, userId: string, clientRequestId: string) {
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
-        const result = await postgresQuery<{ payload: T }>("SELECT payload FROM generation_tasks WHERE user_id = $1 AND client_request_id = $2 AND task_type = 'agent' LIMIT 1", [userId, clientRequestId]);
+        const result = await postgresQuery<{ payload: T }>("SELECT payload FROM generation_tasks WHERE tenant_id = $1 AND user_id = $2 AND client_request_id = $3 AND task_type = 'agent' LIMIT 1", [tenantId, userId, clientRequestId]);
         return result.rows[0]?.payload || null;
     }
     return withGenerationTaskFileMutation<T | null>(async (items) => ({
         tasks: items,
-        result: (items.find((item) => item.userId === userId && item.clientRequestId === clientRequestId && item.type === "agent")?.payload as T | undefined) || null,
+        result: (items.find((item) => item.tenantId === tenantId && item.userId === userId && item.clientRequestId === clientRequestId && item.type === "agent")?.payload as T | undefined) || null,
     }));
 }
 
-export async function mutateCreativeRun<T extends AgentRunBase>(id: string, ttlMs: number, mutate: (current: T) => RunMutation<T> | null, allowedStatuses?: string[], expectedExecutionId?: string) {
+export async function mutateCreativeRun<T extends AgentRunBase>(id: string, ttlMs: number, mutate: (current: T) => RunMutation<T> | null, allowedStatuses?: string[], expectedExecutionId?: string, tenantId?: string) {
     if (getDatabaseProvider() === "postgres") {
-        const result = await mutatePostgresRun(id, ttlMs, mutate, allowedStatuses, expectedExecutionId);
+        const result = await mutatePostgresRun(id, ttlMs, mutate, allowedStatuses, expectedExecutionId, tenantId);
         if (result) notifyCreativeRunEvent(id);
         return result;
     }
     const result = await queueRuntimeFileOperation(() =>
         withGenerationTaskFileMutation(async (tasks) => {
-            const index = tasks.findIndex((item) => item.id === id && item.type === "agent" && item.expiresAt > Date.now());
+            const index = tasks.findIndex((item) => item.id === id && (!tenantId || item.tenantId === tenantId) && item.type === "agent" && item.expiresAt > Date.now());
             if (index < 0) return { tasks, result: null };
             const current = tasks[index].payload as T & { executionId?: string };
             if (allowedStatuses && !allowedStatuses.includes(current.status)) return { tasks, result: null };

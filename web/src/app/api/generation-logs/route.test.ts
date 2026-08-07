@@ -24,6 +24,7 @@ vi.mock("@/lib/server/generation-log-task-service", () => ({
     recordGenerationLogDraft: mocks.recordDraft,
     renameGenerationLogForUser: mocks.rename,
 }));
+vi.mock("@/lib/server/tenant/tenant-context", () => ({ getTrustedTenantId: vi.fn(async () => "default") }));
 
 import { PATCH, POST } from "./route";
 
@@ -85,8 +86,8 @@ describe("generation log browser write boundary", () => {
 
         expect(renamed.status).toBe(200);
         expect(deleted.status).toBe(200);
-        expect(mocks.rename).toHaveBeenCalledWith("user-one", "image-workbench:log-one", "新标题");
-        expect(mocks.deleteResults).toHaveBeenCalledWith("user-one", "image-workbench:log-one", ["slot-one"]);
+        expect(mocks.rename).toHaveBeenCalledWith("default", "user-one", "image-workbench:log-one", "新标题");
+        expect(mocks.deleteResults).toHaveBeenCalledWith("default", "user-one", "image-workbench:log-one", ["slot-one"]);
     });
 
     it("hides generation records owned by another user", async () => {

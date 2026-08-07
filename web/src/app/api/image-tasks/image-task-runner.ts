@@ -13,6 +13,7 @@ export async function writeImageGenerationLog(task: ImageTask, status: "success"
         return resultUrl ? [{ type: "image" as const, url: resultUrl, remoteUrl: typeof item === "string" ? undefined : item.remoteUrl, targetSize: task.config.size }] : [];
     });
     return recordGenerationTaskLogResult({
+        tenantId: task.tenantId,
         logId: task.generationLogId,
         slotId: task.generationSlotId,
         clientRequestId: task.clientRequestId,

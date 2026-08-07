@@ -13,6 +13,7 @@ import { getStoredGenerationTaskByRequest, linkStoredGenerationTask, withGenerat
 import { resolveInternalOrigin } from "@/lib/server/internal-origin";
 import { resolveLogicalModelCandidates } from "@/lib/server/logical-model-router";
 import { checkGenerationRateLimit, rateLimitHeaders } from "@/lib/server/security";
+import { getTrustedTenantId } from "@/lib/server/tenant/tenant-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,6 +22,7 @@ export const maxDuration = 2400;
 export async function POST(request: Request) {
     const user = await getCurrentUser(request);
     if (!user) return NextResponse.json({ error: "请先登录" }, { status: 401 });
+    const tenantId = await getTrustedTenantId(request, user);
     const rate = await checkGenerationRateLimit(user.id, request, "audio");
     if (!rate.allowed) return NextResponse.json({ error: "音频生成请求过于频繁，请稍后重试" }, { status: 429, headers: rateLimitHeaders(rate) });
     const settings = await getAuthSettings();
@@ -39,17 +41,17 @@ export async function POST(request: Request) {
         const configs: AudioTaskConfig[] = supportedChannels.map((channel) => ({ ...channel, ...resolveAudioTaskOptions(body.config, settings.generationDefaults), instructions: clean(body.config?.instructions, 2_000) }));
         const requestId = body.context?.clientRequestId?.trim();
         if (requestId) {
-            const existing = await getStoredGenerationTaskByRequest<AudioTask>("audio", user.id, requestId, body.context?.attemptNo);
+            const existing = await getStoredGenerationTaskByRequest<AudioTask>("audio", tenantId, user.id, requestId, body.context?.attemptNo);
             if (existing) return NextResponse.json({ task: publicTask(existing) });
         }
-        const task = await createAudioTask({ ...(body.context || {}), userId: user.id, config: configs[0], candidateConfigs: configs.slice(1), prompt: prompt.slice(0, 20_000), source: mediaTaskSource(body.source, body.context, "audio-task") });
-        await linkStoredGenerationTask("audio", task.id, body.context || {});
+        const task = await createAudioTask({ ...(body.context || {}), tenantId, userId: user.id, config: configs[0], candidateConfigs: configs.slice(1), prompt: prompt.slice(0, 20_000), source: mediaTaskSource(body.source, body.context, "audio-task") });
+        await linkStoredGenerationTask("audio", task.id, body.context || {}, tenantId);
         const origin = resolveInternalOrigin(new URL(request.url).origin);
         const cookie = request.headers.get("cookie") || "";
-        await scheduleGenerationTask("audio", task.id, { executionPhase: "created", channelId: task.config.channelId, provider: task.config.advancedConfig?.protocol || task.config.apiFormat, nextPollAt: Date.now(), lastUpstreamStatus: "created" });
+        await scheduleGenerationTask("audio", task.id, { executionPhase: "created", channelId: task.config.channelId, provider: task.config.advancedConfig?.protocol || task.config.apiFormat, nextPollAt: Date.now(), lastUpstreamStatus: "created" }, { tenantId });
         after(() => runGenerationTaskRecoveryBatch({ origin, cookie, limit: 1, taskIds: [task.id] }));
         return NextResponse.json({ task: publicTask(task) });
-    });
+    }, tenantId);
     return response || NextResponse.json({ error: "当前用户音频任务已达到并发上限" }, { status: 429 });
 }
 

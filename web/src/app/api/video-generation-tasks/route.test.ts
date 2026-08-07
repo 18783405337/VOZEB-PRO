@@ -36,8 +36,10 @@ vi.mock("@/lib/server/generation-task-store", () => ({
     linkStoredGenerationTask: mocks.linkStoredGenerationTask,
     getStoredGenerationTaskByRequest: mocks.getStoredGenerationTaskByRequest,
 }));
+vi.mock("@/lib/server/tenant/tenant-context", () => ({ getTrustedTenantId: vi.fn(async () => "default") }));
 vi.mock("@/lib/server/security", () => ({
     checkGenerationRateLimit: vi.fn(async () => ({ allowed: true, remaining: 5, resetAt: Date.now() + 60_000 })),
+    getTrustedProxyHops: vi.fn(() => 0),
     rateLimitHeaders: vi.fn(() => ({})),
 }));
 vi.mock("@/lib/server/generation-task-recovery-service", () => ({ runGenerationTaskRecoveryBatch: vi.fn() }));
@@ -128,7 +130,7 @@ describe("video generation candidate failover", () => {
 
         expect(response.status).toBe(200);
         expect(await response.json()).toMatchObject({ task: { id: "existing-task", upstreamId: "existing-upstream" } });
-        expect(mocks.getStoredGenerationTaskByRequest).toHaveBeenCalledWith("video", "user", "same-request", 2);
+        expect(mocks.getStoredGenerationTaskByRequest).toHaveBeenCalledWith("video", "default", "user", "same-request", 2);
         expect(mocks.getAuthSettings).not.toHaveBeenCalled();
         expect(mocks.withGenerationConcurrencyLimit).not.toHaveBeenCalled();
         expect(mocks.fetchInternalApi).not.toHaveBeenCalled();
@@ -142,7 +144,7 @@ describe("video generation candidate failover", () => {
         expect(response.status).toBe(202);
         expect(mocks.fetchInternalApi.mock.calls.some(([url]) => String(url).includes("/api/ai/system/two/"))).toBe(false);
         expect(mocks.createVideoTask).toHaveBeenCalledOnce();
-        expect(mocks.scheduleGenerationTask).toHaveBeenLastCalledWith("video", "local-task", expect.objectContaining({ executionPhase: "needs_review", nextPollAt: undefined, lastUpstreamStatus: "submission_outcome_unknown" }));
+        expect(mocks.scheduleGenerationTask).toHaveBeenLastCalledWith("video", "local-task", expect.objectContaining({ executionPhase: "needs_review", nextPollAt: undefined, lastUpstreamStatus: "submission_outcome_unknown" }), { tenantId: "default" });
     });
 
     it("does not retry another path or binding after an ambiguous server failure", async () => {
@@ -177,7 +179,7 @@ describe("video generation candidate failover", () => {
         const response = await POST(request());
 
         expect(response.status).toBe(200);
-        expect(mocks.scheduleGenerationTask).toHaveBeenLastCalledWith("video", "local-task", expect.objectContaining({ executionPhase: "submitted", upstreamTaskId: "global-video-task" }));
+        expect(mocks.scheduleGenerationTask).toHaveBeenLastCalledWith("video", "local-task", expect.objectContaining({ executionPhase: "submitted", upstreamTaskId: "global-video-task" }), { tenantId: "default" });
         expect(mocks.after).toHaveBeenCalledWith(expect.any(Function));
     });
 
@@ -334,7 +336,7 @@ describe("video generation candidate failover", () => {
 
         expect(response.status).toBe(200);
         expect(mocks.createVideoTask).toHaveBeenCalledWith(expect.objectContaining(context));
-        expect(mocks.linkStoredGenerationTask).toHaveBeenCalledWith("video", "local-task", context);
+        expect(mocks.linkStoredGenerationTask).toHaveBeenCalledWith("video", "local-task", context, "default");
     });
 
     it("rejects a raw upstream model when the logical catalog exists", async () => {

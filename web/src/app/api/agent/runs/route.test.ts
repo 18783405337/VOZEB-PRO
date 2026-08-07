@@ -23,6 +23,7 @@ vi.mock("@/lib/server/generation-task-recovery-service", () => ({ runGenerationT
 vi.mock("@/lib/server/generation-task-scheduler", () => ({ scheduleGenerationTask: mocks.scheduleGenerationTask }));
 vi.mock("@/lib/server/agent-run-store", () => ({ createAgentRun: mocks.createAgentRun, getAgentRunByClientRequestId: mocks.getAgentRunByClientRequestId, listAgentRuns: mocks.listAgentRuns }));
 vi.mock("@/lib/server/internal-origin", () => ({ resolveInternalOrigin: vi.fn(() => "http://localhost") }));
+vi.mock("@/lib/server/tenant/tenant-context", () => ({ getTrustedTenantId: vi.fn(async () => "default") }));
 
 import { maxDuration, POST } from "./route";
 
@@ -68,7 +69,7 @@ describe("POST /api/agent/runs", () => {
         mocks.createAgentRun.mockResolvedValue({ run, conversation: { id: "conversation" }, created: true });
         const response = await POST(request(validInput()));
         expect(await response.json()).toMatchObject({ data: { run: { id: "new-run" }, conversation: { id: "conversation" }, created: true } });
-        expect(mocks.createAgentRun).toHaveBeenCalledWith("user", {
+        expect(mocks.createAgentRun).toHaveBeenCalledWith("default", "user", {
             ...validInput(),
             conversationId: undefined,
             projectId: undefined,
@@ -76,7 +77,7 @@ describe("POST /api/agent/runs", () => {
             modelIds: [],
             snapshot: undefined,
         });
-        expect(mocks.scheduleGenerationTask).toHaveBeenCalledWith("agent", "new-run", expect.objectContaining({ executionPhase: "created", nextPollAt: expect.any(Number), lastUpstreamStatus: "created" }));
+        expect(mocks.scheduleGenerationTask).toHaveBeenCalledWith("agent", "new-run", expect.objectContaining({ executionPhase: "created", nextPollAt: expect.any(Number), lastUpstreamStatus: "created" }), { tenantId: "default" });
         expect(mocks.after).toHaveBeenCalledWith(expect.any(Function));
     });
 });

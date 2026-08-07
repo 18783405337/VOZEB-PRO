@@ -327,11 +327,12 @@ export async function insertPostgresGenerationLogs(db: QueryExecutor, logs: Stor
         await db.query(
             `
             INSERT INTO generation_logs (
-                id, user_id, conversation_id, username, display_name, kind, source, status, title, prompt, model, summary,
+                id, tenant_id, user_id, conversation_id, username, display_name, kind, source, status, title, prompt, model, summary,
                 duration_ms, count, success_count, fail_count, request_snapshot, task_id, error, created_at, updated_at, completed_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb, $18, $19, $20, $21, $22)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18::jsonb, $19, $20, $21, $22, $23)
             ON CONFLICT (id) DO UPDATE SET
+                tenant_id = COALESCE(EXCLUDED.tenant_id, generation_logs.tenant_id),
                 user_id = EXCLUDED.user_id,
                 conversation_id = EXCLUDED.conversation_id,
                 username = EXCLUDED.username,
@@ -356,6 +357,7 @@ export async function insertPostgresGenerationLogs(db: QueryExecutor, logs: Stor
             `,
             [
                 log.id,
+                log.tenantId || null,
                 log.userId,
                 log.conversationId || null,
                 log.username,
@@ -399,6 +401,7 @@ export async function insertPostgresGenerationLogAssets(db: QueryExecutor, logId
 export function mapPostgresGenerationLog(row: Record<string, unknown>, assets: GenerationLogAsset[]): StoredGenerationLog {
     return {
         id: dbText(row.id),
+        tenantId: dbOptionalText(row.tenant_id),
         userId: dbText(row.user_id),
         conversationId: dbOptionalText(row.conversation_id),
         username: dbText(row.username),
@@ -479,6 +482,7 @@ export function normalizeStoredLog(log: Partial<StoredGenerationLog>): StoredGen
     const status = isGenerationStatus(log.status) ? log.status : "success";
     return {
         id: normalizeText(log.id, randomUUID(), 120),
+        tenantId: normalizeOptionalText(log.tenantId, undefined, 120),
         userId: normalizeText(log.userId, "", 120),
         conversationId: normalizeOptionalText(log.conversationId, undefined, 160),
         username: normalizeText(log.username, "", 80),

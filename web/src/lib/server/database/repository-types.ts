@@ -279,6 +279,7 @@ export type GenerationLogAssetRecord = {
 
 export type GenerationLogRecord = {
     id: string;
+    tenantId?: string;
     userId: string;
     conversationId?: string;
     username: string;

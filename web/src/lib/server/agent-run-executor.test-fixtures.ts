@@ -18,6 +18,7 @@ export function runFixture(patch: Partial<AgentRun> = {}): AgentRun {
     const now = Date.now();
     return {
         id: "agent-run",
+        tenantId: "default",
         userId: "user",
         conversationId: "conversation",
         clientRequestId: "request",

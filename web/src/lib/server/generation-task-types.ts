@@ -4,6 +4,7 @@ export type GenerationTaskType = "text" | "image" | "video" | "audio" | "agent" 
 export type GenerationTaskStatus = "pending" | "running" | "success" | "error" | "paused" | "cancelled";
 
 export type GenerationTaskContext = {
+    tenantId?: string;
     conversationId?: string;
     runId?: string;
     surface?: "chat" | "canvas" | "drama";
@@ -20,6 +21,7 @@ export type GenerationTaskContext = {
 
 export type StoredGenerationTaskRecord = {
     id: string;
+    tenantId: string;
     userId: string;
     type: GenerationTaskType;
     status: GenerationTaskStatus;
@@ -50,9 +52,11 @@ export type GenerationTaskRecordListOptions = {
     surface?: string;
     projectId?: string;
     userId?: string;
+    tenantId?: string;
     search?: string;
     searchUserIds?: string[];
     includeAll?: boolean;
+    includeAllTenants?: boolean;
 };
 
 export type GenerationTaskRecordSummary = {

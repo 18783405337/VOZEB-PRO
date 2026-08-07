@@ -83,8 +83,8 @@ export async function createImageTask(input: Omit<ImageTask, "id" | "status" | "
     return createStoredGenerationTask("image", task, GENERATION_TASK_RETENTION_MS);
 }
 
-export async function getImageTask(id: string) {
-    return getStoredGenerationTask<ImageTask>("image", id);
+export async function getImageTask(id: string, tenantId?: string) {
+    return getStoredGenerationTask<ImageTask>("image", id, tenantId);
 }
 
 export function countActiveImageTasksForUser(userId: string) {
@@ -97,13 +97,13 @@ export function transitionImageTask(
     patch: Partial<Pick<ImageTask, "result" | "error" | "pointsRemaining" | "retryable" | "config" | "billing">> & { status: ImageTaskStatus },
     executionPatch?: import("@/lib/server/generation-task-scheduler").GenerationTaskSchedulePatch,
 ) {
-    return transitionStoredGenerationTask<ImageTask>("image", task.id, task.userId, allowedStatuses, patch, GENERATION_TASK_RETENTION_MS, executionPatch);
+    return transitionStoredGenerationTask<ImageTask>("image", task.id, task.userId, allowedStatuses, patch, GENERATION_TASK_RETENTION_MS, executionPatch, task.tenantId);
 }
 
-export function touchImageTask(id: string) {
-    return touchStoredGenerationTask("image", id, Date.now(), GENERATION_TASK_RETENTION_MS);
+export function touchImageTask(id: string, tenantId?: string) {
+    return touchStoredGenerationTask("image", id, Date.now(), GENERATION_TASK_RETENTION_MS, tenantId);
 }
 
-export async function updateImageTask(id: string, patch: Partial<Pick<ImageTask, "config" | "candidateConfigs" | "attempts" | "attemptNo" | "upstream" | "billing" | "result" | "retryable">>) {
-    return mutateStoredGenerationTask<ImageTask>("image", id, GENERATION_TASK_RETENTION_MS, (task) => ({ ...task, ...patch }));
+export async function updateImageTask(id: string, patch: Partial<Pick<ImageTask, "config" | "candidateConfigs" | "attempts" | "attemptNo" | "upstream" | "billing" | "result" | "retryable">>, tenantId?: string) {
+    return mutateStoredGenerationTask<ImageTask>("image", id, GENERATION_TASK_RETENTION_MS, (task) => ({ ...task, ...patch }), tenantId);
 }

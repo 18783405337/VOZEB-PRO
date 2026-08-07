@@ -10,17 +10,19 @@ import { CreativeStoreConflict } from "@/lib/server/creative-runtime-store";
 import { resolveInternalOrigin } from "@/lib/server/internal-origin";
 import { runGenerationTaskRecoveryBatch } from "@/lib/server/generation-task-recovery-service";
 import { scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
+import { getTrustedTenantId } from "@/lib/server/tenant/tenant-context";
 
 export const maxDuration = 2400;
 
 export async function GET(request: Request) {
     const user = await getCurrentUser(request);
     if (!user) return NextResponse.json({ code: 401, data: null, msg: "请先登录" }, { status: 401 });
+    const tenantId = await getTrustedTenantId(request, user);
     const url = new URL(request.url);
     const projectId = url.searchParams.get("projectId")?.trim() || "";
     const conversationId = url.searchParams.get("conversationId")?.trim() || "";
     const surface = normalizeCreativeSurface(url.searchParams.get("surface"));
-    const runs = (await listAgentRuns(user.id, 50))
+    const runs = (await listAgentRuns(tenantId, user.id, 50))
         .filter((run) => (!projectId || run.projectId === projectId) && (!conversationId || run.conversationId === conversationId) && (!surface || run.surface === surface))
         .map((run) => ({ ...run, snapshot: undefined }));
     const activeTaskIds = runs.filter((run) => run.status === "planning" || run.status === "running").map((run) => run.id);
@@ -34,22 +36,23 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
     const user = await getCurrentUser(request);
     if (!user) return NextResponse.json({ code: 401, data: null, msg: "请先登录" }, { status: 401 });
+    const tenantId = await getTrustedTenantId(request, user);
     try {
         const input = normalizeCreativeRunRequest(await readJsonBody<unknown>(request));
-        const existing = await getAgentRunByClientRequestId(user.id, input.clientRequestId);
+        const existing = await getAgentRunByClientRequestId(tenantId, user.id, input.clientRequestId);
         if (existing) return NextResponse.json({ code: 0, data: { run: existing, created: false }, msg: "Agent 任务已存在" });
         const rate = await checkRateLimit(`agent-run:${user.id}`, { maxRequests: 10, windowMs: 60 * 1000 });
         if (!rate.allowed) return NextResponse.json({ code: 429, data: null, msg: "Agent 请求过于频繁，请稍后重试" }, { status: 429 });
         const settings = await getAuthSettings();
         const response = await withGenerationConcurrencyLimit(user.id, "agent", 10 * 60 * 1000, settings.generationConcurrency.agent, async () => {
-            const created = await createAgentRun(user.id, input);
+            const created = await createAgentRun(tenantId, user.id, input);
             if (created.created) {
                 const origin = resolveInternalOrigin(new URL(request.url).origin);
-                await scheduleGenerationTask("agent", created.run.id, { executionPhase: "created", nextPollAt: Date.now(), lastUpstreamStatus: "created" });
+                await scheduleGenerationTask("agent", created.run.id, { executionPhase: "created", nextPollAt: Date.now(), lastUpstreamStatus: "created" }, { tenantId });
                 after(() => runGenerationTaskRecoveryBatch({ origin, cookie: request.headers.get("cookie") || "", limit: 1, taskIds: [created.run.id] }));
             }
             return NextResponse.json({ code: 0, data: { run: created.run, conversation: created.conversation, created: created.created }, msg: created.created ? "Agent 任务已创建" : "Agent 任务已存在" });
-        });
+        }, tenantId);
         return response || NextResponse.json({ code: 429, data: null, msg: `当前最多同时运行 ${settings.generationConcurrency.agent} 个 Agent 任务` }, { status: 429 });
     } catch (error) {
         if (error instanceof CreativeRuntimeInputError || error instanceof CreativeStoreConflict) return NextResponse.json({ code: error.status, data: null, msg: error.message }, { status: error.status });

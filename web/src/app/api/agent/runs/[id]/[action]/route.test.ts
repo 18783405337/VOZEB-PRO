@@ -22,6 +22,7 @@ vi.mock("@/lib/server/generation-task-recovery-service", () => ({ runGenerationT
 vi.mock("@/lib/server/generation-task-scheduler", () => ({ scheduleGenerationTask: mocks.scheduleGenerationTask }));
 vi.mock("@/lib/server/generation-task-store", () => ({ withGenerationConcurrencyLimit: vi.fn(async (_userId, _type, _staleMs, limit, handler) => ((await mocks.countActive()) >= limit ? null : handler())) }));
 vi.mock("@/lib/server/internal-origin", () => ({ fetchInternalApi: vi.fn(), resolveInternalOrigin: vi.fn(() => "http://localhost") }));
+vi.mock("@/lib/server/tenant/tenant-context", () => ({ getTrustedTenantId: vi.fn(async () => "default") }));
 
 import { POST } from "./route";
 
@@ -55,8 +56,8 @@ describe("Agent Run resume concurrency", () => {
         const response = await POST(new Request("http://localhost/api/agent/runs/run/retry", { method: "POST" }), { params: Promise.resolve({ id: "run", action: "retry" }) });
 
         expect(response.status).toBe(200);
-        expect(mocks.updateAgentRunById).toHaveBeenCalledWith("run", expect.objectContaining({ status: "planning", tasks: [], reviewed: false, assetIds: [] }), { type: "run.retry.requested" }, ["failed"]);
-        expect(mocks.scheduleGenerationTask).toHaveBeenCalledWith("agent", "run", expect.objectContaining({ executionPhase: "created", nextPollAt: expect.any(Number), lastUpstreamStatus: "retry" }));
+        expect(mocks.updateAgentRunById).toHaveBeenCalledWith("run", expect.objectContaining({ status: "planning", tasks: [], reviewed: false, assetIds: [] }), { type: "run.retry.requested" }, ["failed"], undefined, "default");
+        expect(mocks.scheduleGenerationTask).toHaveBeenCalledWith("agent", "run", expect.objectContaining({ executionPhase: "created", nextPollAt: expect.any(Number), lastUpstreamStatus: "retry" }), { tenantId: "default" });
     });
 
     it("does not use whole-run retry when a failed child task exists", async () => {

@@ -17,6 +17,7 @@ export type GenerationLogAsset = {
 
 export type StoredGenerationLog = {
     id: string;
+    tenantId?: string;
     userId: string;
     accountId?: string;
     conversationId?: string;
@@ -43,6 +44,7 @@ export type StoredGenerationLog = {
 };
 
 export type GenerationLogInput = Partial<Pick<StoredGenerationLog, "id" | "taskId" | "title" | "summary" | "error" | "requestSnapshot">> & {
+    tenantId?: string;
     userId: string;
     username: string;
     displayName: string;
@@ -62,6 +64,7 @@ export type GenerationLogInput = Partial<Pick<StoredGenerationLog, "id" | "taskI
 };
 
 export type GenerationTaskLogResultInput = {
+    tenantId?: string;
     logId?: string;
     slotId?: string;
     clientRequestId?: string;
@@ -89,6 +92,7 @@ export type GenerationTaskLogResultInput = {
 };
 
 export type GenerationLogListOptions = {
+    tenantId?: string;
     page?: number;
     pageSize?: number;
     keyword?: string;

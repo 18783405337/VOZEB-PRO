@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ getCurrentUser: vi.fn(), getCreateWorkbenchOverview: vi.fn() }));
+const mocks = vi.hoisted(() => ({ getCurrentUser: vi.fn(), getCreateWorkbenchOverview: vi.fn(), getTrustedTenantId: vi.fn() }));
 
 vi.mock("@/lib/auth/session", () => ({ getCurrentUser: mocks.getCurrentUser }));
 vi.mock("@/lib/server/create-workbench-overview-service", () => ({ getCreateWorkbenchOverview: mocks.getCreateWorkbenchOverview }));
+vi.mock("@/lib/server/tenant/tenant-context", () => ({ getTrustedTenantId: mocks.getTrustedTenantId }));
 
 import { GET } from "./route";
 
@@ -16,7 +17,7 @@ describe("GET /api/create/overview", () => {
     it("requires authentication", async () => {
         mocks.getCurrentUser.mockResolvedValue(null);
 
-        const response = await GET();
+        const response = await GET(new Request("http://localhost/api/create/overview"));
 
         expect(response.status).toBe(401);
         expect(mocks.getCreateWorkbenchOverview).not.toHaveBeenCalled();
@@ -25,12 +26,13 @@ describe("GET /api/create/overview", () => {
     it("returns the bounded overview for the current user", async () => {
         const overview = { runningTasks: [], recentAssets: [] };
         mocks.getCurrentUser.mockResolvedValue({ id: "user-one" });
+        mocks.getTrustedTenantId.mockResolvedValue("tenant-one");
         mocks.getCreateWorkbenchOverview.mockResolvedValue(overview);
 
-        const response = await GET();
+        const response = await GET(new Request("http://localhost/api/create/overview"));
 
         expect(response.status).toBe(200);
         expect(await response.json()).toEqual({ code: 0, data: { overview }, msg: "OK" });
-        expect(mocks.getCreateWorkbenchOverview).toHaveBeenCalledWith("user-one");
+        expect(mocks.getCreateWorkbenchOverview).toHaveBeenCalledWith("tenant-one", "user-one");
     });
 });

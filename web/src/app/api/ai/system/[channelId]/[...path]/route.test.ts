@@ -26,8 +26,10 @@ vi.mock("@/lib/server/media-concurrency", () => ({ acquireMediaConcurrency: mock
 vi.mock("@/lib/server/safe-outbound-fetch", () => ({ fetchSafeOutbound: (url: string | URL, init?: RequestInit) => fetch(url, init) }));
 vi.mock("@/lib/server/generation-media-access", () => ({ authorizeGenerationMediaProxyRequest: mocks.mediaAccess }));
 vi.mock("@/lib/server/generation-task-authorization", () => ({ userOwnsGenerationUpstreamTask: mocks.taskAccess }));
+vi.mock("@/lib/server/tenant/tenant-context", () => ({ getTrustedTenantId: vi.fn(async () => "default") }));
 vi.mock("@/lib/server/security", () => ({
     checkMediaProxyRateLimit: mocks.checkMediaProxyRateLimit,
+    getTrustedProxyHops: vi.fn(() => 0),
     isSafeOutboundUrl: mocks.safeUrl,
     rateLimitHeaders: vi.fn(() => ({ "Retry-After": "60" })),
 }));
@@ -419,7 +421,7 @@ describe("Agnes video polling proxy", () => {
 
         expect(response.status).toBe(200);
         expect(fetchMock.mock.calls[0][0]).toBe("https://apihub.agnes-ai.com/agnesapi?video_id=video-one");
-        expect(mocks.taskAccess).toHaveBeenCalledWith({ userId: "user-one", capability: "video", channelId: "channel-one", upstreamModel: "agnes-video-v2.0", upstreamTaskId: "video-one" });
+        expect(mocks.taskAccess).toHaveBeenCalledWith({ tenantId: "default", userId: "user-one", capability: "video", channelId: "channel-one", upstreamModel: "agnes-video-v2.0", upstreamTaskId: "video-one" });
     });
 
     it("does not forward another user's upstream task", async () => {

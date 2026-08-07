@@ -107,9 +107,26 @@ describe("mutateStoredGenerationTask", () => {
         expect(retry.id).toBe("video-retry");
         expect(mocks.records).toHaveLength(2);
         expect(mocks.records.every((record) => record.executionPhase === "created")).toBe(true);
-        await expect(getStoredGenerationTaskByRequest<{ id: string }>("video", "user", "request-one", 1)).resolves.toMatchObject({ id: "video-one" });
-        await expect(getStoredGenerationTaskByRequest<{ id: string }>("video", "user", "request-one", 2)).resolves.toMatchObject({ id: "video-retry" });
-        await expect(getStoredGenerationTaskByRequest<{ id: string }>("video", "user", "request-one", 3)).resolves.toBeNull();
+        await expect(getStoredGenerationTaskByRequest<{ id: string }>("video", "default", "user", "request-one", 1)).resolves.toMatchObject({ id: "video-one" });
+        await expect(getStoredGenerationTaskByRequest<{ id: string }>("video", "default", "user", "request-one", 2)).resolves.toMatchObject({ id: "video-retry" });
+        await expect(getStoredGenerationTaskByRequest<{ id: string }>("video", "default", "user", "request-one", 3)).resolves.toBeNull();
+    });
+
+    it("includes tenant id in request idempotency lookup", async () => {
+        vi.mocked(getDatabaseProvider).mockReturnValue("postgres");
+        vi.mocked(postgresQuery).mockResolvedValueOnce({ rows: [] } as never);
+
+        try {
+            await getStoredGenerationTaskByRequest("image", "tenant-a", "user-one", "req-one", 0);
+
+            expect(vi.mocked(postgresQuery)).toHaveBeenCalledWith(
+                expect.stringContaining("tenant_id = $1 AND user_id = $2"),
+                ["tenant-a", "user-one", "image", "req-one", 0],
+            );
+        } finally {
+            vi.mocked(postgresQuery).mockClear();
+            vi.mocked(getDatabaseProvider).mockReturnValue("file");
+        }
     });
 
     it("finds only the current user's exact channel task identity", async () => {
@@ -118,19 +135,19 @@ describe("mutateStoredGenerationTask", () => {
             { id: "video-one", userId: "user", type: "video", status: "running", channelId: "channel-one", upstreamTaskId: "upstream-one", payload: { config: { model: "vendor-video" } }, createdAt: now, updatedAt: now, expiresAt: now + 60_000 },
         ];
 
-        await expect(getStoredGenerationTaskByUpstream("video", "user", "channel-one", "upstream-one")).resolves.toMatchObject({ id: "video-one" });
-        await expect(getStoredGenerationTaskByUpstream("video", "other", "channel-one", "upstream-one")).resolves.toBeNull();
-        await expect(getStoredGenerationTaskByUpstream("video", "user", "channel-two", "upstream-one")).resolves.toBeNull();
+        await expect(getStoredGenerationTaskByUpstream("video", "default", "user", "channel-one", "upstream-one")).resolves.toMatchObject({ id: "video-one" });
+        await expect(getStoredGenerationTaskByUpstream("video", "default", "other", "channel-one", "upstream-one")).resolves.toBeNull();
+        await expect(getStoredGenerationTaskByUpstream("video", "default", "user", "channel-two", "upstream-one")).resolves.toBeNull();
     });
 
     it("uses an entity-scoped PostgreSQL lookup for upstream ownership", async () => {
         vi.mocked(getDatabaseProvider).mockReturnValue("postgres");
         vi.mocked(postgresQuery).mockResolvedValueOnce({ rows: [], command: "SELECT", rowCount: 0, oid: 0, fields: [] });
 
-        await getStoredGenerationTaskByUpstream("audio", "user", "channel-one", "upstream-one");
+        await getStoredGenerationTaskByUpstream("audio", "default", "user", "channel-one", "upstream-one");
 
-        expect(vi.mocked(postgresQuery).mock.calls[0][0]).toContain("user_id = $1 AND task_type = $2 AND channel_id = $3 AND upstream_task_id = $4");
-        expect(vi.mocked(postgresQuery).mock.calls[0][1]).toEqual(["user", "audio", "channel-one", "upstream-one"]);
+        expect(vi.mocked(postgresQuery).mock.calls[0][0]).toContain("tenant_id = $1 AND user_id = $2 AND task_type = $3 AND channel_id = $4 AND upstream_task_id = $5");
+        expect(vi.mocked(postgresQuery).mock.calls[0][1]).toEqual(["default", "user", "audio", "channel-one", "upstream-one"]);
         vi.mocked(postgresQuery).mockClear();
         vi.mocked(getDatabaseProvider).mockReturnValue("file");
     });
@@ -145,7 +162,7 @@ describe("listStoredGenerationTaskRecords", () => {
             { id: "task-two", userId: "user-two", type: "image", status: "success", payload: { prompt: "second" }, createdAt: now, updatedAt: now, expiresAt: now + 60_000 },
         ];
 
-        const result = await listStoredGenerationTaskRecords({ search: "0001", searchUserIds: ["user-one"], includeAll: false });
+        const result = await listStoredGenerationTaskRecords({ tenantId: "default", search: "0001", searchUserIds: ["user-one"], includeAll: false });
 
         expect(result.items.map((item) => item.id)).toEqual(["task-one"]);
     });
@@ -172,16 +189,16 @@ describe("listStoredGenerationTaskRecords", () => {
             } as never)
             .mockResolvedValueOnce({ rows: [{ task_type: "video", status: "success", total: "1", completed_total: "1", duration_total_ms: "1", points_cost: "3" }] } as never);
 
-        const result = await listStoredGenerationTaskRecords({ page: 1, pageSize: 20, type: "video", status: "success", surface: "chat", projectId: "project-one", userId: "user-one", search: "needle", searchUserIds: ["user-one"], includeAll: false });
+        const result = await listStoredGenerationTaskRecords({ tenantId: "default", page: 1, pageSize: 20, type: "video", status: "success", surface: "chat", projectId: "project-one", userId: "user-one", search: "needle", searchUserIds: ["user-one"], includeAll: false });
         const [pageQuery, pageParams] = vi.mocked(postgresQuery).mock.calls[0] || [];
         const [summaryQuery, summaryParams] = vi.mocked(postgresQuery).mock.calls[1] || [];
 
         expect(String(pageQuery)).toContain("payload::text ILIKE");
-        expect(String(pageQuery)).toContain("user_id = ANY($7::text[])");
-        expect(String(pageQuery)).toContain("LIMIT $8 OFFSET $9");
-        expect(pageParams).toEqual(["video", "success", "chat", "project-one", "user-one", "needle", ["user-one"], 20, 0]);
+        expect(String(pageQuery)).toContain("user_id = ANY($8::text[])");
+        expect(String(pageQuery)).toContain("LIMIT $9 OFFSET $10");
+        expect(pageParams).toEqual(["default", "video", "success", "chat", "project-one", "user-one", "needle", ["user-one"], 20, 0]);
         expect(String(summaryQuery)).toContain("GROUP BY task_type, status");
-        expect(summaryParams).toEqual(["video", "success", "chat", "project-one", "user-one", "needle", ["user-one"]]);
+        expect(summaryParams).toEqual(["default", "video", "success", "chat", "project-one", "user-one", "needle", ["user-one"]]);
         expect(result).toMatchObject({ total: 1, items: [{ id: "task-one", type: "video" }], all: [], summary: { total: 1, totalPointsCost: 3 } });
     });
 });
@@ -197,14 +214,14 @@ describe("summarizeStoredGenerationTaskCosts", () => {
             ],
         } as never);
 
-        const result = await summarizeStoredGenerationTaskCosts({ userId: "user-one", projectId: "project-one", types: ["image", "video", "image"] });
+        const result = await summarizeStoredGenerationTaskCosts({ tenantId: "default", userId: "user-one", projectId: "project-one", types: ["image", "video", "image"] });
         const [statement, params] = vi.mocked(postgresQuery).mock.calls[0] || [];
 
         expect(String(statement)).toContain("GROUP BY task_type, status");
         expect(String(statement)).not.toContain("LIMIT 5000");
         expect(String(statement)).toContain("nullif(sum(");
         expect(String(statement)).toContain("attempt->>'status' IN ('succeeded', 'success')");
-        expect(params).toEqual(["user-one", "project-one", ["image", "video"]]);
+        expect(params).toEqual(["default", "user-one", "project-one", ["image", "video"]]);
         expect(result).toEqual([
             { type: "image", status: "success", taskCount: 2, estimatedPoints: 4, actualPoints: 3.5 },
             { type: "video", status: "error", taskCount: 1, estimatedPoints: 8, actualPoints: 0 },

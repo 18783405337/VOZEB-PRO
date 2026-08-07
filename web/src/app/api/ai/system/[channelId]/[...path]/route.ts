@@ -22,6 +22,7 @@ import { authorizedMaintenanceUserId } from "@/lib/server/maintenance-auth";
 import { authorizeGenerationMediaProxyRequest } from "@/lib/server/generation-media-access";
 import { userOwnsGenerationUpstreamTask } from "@/lib/server/generation-task-authorization";
 import { authorizeSystemAiProxyRequest } from "@/lib/server/system-ai-proxy-policy";
+import { getTrustedTenantId } from "@/lib/server/tenant/tenant-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -66,6 +67,7 @@ export async function DELETE(request: Request, context: RouteContext) {
 async function proxySystemRequest(request: Request, context: RouteContext) {
     const currentUser = await getCurrentUser();
     const userId = currentUser?.id || authorizedMaintenanceUserId(request);
+    const tenantId = currentUser ? await getTrustedTenantId(request, currentUser) : "default";
     if (!userId) return NextResponse.json({ error: "请先登录" }, { status: 401 });
 
     const { channelId, path } = await context.params;
@@ -133,7 +135,7 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
     });
     if (!access.allowed) return NextResponse.json({ error: access.error }, { status: access.status });
     if (access.operation !== "create") {
-        const owned = await userOwnsGenerationUpstreamTask({ userId, capability: access.capability, channelId: channel.id, upstreamModel, upstreamTaskId: access.upstreamTaskId });
+        const owned = await userOwnsGenerationUpstreamTask({ tenantId, userId, capability: access.capability, channelId: channel.id, upstreamModel, upstreamTaskId: access.upstreamTaskId });
         if (!owned) return NextResponse.json({ error: "任务不存在或无权访问" }, { status: 404 });
     }
 

@@ -9,6 +9,7 @@ import { generationModelId } from "@/lib/server/generation-channel";
 import { cancellationExecutionPatch, type GenerationCancellationTarget } from "@/lib/server/generation-task-cancellation-service";
 import { refundTextTask } from "@/lib/server/text-task-refund";
 import { getStoredGenerationTaskRecord } from "@/lib/server/generation-task-store";
+import { getTrustedTenantId } from "@/lib/server/tenant/tenant-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,11 +22,12 @@ type RouteContext = {
 export async function GET(request: Request, context: RouteContext) {
     const currentUser = await getCurrentUser(request);
     if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
+    const tenantId = await getTrustedTenantId(request, currentUser);
 
     const { id } = await context.params;
-    const task = await getTextTask(id);
+    const task = await getTextTask(id, tenantId);
     if (!task || (task.userId !== currentUser.id && currentUser.role !== "admin")) return NextResponse.json({ error: "任务不存在或已过期" }, { status: 404 });
-    const schedule = await getStoredGenerationTaskRecord("text", task.id);
+    const schedule = await getStoredGenerationTaskRecord("text", task.id, tenantId);
     const executionPhase = schedule?.executionPhase || settledExecutionPhase(task.status);
     if (((task.status === "pending" || task.status === "running") && executionPhase !== "needs_review") || (task.status === "cancelled" && (executionPhase === "cancel_requested" || executionPhase === "cancel_polling"))) {
         const origin = resolveInternalOrigin(new URL(request.url).origin);
@@ -53,9 +55,10 @@ export async function GET(request: Request, context: RouteContext) {
 
 export async function PATCH(request: Request, context: RouteContext) {
     const user = await getCurrentUser(request);
-    const task = user ? await getTextTask((await context.params).id) : null;
+    const tenantId = user ? await getTrustedTenantId(request, user) : "";
+    const task = user ? await getTextTask((await context.params).id, tenantId) : null;
     if (!user || !task || (task.userId !== user.id && user.role !== "admin")) return NextResponse.json({ error: "任务不存在或已过期" }, { status: user ? 404 : 401 });
-    const schedule = await getStoredGenerationTaskRecord("text", task.id);
+    const schedule = await getStoredGenerationTaskRecord("text", task.id, tenantId);
     const executionPhase = schedule?.executionPhase || settledExecutionPhase(task.status);
     const body = (await request.json().catch(() => ({}))) as { status?: string };
     if (body.status !== "cancelled" || !["pending", "running"].includes(task.status)) return NextResponse.json({ error: "当前任务无法取消" }, { status: 409 });

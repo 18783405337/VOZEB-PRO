@@ -73,6 +73,11 @@ export async function getTenantContext(request: Request, options: TenantContextO
     };
 }
 
+export async function getTrustedTenantId(request: Request, user?: { id: string } | null) {
+    if (!isPostgresDatabaseEnabled()) return "default";
+    return (await getTenantContext(request, { user, requireMembership: true })).tenant.id;
+}
+
 function resolveDefaultTenantId(value?: string) {
     return value?.trim() || process.env.VOZEB_PRO_DEFAULT_TENANT_ID?.trim() || "default";
 }

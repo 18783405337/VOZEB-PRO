@@ -33,8 +33,8 @@ export async function createVideoTask(input: Omit<VideoTask, "id" | "status" | "
     return createStoredGenerationTask("video", { ...input, id: randomUUID(), status: "running" as const, createdAt: now, updatedAt: now }, GENERATION_TASK_RETENTION_MS);
 }
 
-export async function getVideoTask(id: string) {
-    return getStoredGenerationTask<VideoTask>("video", id);
+export async function getVideoTask(id: string, tenantId?: string) {
+    return getStoredGenerationTask<VideoTask>("video", id, tenantId);
 }
 
 export function claimVideoTaskPoll(id: string, intervalMs: number) {
@@ -58,15 +58,15 @@ export function transitionVideoTask(
     patch: Partial<Pick<VideoTask, "result" | "error" | "retryable" | "upstream">> & { status: "success" | "error" | "cancelled" },
     executionPatch?: import("@/lib/server/generation-task-scheduler").GenerationTaskSchedulePatch,
 ) {
-    return transitionStoredGenerationTask<VideoTask>("video", task.id, task.userId, ["running"], patch, GENERATION_TASK_RETENTION_MS, executionPatch);
+    return transitionStoredGenerationTask<VideoTask>("video", task.id, task.userId, ["running"], patch, GENERATION_TASK_RETENTION_MS, executionPatch, task.tenantId);
 }
 
-export function updateVideoTask(id: string, patch: Partial<Pick<VideoTask, "config" | "upstream" | "requestedDurationSeconds" | "attempts" | "result">>) {
-    return mutateStoredGenerationTask<VideoTask>("video", id, GENERATION_TASK_RETENTION_MS, (task) => ({ ...task, ...patch }));
+export function updateVideoTask(id: string, patch: Partial<Pick<VideoTask, "config" | "upstream" | "requestedDurationSeconds" | "attempts" | "result">>, tenantId?: string) {
+    return mutateStoredGenerationTask<VideoTask>("video", id, GENERATION_TASK_RETENTION_MS, (task) => ({ ...task, ...patch }), tenantId);
 }
 
-export function touchVideoTask(id: string) {
-    return touchStoredGenerationTask("video", id, Date.now(), GENERATION_TASK_RETENTION_MS);
+export function touchVideoTask(id: string, tenantId?: string) {
+    return touchStoredGenerationTask("video", id, Date.now(), GENERATION_TASK_RETENTION_MS, tenantId);
 }
 
 export function canReconcileVideoTask(task: Pick<VideoTask, "status" | "error">) {

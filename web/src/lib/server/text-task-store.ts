@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type { LogicalModelCapabilityProfile, SystemChannelAdvancedConfig } from "@/lib/auth/store";
 import type { AiTextMessage } from "@/types/ai";
-import { createStoredGenerationTask, getStoredGenerationTask, mutateStoredGenerationTask, touchStoredGenerationTask, transitionStoredGenerationTask } from "@/lib/server/generation-task-store";
+import { createStoredGenerationTask, getStoredGenerationTask, mutateStoredGenerationTask, touchStoredGenerationTask, transitionStoredGenerationTask, type GenerationTaskContext } from "@/lib/server/generation-task-store";
 import type { GenerationAttempt } from "@/lib/server/generation-attempt";
 import { GENERATION_TASK_RETENTION_MS } from "@/lib/server/generation-task-retention";
 
@@ -21,7 +21,7 @@ export type TextTaskConfig = {
     systemPrompt?: string;
 };
 
-export type TextTask = {
+export type TextTask = GenerationTaskContext & {
     id: string;
     userId: string;
     status: TextTaskStatus;
@@ -51,8 +51,8 @@ export async function createTextTask(input: Omit<TextTask, "id" | "status" | "cr
     return createStoredGenerationTask("text", task, GENERATION_TASK_RETENTION_MS);
 }
 
-export async function getTextTask(id: string) {
-    return getStoredGenerationTask<TextTask>("text", id);
+export async function getTextTask(id: string, tenantId?: string) {
+    return getStoredGenerationTask<TextTask>("text", id, tenantId);
 }
 
 export function transitionTextTask(
@@ -61,13 +61,13 @@ export function transitionTextTask(
     patch: Partial<Pick<TextTask, "config" | "messages" | "result" | "error" | "pointsRemaining" | "upstream" | "billing">> & { status: TextTaskStatus },
     executionPatch?: import("@/lib/server/generation-task-scheduler").GenerationTaskSchedulePatch,
 ) {
-    return transitionStoredGenerationTask<TextTask>("text", task.id, task.userId, allowedStatuses, patch, GENERATION_TASK_RETENTION_MS, executionPatch);
+    return transitionStoredGenerationTask<TextTask>("text", task.id, task.userId, allowedStatuses, patch, GENERATION_TASK_RETENTION_MS, executionPatch, task.tenantId);
 }
 
-export function touchTextTask(id: string) {
-    return touchStoredGenerationTask("text", id, Date.now(), GENERATION_TASK_RETENTION_MS);
+export function touchTextTask(id: string, tenantId?: string) {
+    return touchStoredGenerationTask("text", id, Date.now(), GENERATION_TASK_RETENTION_MS, tenantId);
 }
 
-export function updateTextTask(id: string, patch: Partial<Pick<TextTask, "config" | "candidateConfigs" | "attempts" | "attemptNo" | "upstream" | "billing">>) {
-    return mutateStoredGenerationTask<TextTask>("text", id, GENERATION_TASK_RETENTION_MS, (task) => ({ ...task, ...patch }));
+export function updateTextTask(id: string, patch: Partial<Pick<TextTask, "config" | "candidateConfigs" | "attempts" | "attemptNo" | "upstream" | "billing">>, tenantId?: string) {
+    return mutateStoredGenerationTask<TextTask>("text", id, GENERATION_TASK_RETENTION_MS, (task) => ({ ...task, ...patch }), tenantId);
 }

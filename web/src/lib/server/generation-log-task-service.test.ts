@@ -64,7 +64,7 @@ describe("generation log task service", () => {
         await recordResult("log-delete", "slot-b", "task-b", "success", false, assetUrl("b"));
         await recordResult("log-delete", "slot-c", "task-c", "success", false, assetUrl("c"));
 
-        const deleted = await service.deleteGenerationLogResultsForUser("user-one", "log-delete", ["slot-b"]);
+        const deleted = await service.deleteGenerationLogResultsForUser("default", "user-one", "log-delete", ["slot-b"]);
         expect(deleted?.assets.map((asset) => asset.url)).toEqual([assetUrl("a"), assetUrl("c")]);
         expect(deleted?.requestSnapshot?.slots.map((slot) => [slot.id, slot.assetIndex])).toEqual([
             ["slot-a", 0],
@@ -124,7 +124,7 @@ describe("generation log task service", () => {
     it("rejects mutations when the record belongs to another user", async () => {
         await createDraft("log-owned", ["slot-a"]);
 
-        await expect(service.renameGenerationLogForUser("user-two", "log-owned", "越权标题")).rejects.toBeInstanceOf(service.GenerationLogOwnershipError);
+        await expect(service.renameGenerationLogForUser("default", "user-two", "log-owned", "越权标题")).rejects.toBeInstanceOf(service.GenerationLogOwnershipError);
         await expect(recordResult("log-owned", "slot-a", "task-two", "failed", false, undefined, "user-two")).rejects.toBeInstanceOf(service.GenerationLogOwnershipError);
     });
 });

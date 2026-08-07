@@ -44,6 +44,7 @@ export async function listGenerationLogs(options: GenerationLogListOptions = {})
         const result = await createPostgresRepositories().generationLogs.list({
             page,
             pageSize,
+            tenantId: options.tenantId,
             userId: options.userId,
             kind: isGenerationKind(options.kind) ? options.kind : undefined,
             source: isGenerationSource(options.source) ? options.source : undefined,
@@ -65,6 +66,7 @@ export async function listGenerationLogs(options: GenerationLogListOptions = {})
         .filter((log) => (isGenerationKind(options.kind) ? log.kind === options.kind : true))
         .filter((log) => (isGenerationSource(options.source) ? log.source === options.source : true))
         .filter((log) => (isGenerationStatus(options.status) ? log.status === options.status : true))
+        .filter((log) => (options.tenantId ? (log.tenantId || "default") === options.tenantId : true))
         .filter((log) => (options.userId ? log.userId === options.userId : true))
         .filter((log) => {
             const time = Date.parse(log.createdAt);
@@ -83,7 +85,7 @@ export async function listGenerationLogs(options: GenerationLogListOptions = {})
     return { items: filtered.slice(startIndex, startIndex + pageSize), total, page, pageSize };
 }
 
-export async function listUserGenerationLogsForDelete(userId: string, ids: string[]) {
+export async function listUserGenerationLogsForDelete(tenantId: string, userId: string, ids: string[]) {
     const targetUserId = userId.trim();
     const idSet = new Set(ids.map((id) => id.trim()).filter(Boolean));
     if (!targetUserId || !idSet.size) return [];
@@ -91,13 +93,13 @@ export async function listUserGenerationLogsForDelete(userId: string, ids: strin
     if (isPostgresDatabaseEnabled()) {
         await ensurePostgresSchema();
         const repository = createPostgresRepositories().generationLogs;
-        const requestedLogs = await repository.getByIds(Array.from(idSet), targetUserId);
+        const requestedLogs = await repository.getByIds(Array.from(idSet), targetUserId, false, tenantId);
         const assetUrls = Array.from(new Set(requestedLogs.flatMap((log) => log.assets.map(stableAssetUrl).filter(Boolean))));
-        const sharedLogs = await repository.listByUserAndAssetUrls(targetUserId, assetUrls);
+        const sharedLogs = await repository.listByUserAndAssetUrls(targetUserId, assetUrls, tenantId);
         return uniqueGenerationLogs([...requestedLogs, ...sharedLogs]).map(toStoredGenerationLog);
     }
     const db = await readGenerationLogDb();
-    const userLogs = db.logs.filter((log) => log.userId === targetUserId);
+    const userLogs = db.logs.filter((log) => (log.tenantId || "default") === tenantId && log.userId === targetUserId);
     const requestedLogs = userLogs.filter((log) => idSet.has(log.id));
     const assetUrls = new Set(requestedLogs.flatMap((log) => log.assets.map(stableAssetUrl).filter(Boolean)));
 
@@ -109,8 +111,8 @@ export async function recordGenerationLog(input: GenerationLogInput) {
     if (isPostgresDatabaseEnabled()) {
         await ensurePostgresSchema();
         const repository = createPostgresRepositories().generationLogs;
-        const existing = await repository.getById(id);
-        if (existing && existing.userId !== input.userId) throw new Error("generation log id belongs to another user");
+        const existing = await repository.getById(id, false, input.tenantId);
+        if (existing && (existing.userId !== input.userId || (input.tenantId && existing.tenantId !== input.tenantId))) throw new Error("generation log id belongs to another tenant or user");
         const assets = await normalizeAssets(input.assets || [], {
             ownerUserId: input.userId,
             source: input.source || (existing && isGenerationSource(existing.source) ? existing.source : "unknown"),
@@ -120,15 +122,15 @@ export async function recordGenerationLog(input: GenerationLogInput) {
         });
         return withPostgresTransaction(async (client) => {
             const transactionRepository = createPostgresRepositories(client).generationLogs;
-            const current = await transactionRepository.getById(id, true);
-            if (current && current.userId !== input.userId) throw new Error("generation log id belongs to another user");
+            const current = await transactionRepository.getById(id, true, input.tenantId);
+            if (current && (current.userId !== input.userId || (input.tenantId && current.tenantId !== input.tenantId))) throw new Error("generation log id belongs to another tenant or user");
             const next = buildGenerationLog(input, id, current ? toStoredGenerationLog(current) : undefined, assets);
             return toStoredGenerationLog(await transactionRepository.upsert(next));
         });
     }
     return mutateGenerationLogDb(async (db) => {
         const now = new Date().toISOString();
-        const existing = db.logs.find((log) => log.id === id);
+        const existing = db.logs.find((log) => log.id === id && (!input.tenantId || (log.tenantId || "default") === input.tenantId));
         if (existing && existing.userId !== input.userId) {
             throw new Error("generation log id belongs to another user");
         }
@@ -142,19 +144,19 @@ export async function recordGenerationLog(input: GenerationLogInput) {
         const completedAt = input.status === "pending" ? undefined : normalizeTime(input.completedAt, now);
         const next = buildGenerationLog(input, id, existing, assets, now, completedAt);
 
-        db.logs = [next, ...db.logs.filter((log) => log.id !== id)].slice(0, MAX_LOGS);
+        db.logs = [next, ...db.logs.filter((log) => log.id !== id || (log.tenantId || "default") !== (next.tenantId || "default"))].slice(0, MAX_LOGS);
         return next;
     });
 }
 
-export async function deleteGenerationLogs(ids: string[]) {
+export async function deleteGenerationLogs(ids: string[], tenantId?: string) {
     const normalizedIds = Array.from(new Set(ids.map((id) => id.trim()).filter(Boolean)));
     if (!normalizedIds.length) return { deleted: 0 };
     if (isPostgresDatabaseEnabled()) {
         await ensurePostgresSchema();
         const removed = await withPostgresTransaction(async (client) => {
             const repository = createPostgresRepositories(client).generationLogs;
-            const logs = await repository.getByIds(normalizedIds, undefined, true);
+            const logs = await repository.getByIds(normalizedIds, undefined, true, tenantId);
             await repository.delete(logs.map((log) => log.id));
             return logs.map(toStoredGenerationLog);
         });
@@ -164,8 +166,9 @@ export async function deleteGenerationLogs(ids: string[]) {
     let removed: StoredGenerationLog[] = [];
     const result = await mutateGenerationLogDb(async (db) => {
         const idSet = new Set(normalizedIds);
-        removed = db.logs.filter((log) => idSet.has(log.id));
-        db.logs = db.logs.filter((log) => !idSet.has(log.id));
+        removed = db.logs.filter((log) => idSet.has(log.id) && (!tenantId || (log.tenantId || "default") === tenantId));
+        const removedKeys = new Set(removed.map((log) => `${log.tenantId || "default"}:${log.id}`));
+        db.logs = db.logs.filter((log) => !removedKeys.has(`${log.tenantId || "default"}:${log.id}`));
         return { deleted: removed.length };
     });
     await deleteRemovedLogMedia(removed);
@@ -255,6 +258,7 @@ function buildGenerationLog(
 ): StoredGenerationLog {
     return {
         id,
+        tenantId: normalizeOptionalText(input.tenantId, existing?.tenantId, 120),
         userId: normalizeText(input.userId, existing?.userId || "", 120),
         conversationId: normalizeOptionalText(input.conversationId, existing?.conversationId, 160),
         username: normalizeText(input.username, existing?.username || "", 80),

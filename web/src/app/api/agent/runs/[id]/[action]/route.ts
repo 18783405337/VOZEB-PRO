@@ -7,6 +7,7 @@ import { runGenerationTaskRecoveryBatch } from "@/lib/server/generation-task-rec
 import { scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
 import { withGenerationConcurrencyLimit } from "@/lib/server/generation-task-store";
 import { fetchInternalApi, resolveInternalOrigin } from "@/lib/server/internal-origin";
+import { getTrustedTenantId } from "@/lib/server/tenant/tenant-context";
 
 export const maxDuration = 2400;
 
@@ -15,10 +16,11 @@ const actions: Record<string, AgentRunStatus> = { pause: "paused", resume: "runn
 export async function POST(request: Request, { params }: { params: Promise<{ id: string; action: string }> }) {
     const user = await getCurrentUser(request);
     if (!user) return NextResponse.json({ code: 401, data: null, msg: "请先登录" }, { status: 401 });
+    const tenantId = await getTrustedTenantId(request, user);
     const { id, action } = await params;
     const status = actions[action];
     if (!status && action !== "retry") return NextResponse.json({ code: 400, data: null, msg: "不支持的 Agent 操作" }, { status: 400 });
-    const run = await getAgentRun(id);
+    const run = await getAgentRun(id, tenantId);
     if (!run || (run.userId !== user.id && user.role !== "admin")) return NextResponse.json({ code: 404, data: null, msg: "Agent 任务不存在" }, { status: 404 });
     if (action === "retry" && (run.status !== "failed" || run.tasks.length)) return NextResponse.json({ code: 409, data: null, msg: "只有规划阶段失败的任务可以整体重试" }, { status: 409 });
     if (action === "pause" && !["planning", "running"].includes(run.status)) return NextResponse.json({ code: 409, data: null, msg: "当前任务无法暂停" }, { status: 409 });
@@ -34,10 +36,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
                       { status: "planning", executionId: undefined, tasks: [], foundation: undefined, projectHandoff: undefined, projectHandoffEmitted: undefined, review: undefined, reviewed: false, assetIds: [] },
                       { type: "run.retry.requested" },
                       ["failed"],
+                      undefined,
+                      tenantId,
                   )
                 : await setAgentRunStatus(run, status!),
     });
-    const result = action === "resume" || action === "retry" ? await withGenerationConcurrencyLimit(run.userId, "agent", 10 * 60 * 1000, limit, mutate) : await mutate();
+    const result = action === "resume" || action === "retry" ? await withGenerationConcurrencyLimit(run.userId, "agent", 10 * 60 * 1000, limit, mutate, tenantId) : await mutate();
     if (result === null) return NextResponse.json({ code: 429, data: null, msg: `当前最多同时运行 ${limit} 个 Agent 任务` }, { status: 429 });
     const { updated } = result;
     if (!updated) return NextResponse.json({ code: 409, data: null, msg: "Agent 状态已变化，请刷新后重试" }, { status: 409 });
@@ -45,10 +49,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const cookie = request.headers.get("cookie") || "";
     if (action === "cancel") await cancelChildTasks(run.tasks, origin, cookie);
     if (action === "resume" || action === "retry") {
-        await scheduleGenerationTask("agent", updated.id, { executionPhase: "created", nextPollAt: Date.now(), lastUpstreamStatus: action });
+        await scheduleGenerationTask("agent", updated.id, { executionPhase: "created", nextPollAt: Date.now(), lastUpstreamStatus: action }, { tenantId });
         after(() => runGenerationTaskRecoveryBatch({ origin, cookie, limit: 1, taskIds: [updated.id] }));
     } else {
-        await scheduleGenerationTask("agent", updated.id, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: action });
+        await scheduleGenerationTask("agent", updated.id, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: action }, { tenantId });
     }
     return NextResponse.json({ code: 0, data: { run: updated }, msg: "OK" });
 }

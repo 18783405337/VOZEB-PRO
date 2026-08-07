@@ -74,6 +74,7 @@ describe("Agent 返回文案", () => {
 function agentRun(patch: Partial<AgentRun> = {}): AgentRun {
     return {
         id: "run",
+        tenantId: "default",
         userId: "user",
         conversationId: "conversation",
         clientRequestId: "request",

@@ -19,7 +19,7 @@ describe("drama project cost summary", () => {
     });
 
     it("aggregates only the current project and excludes refunded failures", async () => {
-        await expect(getDramaProjectCostSummary("user-one", "project-one")).resolves.toEqual({
+        await expect(getDramaProjectCostSummary("tenant-one", "user-one", "project-one")).resolves.toEqual({
             estimatedPoints: 11,
             actualPoints: 8.5,
             taskCount: 3,
@@ -31,6 +31,6 @@ describe("drama project cost summary", () => {
                 audio: { tasks: 1, estimatedPoints: 1, actualPoints: 0 },
             },
         });
-        expect(mocks.summarizeCosts).toHaveBeenCalledWith({ userId: "user-one", projectId: "project-one", types: ["image", "video", "audio"] });
+        expect(mocks.summarizeCosts).toHaveBeenCalledWith({ tenantId: "tenant-one", userId: "user-one", projectId: "project-one", types: ["image", "video", "audio"] });
     });
 });

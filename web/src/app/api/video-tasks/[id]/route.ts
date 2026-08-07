@@ -10,6 +10,7 @@ import { cancellationExecutionPatch, type GenerationCancellationTarget } from "@
 import { refundVideoTask } from "@/lib/server/video-task-refund";
 import { getStoredGenerationTaskRecord } from "@/lib/server/generation-task-store";
 import { writeVideoGenerationLog } from "@/lib/server/video-task-log";
+import { getTrustedTenantId } from "@/lib/server/tenant/tenant-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,9 +18,10 @@ export const maxDuration = 2400;
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
     const user = await getCurrentUser(request);
-    const task = user ? await getVideoTask((await params).id) : null;
+    const tenantId = user ? await getTrustedTenantId(request, user) : "";
+    const task = user ? await getVideoTask((await params).id, tenantId) : null;
     if (!user || !task || (task.userId !== user.id && user.role !== "admin")) return NextResponse.json({ error: "视频任务不存在" }, { status: user ? 404 : 401 });
-    const schedule = await getStoredGenerationTaskRecord("video", task.id);
+    const schedule = await getStoredGenerationTaskRecord("video", task.id, tenantId);
     const executionPhase = schedule?.executionPhase || settledExecutionPhase(task.status);
     if (canReconcileVideoTask(task) || (task.status === "cancelled" && (executionPhase === "cancel_requested" || executionPhase === "cancel_polling"))) {
         const origin = resolveInternalOrigin(new URL(request.url).origin);
@@ -35,9 +37,10 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
     const user = await getCurrentUser(request);
     const id = (await params).id;
-    const task = user ? await getVideoTask(id) : null;
+    const tenantId = user ? await getTrustedTenantId(request, user) : "";
+    const task = user ? await getVideoTask(id, tenantId) : null;
     if (!user || !task || (task.userId !== user.id && user.role !== "admin")) return NextResponse.json({ error: "视频任务不存在" }, { status: user ? 404 : 401 });
-    const schedule = await getStoredGenerationTaskRecord("video", task.id);
+    const schedule = await getStoredGenerationTaskRecord("video", task.id, tenantId);
     const executionPhase = schedule?.executionPhase || settledExecutionPhase(task.status);
     const body = (await request.json().catch(() => ({}))) as { action?: string; status?: string; result?: unknown; error?: unknown };
     if (body.result !== undefined || body.error !== undefined || (body.status && body.status !== "cancelled")) {

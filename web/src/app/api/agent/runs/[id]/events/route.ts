@@ -4,13 +4,15 @@ import { getLatestCreativeRunEventId, listCreativeRunEvents } from "@/lib/server
 import { runGenerationTaskRecoveryBatch } from "@/lib/server/generation-task-recovery-service";
 import { resolveInternalOrigin } from "@/lib/server/internal-origin";
 import { waitForCreativeRunEvent } from "@/lib/server/creative-run-event-signal";
+import { getTrustedTenantId } from "@/lib/server/tenant/tenant-context";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 2400;
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
-    const user = await getCurrentUser();
-    const run = user ? await getAgentRun((await params).id) : null;
+    const user = await getCurrentUser(request);
+    const tenantId = user ? await getTrustedTenantId(request, user) : "";
+    const run = user ? await getAgentRun((await params).id, tenantId) : null;
     if (!user || !run || run.userId !== user.id) return new Response("Agent 任务不存在", { status: user ? 404 : 401 });
     const encoder = new TextEncoder();
     const requestedEventId = request.headers.get("last-event-id") || new URL(request.url).searchParams.get("lastEventId") || "";
@@ -49,7 +51,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
             void (async () => {
                 const deadline = Date.now() + 60 * 60 * 1000;
                 while (!closed && Date.now() < deadline) {
-                    const current = await getAgentRun(run.id);
+                    const current = await getAgentRun(run.id, tenantId);
                     if (closed) return;
                     if (!current) {
                         controller.enqueue(encoder.encode(`event: run.failed\ndata: ${JSON.stringify({ message: "Agent 任务不存在" })}\n\n`));

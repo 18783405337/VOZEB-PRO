@@ -2,9 +2,9 @@ import type { DramaCostSummary } from "@/lib/drama-project-contract";
 import { getDramaProjectForUser } from "@/lib/server/drama-project-service";
 import { summarizeStoredGenerationTaskCosts } from "@/lib/server/generation-task-store";
 
-export async function getDramaProjectCostSummary(userId: string, projectId: string): Promise<DramaCostSummary> {
+export async function getDramaProjectCostSummary(tenantId: string, userId: string, projectId: string): Promise<DramaCostSummary> {
     await getDramaProjectForUser(userId, projectId);
-    const aggregates = await summarizeStoredGenerationTaskCosts({ userId, projectId, types: ["image", "video", "audio"] });
+    const aggregates = await summarizeStoredGenerationTaskCosts({ tenantId, userId, projectId, types: ["image", "video", "audio"] });
     const byType: DramaCostSummary["byType"] = {};
     let estimatedPoints = 0;
     let actualPoints = 0;

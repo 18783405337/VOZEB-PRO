@@ -52,6 +52,7 @@ export type AgentRunTask = {
 };
 export type AgentRun = {
     id: string;
+    tenantId: string;
     userId: string;
     conversationId: string;
     clientRequestId: string;
@@ -92,11 +93,12 @@ export type AgentRunTimings = {
 };
 const TTL = 365 * 24 * 60 * 60 * 1000;
 
-export async function createAgentRun(userId: string, input: CreativeRunRequest) {
+export async function createAgentRun(tenantId: string, userId: string, input: CreativeRunRequest) {
     const now = Date.now();
     const conversationId = input.conversationId || `conversation-${nanoid()}`;
     const run: AgentRun = {
         id: `agent-${nanoid()}`,
+        tenantId,
         userId,
         conversationId,
         clientRequestId: input.clientRequestId,
@@ -134,10 +136,10 @@ function selectedCanvasNodeIds(snapshot: unknown) {
     return Array.isArray(ids) ? ids.filter((id) => typeof id === "string" && id.trim()) : [];
 }
 
-export const getAgentRun = (id: string) => getStoredGenerationTask<AgentRun>("agent", id);
-export const listAgentRuns = (userId: string, limit?: number) => listStoredGenerationTasks<AgentRun>("agent", userId, limit);
-export async function getAgentRunByClientRequestId(userId: string, clientRequestId: string) {
-    return getCreativeRunByClientRequestId<AgentRun>(userId, clientRequestId);
+export const getAgentRun = (id: string, tenantId?: string) => getStoredGenerationTask<AgentRun>("agent", id, tenantId);
+export const listAgentRuns = (tenantId: string, userId: string, limit?: number) => listStoredGenerationTasks<AgentRun>("agent", tenantId, userId, limit);
+export async function getAgentRunByClientRequestId(tenantId: string, userId: string, clientRequestId: string) {
+    return getCreativeRunByClientRequestId<AgentRun>(tenantId, userId, clientRequestId);
 }
 
 export async function setAgentRunStatus(run: AgentRun, status: AgentRunStatus) {
@@ -155,6 +157,8 @@ export async function setAgentRunStatus(run: AgentRun, status: AgentRunStatus) {
             };
         },
         [run.status],
+        undefined,
+        run.tenantId,
     );
 }
 
@@ -177,6 +181,7 @@ export async function updateAgentRunById(
     event?: { type: string; data?: unknown },
     allowedStatuses?: AgentRunStatus[],
     expectedExecutionId?: string,
+    tenantId?: string,
 ) {
     return mutateCreativeRun<AgentRun>(
         id,
@@ -187,10 +192,11 @@ export async function updateAgentRunById(
         },
         allowedStatuses,
         expectedExecutionId,
+        tenantId,
     );
 }
 
-export async function updateAgentRunTaskById(id: string, taskId: string, patch: Partial<AgentRunTask>, eventType: string, expectedExecutionId: string) {
+export async function updateAgentRunTaskById(id: string, taskId: string, patch: Partial<AgentRunTask>, eventType: string, expectedExecutionId: string, tenantId?: string) {
     return mutateCreativeRun<AgentRun>(
         id,
         TTL,
@@ -237,6 +243,7 @@ export async function updateAgentRunTaskById(id: string, taskId: string, patch: 
         },
         ["running"],
         expectedExecutionId,
+        tenantId,
     );
 }
 

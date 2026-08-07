@@ -23,6 +23,7 @@ vi.mock("@/lib/server/security", () => ({
     rateLimitHeaders: vi.fn(() => ({})),
 }));
 vi.mock("@/lib/server/proxy-dispatcher", () => ({ configureServerProxyDispatcher: vi.fn() }));
+vi.mock("@/lib/server/tenant/tenant-context", () => ({ getTrustedTenantId: vi.fn(async () => "default") }));
 
 import { maxDuration, POST } from "./route";
 
@@ -57,7 +58,7 @@ describe("image task route", () => {
 
         expect(response.status).toBe(200);
         expect(await response.json()).toMatchObject({ task: { id: "existing-image-task", status: "running", model: "image-logical" } });
-        expect(mocks.getStoredGenerationTaskByRequest).toHaveBeenCalledWith("image", "user-one", "image-workbench:conversation:slot", 3);
+        expect(mocks.getStoredGenerationTaskByRequest).toHaveBeenCalledWith("image", "default", "user-one", "image-workbench:conversation:slot", 3);
         expect(mocks.getAuthSettings).not.toHaveBeenCalled();
         expect(mocks.rate).not.toHaveBeenCalled();
         expect(mocks.withGenerationConcurrencyLimit).not.toHaveBeenCalled();
