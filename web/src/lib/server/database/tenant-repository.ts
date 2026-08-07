@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
 
+import { TENANT_PERMISSIONS } from "@/lib/server/authorization/permission-catalog";
 import type { QueryExecutor } from "@/lib/server/database/postgres";
 import type { AddTenantMemberInput, CreateTenantWithOwnerInput, TenantMemberRecord, TenantMemberStatus, TenantRecord, TenantStatus } from "@/lib/server/tenant/tenant-types";
 
 import { isoValue, optionalString, stringValue } from "./repository-shared";
 
-export const DEFAULT_TENANT_OWNER_PERMISSIONS = ["tenant.members.read", "tenant.members.manage", "tenant.roles.manage", "tenant.apps.read", "tenant.apps.configure", "tenant.billing.read", "tenant.merchants.manage"] as const;
+export const DEFAULT_TENANT_OWNER_PERMISSIONS = TENANT_PERMISSIONS;
 
 export type TenantTransactionRunner = <T>(handler: (executor: QueryExecutor) => Promise<T>) => Promise<T>;
 
