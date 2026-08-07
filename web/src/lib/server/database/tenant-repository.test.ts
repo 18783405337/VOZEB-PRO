@@ -62,7 +62,7 @@ describe("TenantRepository", () => {
         expect(query).toHaveBeenCalledWith(expect.stringContaining("tm.tenant_id = $1 AND tm.user_id = $2"), ["tenant-a", "user-one"]);
     });
 
-    it("looks up only active tenants through verified hostnames", async () => {
+    it("looks up verified hostnames without hiding disabled tenants from context checks", async () => {
         const timestamp = "2026-08-07T00:00:00.000Z";
         const query = vi.fn().mockResolvedValue(
             queryResult([
@@ -85,7 +85,8 @@ describe("TenantRepository", () => {
             ownerUserId: "owner-one",
             settings: { locale: "zh-CN" },
         });
-        expect(query).toHaveBeenCalledWith(expect.stringContaining("td.status = 'verified' AND t.status = 'active'"), ["a.example.com"]);
+        expect(query).toHaveBeenCalledWith(expect.stringContaining("td.status = 'verified'"), ["a.example.com"]);
+        expect(query.mock.calls[0]?.[0]).not.toContain("t.status = 'active'");
     });
 
     it("creates a tenant, owner role, permissions, and membership in one transaction", async () => {

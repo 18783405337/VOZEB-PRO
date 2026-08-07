@@ -1,8 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 export function proxy(request: NextRequest) {
-    if (request.nextUrl.pathname.startsWith("/api/billing/webhooks/")) return NextResponse.next();
-    if (["GET", "HEAD", "OPTIONS"].includes(request.method)) return NextResponse.next();
+    if (request.nextUrl.pathname.startsWith("/api/billing/webhooks/")) return nextWithSanitizedHeaders(request);
+    if (["GET", "HEAD", "OPTIONS"].includes(request.method)) return nextWithSanitizedHeaders(request);
 
     const requestOrigin = publicRequestOrigin(request);
     const origin = request.headers.get("origin");
@@ -17,7 +17,7 @@ export function proxy(request: NextRequest) {
         }
     }
 
-    return NextResponse.next();
+    return nextWithSanitizedHeaders(request);
 }
 
 export const config = {
@@ -30,4 +30,11 @@ function publicRequestOrigin(request: NextRequest) {
     const protocol = forwardedProto || request.nextUrl.protocol.replace(/:$/, "");
     const host = forwardedHost || request.headers.get("host") || request.nextUrl.host;
     return `${protocol}://${host}`;
+}
+
+function nextWithSanitizedHeaders(request: NextRequest) {
+    const headers = new Headers(request.headers);
+    headers.delete("x-vozeb-tenant-id");
+    headers.delete("x-vozeb-tenant-signature");
+    return NextResponse.next({ request: { headers } });
 }

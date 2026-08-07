@@ -35,7 +35,7 @@ export class TenantRepository {
              FROM tenants t
              JOIN tenant_domains td ON td.tenant_id = t.id
              WHERE lower(td.hostname) = lower($1)
-               AND td.status = 'verified' AND t.status = 'active'`,
+               AND td.status = 'verified'`,
             [hostname.trim().toLowerCase()],
         );
         return result.rows[0] ? mapTenant(result.rows[0]) : null;
