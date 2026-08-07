@@ -1,4 +1,4 @@
-import { postgresQuery, type QueryExecutor } from "@/lib/server/database/postgres";
+import { postgresQuery, type QueryExecutor, withPostgresTransaction } from "@/lib/server/database/postgres";
 import { AuditLogsRepository } from "./audit-log-repository";
 import { BillingOrderRepository } from "./billing-order-repository";
 import { BillingPaymentRepository } from "./billing-payment-repository";
@@ -13,6 +13,7 @@ import { WorkGovernanceRepository } from "./work-governance-repository";
 import { WorkCommunityRepository } from "./work-community-repository";
 import { AnnouncementsRepository, GenerationLogsRepository, PromptsRepository } from "./content-repository";
 import { CdkRepository, EmailCodesRepository, PointsRepository, SessionsRepository, UsersRepository } from "./user-repository";
+import { TenantRepository } from "./tenant-repository";
 import type { AppSettingsRecord, EntitlementPlanRecord, JsonValue, SystemModelChannelRecord } from "./repository-shared";
 import { isoValue, jsonParam, jsonValue, numberValue, optionalIso, optionalJson, optionalString, stringValue } from "./repository-shared";
 
@@ -69,26 +70,28 @@ export type {
     UserPlanAssignmentRecord,
 } from "./repository-shared";
 
-export function createPostgresRepositories(executor: QueryExecutor = { query: postgresQuery }) {
-    const billingProduct = new BillingProductRepository(executor);
-    const billingOrder = new BillingOrderRepository(executor);
-    const pointsWallet = new PointsWalletRepository(executor);
-    const billingPayment = new BillingPaymentRepository(executor);
-    const billingRefund = new BillingRefundRepository(executor);
-    const promotion = new PromotionRepository(executor);
-    const coupons = new CouponRepository(executor);
+export function createPostgresRepositories(executor?: QueryExecutor) {
+    const database = executor || { query: postgresQuery };
+    const billingProduct = new BillingProductRepository(database);
+    const billingOrder = new BillingOrderRepository(database);
+    const pointsWallet = new PointsWalletRepository(database);
+    const billingPayment = new BillingPaymentRepository(database);
+    const billingRefund = new BillingRefundRepository(database);
+    const promotion = new PromotionRepository(database);
+    const coupons = new CouponRepository(database);
 
     return {
-        settings: new SettingsRepository(executor),
-        users: new UsersRepository(executor),
-        sessions: new SessionsRepository(executor),
-        emailCodes: new EmailCodesRepository(executor),
-        points: new PointsRepository(executor),
+        settings: new SettingsRepository(database),
+        tenants: new TenantRepository(database, executor ? undefined : withPostgresTransaction),
+        users: new UsersRepository(database),
+        sessions: new SessionsRepository(database),
+        emailCodes: new EmailCodesRepository(database),
+        points: new PointsRepository(database),
         pointsWallet,
-        cdk: new CdkRepository(executor),
-        announcements: new AnnouncementsRepository(executor),
-        prompts: new PromptsRepository(executor),
-        generationLogs: new GenerationLogsRepository(executor),
+        cdk: new CdkRepository(database),
+        announcements: new AnnouncementsRepository(database),
+        prompts: new PromptsRepository(database),
+        generationLogs: new GenerationLogsRepository(database),
         billing: {
             listProducts: billingProduct.listProducts.bind(billingProduct),
             getProductById: billingProduct.getProductById.bind(billingProduct),
@@ -132,11 +135,11 @@ export function createPostgresRepositories(executor: QueryExecutor = { query: po
         },
         promotions: promotion,
         coupons,
-        referrals: new ReferralRepository(executor),
-        workPublications: new WorkPublicationRepository(executor),
-        workGovernance: new WorkGovernanceRepository(executor),
-        workCommunity: new WorkCommunityRepository(executor),
-        auditLogs: new AuditLogsRepository(executor),
+        referrals: new ReferralRepository(database),
+        workPublications: new WorkPublicationRepository(database),
+        workGovernance: new WorkGovernanceRepository(database),
+        workCommunity: new WorkCommunityRepository(database),
+        auditLogs: new AuditLogsRepository(database),
     };
 }
 

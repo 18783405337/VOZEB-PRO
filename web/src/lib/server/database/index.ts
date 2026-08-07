@@ -1,7 +1,10 @@
 export { ensurePostgresSchema, getDatabaseProvider, getPostgresConnectionString, initializePostgresSchema, isPostgresDatabaseEnabled, postgresQuery, subscribePostgresNotification, withPostgresTransaction } from "./postgres";
 export { createPostgresRepositories } from "./repositories";
+export { DEFAULT_TENANT_OWNER_PERMISSIONS, TenantRepository } from "./tenant-repository";
 export { WorkPublicationRepository } from "./work-publication-repository";
 export { WorkCommunityRepository } from "./work-community-repository";
 export type { BillingRefundJobRecord, BillingRefundJobStatus } from "./billing-refund-repository";
 export type { QueryExecutor } from "./postgres";
+export type { TenantTransactionRunner } from "./tenant-repository";
 export type * from "./repositories";
+export type * from "../tenant/tenant-types";
