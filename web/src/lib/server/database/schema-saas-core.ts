@@ -126,3 +126,21 @@ CREATE TRIGGER tenant_roles_set_updated_at BEFORE UPDATE ON tenant_roles FOR EAC
 DROP TRIGGER IF EXISTS tenant_members_set_updated_at ON tenant_members;
 CREATE TRIGGER tenant_members_set_updated_at BEFORE UPDATE ON tenant_members FOR EACH ROW EXECUTE FUNCTION vozeb_pro_set_updated_at();
 `;
+
+export const POSTGRESQL_SAAS_RESOURCE_SCHEMA_SQL = `
+ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS tenant_id text REFERENCES tenants(id);
+DROP INDEX IF EXISTS generation_tasks_user_client_request_idx;
+CREATE UNIQUE INDEX IF NOT EXISTS generation_tasks_tenant_user_client_request_idx
+ON generation_tasks (tenant_id, user_id, task_type, client_request_id, COALESCE(attempt_no, 0))
+WHERE client_request_id IS NOT NULL;
+
+ALTER TABLE generation_logs ADD COLUMN IF NOT EXISTS tenant_id text REFERENCES tenants(id);
+ALTER TABLE creative_conversations ADD COLUMN IF NOT EXISTS tenant_id text REFERENCES tenants(id);
+ALTER TABLE creative_assets ADD COLUMN IF NOT EXISTS tenant_id text REFERENCES tenants(id);
+ALTER TABLE local_media_assets ADD COLUMN IF NOT EXISTS tenant_id text REFERENCES tenants(id);
+ALTER TABLE canvas_projects ADD COLUMN IF NOT EXISTS tenant_id text REFERENCES tenants(id);
+ALTER TABLE library_assets ADD COLUMN IF NOT EXISTS tenant_id text REFERENCES tenants(id);
+ALTER TABLE drama_projects ADD COLUMN IF NOT EXISTS tenant_id text REFERENCES tenants(id);
+ALTER TABLE published_works ADD COLUMN IF NOT EXISTS tenant_id text REFERENCES tenants(id);
+ALTER TABLE billing_orders ADD COLUMN IF NOT EXISTS tenant_id text REFERENCES tenants(id);
+`;

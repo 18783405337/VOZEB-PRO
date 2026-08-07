@@ -1,5 +1,5 @@
 import { POSTGRESQL_COMMERCIAL_FEATURES_SCHEMA_SQL } from "./schema-commercial-features";
-import { POSTGRESQL_SAAS_CORE_SCHEMA_SQL } from "./schema-saas-core";
+import { POSTGRESQL_SAAS_CORE_SCHEMA_SQL, POSTGRESQL_SAAS_RESOURCE_SCHEMA_SQL } from "./schema-saas-core";
 import { POSTGRESQL_TRIGGER_SCHEMA_SQL } from "./schema-triggers";
 
 export const POSTGRESQL_SCHEMA_SQL = `
@@ -260,8 +260,6 @@ ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS last_heartbeat_at timestam
 ALTER TABLE generation_tasks DROP CONSTRAINT IF EXISTS generation_tasks_execution_phase;
 ALTER TABLE generation_tasks ADD CONSTRAINT generation_tasks_execution_phase CHECK (execution_phase IN ('created', 'submitting', 'submitted', 'polling', 'result_ready', 'persisting', 'cancel_requested', 'cancel_polling', 'needs_review', 'review_pending', 'reviewing', 'review_unavailable', 'completed'));
 
-DROP INDEX IF EXISTS generation_tasks_user_client_request_idx;
-CREATE UNIQUE INDEX generation_tasks_user_client_request_idx ON generation_tasks (user_id, task_type, client_request_id, COALESCE(attempt_no, 0)) WHERE client_request_id IS NOT NULL AND client_request_id <> '';
 CREATE UNIQUE INDEX IF NOT EXISTS generation_tasks_channel_upstream_idx ON generation_tasks (channel_id, upstream_task_id) WHERE channel_id IS NOT NULL AND channel_id <> '' AND upstream_task_id IS NOT NULL AND upstream_task_id <> '';
 CREATE INDEX IF NOT EXISTS generation_tasks_conversation_idx ON generation_tasks (conversation_id, updated_at DESC) WHERE conversation_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS generation_tasks_run_idx ON generation_tasks (run_id, updated_at DESC) WHERE run_id IS NOT NULL;
@@ -899,6 +897,8 @@ CREATE TABLE IF NOT EXISTS generation_log_assets (
 );
 
 CREATE INDEX IF NOT EXISTS generation_log_assets_log_idx ON generation_log_assets (generation_log_id, sort_order);
+
+${POSTGRESQL_SAAS_RESOURCE_SCHEMA_SQL}
 
 CREATE TABLE IF NOT EXISTS audit_logs (
     id text PRIMARY KEY,

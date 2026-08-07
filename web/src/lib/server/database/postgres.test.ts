@@ -71,6 +71,28 @@ describe("PostgreSQL schema lifecycle", () => {
         expect(ddl).toContain("CREATE UNIQUE INDEX IF NOT EXISTS vozeb_pro_users_account_id_idx ON vozeb_pro_users (account_id)");
         expect(ddl).toContain("webhook_secret_ciphertext text NOT NULL DEFAULT ''");
         expect(ddl).toContain("CREATE UNIQUE INDEX IF NOT EXISTS vozeb_pro_generation_tasks_channel_upstream_idx ON vozeb_pro_generation_tasks (channel_id, upstream_task_id)");
+        expect(ddl).toContain("ALTER TABLE vozeb_pro_generation_tasks ADD COLUMN IF NOT EXISTS tenant_id text REFERENCES vozeb_pro_tenants(id)");
+        expect(ddl).toMatch(/CREATE UNIQUE INDEX IF NOT EXISTS vozeb_pro_generation_tasks_tenant_user_client_request_idx\s+ON vozeb_pro_generation_tasks \(tenant_id, user_id, task_type, client_request_id, COALESCE\(attempt_no, 0\)\)/);
+        expect(ddl).not.toContain("CREATE UNIQUE INDEX vozeb_pro_generation_tasks_user_client_request_idx");
+        expect(ddl).not.toContain("ALTER TABLE vozeb_pro_generation_tasks ALTER COLUMN tenant_id SET NOT NULL");
+        expect(ddl).not.toMatch(/UPDATE\s+vozeb_pro_(generation_tasks|generation_logs|creative_conversations|creative_assets|local_media_assets|canvas_projects|library_assets|drama_projects|published_works|billing_orders)\s+SET\s+tenant_id/i);
+        expect(ddl).toContain("ALTER TABLE vozeb_pro_billing_orders ADD COLUMN IF NOT EXISTS tenant_id text REFERENCES vozeb_pro_tenants(id)");
+        for (const table of [
+            "generation_tasks",
+            "generation_logs",
+            "creative_conversations",
+            "creative_assets",
+            "local_media_assets",
+            "canvas_projects",
+            "library_assets",
+            "drama_projects",
+            "published_works",
+            "billing_orders",
+        ]) {
+            expect(ddl).toContain(`ALTER TABLE vozeb_pro_${table} ADD COLUMN IF NOT EXISTS tenant_id text REFERENCES vozeb_pro_tenants(id)`);
+            expect(ddl).not.toMatch(new RegExp(`ALTER TABLE vozeb_pro_${table} ALTER COLUMN tenant_id SET NOT NULL`, "i"));
+        }
+        expect(ddl).toContain("WHERE client_request_id IS NOT NULL");
         expect(ddl).toContain("signature_timestamp timestamptz NOT NULL");
         expect(ddl).toContain("conflict_count integer NOT NULL DEFAULT 0");
         expect(ddl).toContain("user_id text NOT NULL REFERENCES vozeb_pro_users(id) ON DELETE CASCADE");

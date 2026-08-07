@@ -16,6 +16,17 @@ pnpm build
 pnpm start:standalone
 ```
 
+## SaaS default tenant backfill
+
+The startup schema only adds nullable `tenant_id` columns. Run the backfill explicitly after checking the dry-run report:
+
+```bash
+pnpm migrate:saas:backfill
+pnpm migrate:saas:backfill -- --write --confirm-database <database-name>
+```
+
+The default mode is read-only. Write mode requires the exact database name and validates orphan references and cross-tenant conflicts before updating only NULL `tenant_id` values. It verifies that no NULLs or conflicts remain before applying `NOT NULL` constraints.
+
 构建脚本先在独立进程中执行严格 TypeScript 检查，再运行 Next.js 构建。默认使用 Node.js 与 Next.js 的可用资源策略；只有部署环境确有资源限制时才显式设置 `NEXT_BUILD_CPUS` 或 `NODE_OPTIONS`。
 
 ## 服务端数据
