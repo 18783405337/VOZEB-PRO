@@ -14,6 +14,7 @@ import { WorkCommunityRepository } from "./work-community-repository";
 import { AnnouncementsRepository, GenerationLogsRepository, PromptsRepository } from "./content-repository";
 import { CdkRepository, EmailCodesRepository, PointsRepository, SessionsRepository, UsersRepository } from "./user-repository";
 import { TenantRepository } from "./tenant-repository";
+import { AppCenterPostgresRepository } from "./app-center-repository";
 import type { AppSettingsRecord, EntitlementPlanRecord, JsonValue, SystemModelChannelRecord } from "./repository-shared";
 import { isoValue, jsonParam, jsonValue, numberValue, optionalIso, optionalJson, optionalString, stringValue } from "./repository-shared";
 
@@ -83,6 +84,7 @@ export function createPostgresRepositories(executor?: QueryExecutor) {
     return {
         settings: new SettingsRepository(database),
         tenants: new TenantRepository(database, executor ? undefined : withPostgresTransaction),
+        appCenter: new AppCenterPostgresRepository(database, executor ? undefined : withPostgresTransaction),
         users: new UsersRepository(database),
         sessions: new SessionsRepository(database),
         emailCodes: new EmailCodesRepository(database),
