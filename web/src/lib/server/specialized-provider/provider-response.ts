@@ -18,6 +18,7 @@ const STATUS_PATHS = [
     "state",
     "data.status",
     "data.state",
+    "data.task_status",
     "result.status",
     "result.state",
     "data.task.status",
@@ -26,7 +27,7 @@ const STATUS_PATHS = [
     "data.result.state",
 ] as const;
 
-const ERROR_PATHS = ["message", "msg", "error", "error.message", "data.error", "data.message", "data.result.error", "data.result.message", "result.error", "result.message"] as const;
+const ERROR_PATHS = ["message", "msg", "error", "error.message", "data.error", "data.message", "data.task_status_msg", "data.result.error", "data.result.message", "result.error", "result.message"] as const;
 
 const MEDIA_PATHS = {
     audio: ["audio_url", "audio.url", "output.audio_url", "result.audio_url", "result.output.audio_url", "data.audio_url", "data.output.audio_url", "data.result.audio_url", "data.result.output.audio_url"],
@@ -67,9 +68,9 @@ export function requireProviderTaskId(payload: unknown) {
 
 export function normalizeProviderTaskState(payload: unknown): SpecializedProviderTaskState {
     const status = firstScalar(payload, STATUS_PATHS).toLowerCase();
-    if (["pending", "queued", "created", "waiting"].includes(status)) return "pending";
-    if (["running", "processing", "submitted", "in_progress", "generating"].includes(status)) return "running";
-    if (["success", "succeeded", "completed", "complete", "done", "finished"].includes(status)) return "succeeded";
+    if (["pending", "queued", "created", "waiting", "submitted"].includes(status)) return "pending";
+    if (["running", "processing", "in_progress", "generating"].includes(status)) return "running";
+    if (["success", "succeed", "succeeded", "completed", "complete", "done", "finished"].includes(status)) return "succeeded";
     if (["failed", "fail", "error", "rejected"].includes(status)) return "failed";
     if (["cancelled", "canceled"].includes(status)) return "cancelled";
     return "unknown";
@@ -77,7 +78,7 @@ export function normalizeProviderTaskState(payload: unknown): SpecializedProvide
 
 export function extractProviderMediaUrls(payload: unknown, kind: "audio" | "video") {
     const urls = MEDIA_PATHS[kind].flatMap((path) => mediaValues(readPath(payload, path), kind));
-    for (const path of ["results", "data.results", "data.result.results", "data.result.data.results"]) {
+    for (const path of ["results", "data.results", "data.result.results", "data.result.data.results", "data.task_result.videos"]) {
         urls.push(...mediaValues(readPath(payload, path), kind));
     }
     return Array.from(new Set(urls.filter((url) => isSupportedMediaUrl(url) && isCompatibleMediaUrl(url, kind))));

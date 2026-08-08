@@ -22,6 +22,15 @@ describe("specialized provider response compatibility", () => {
         expect(normalizeProviderTaskState(payload)).toBe(expected);
     });
 
+    it.each([
+        [{ data: { task_status: "submitted" } }, "pending"],
+        [{ data: { task_status: "processing" } }, "running"],
+        [{ data: { task_status: "succeed" } }, "succeeded"],
+        [{ data: { task_status: "failed" } }, "failed"],
+    ] as const)("normalizes Kling task_status values", (payload, expected) => {
+        expect(normalizeProviderTaskState(payload)).toBe(expected);
+    });
+
     it("extracts and deduplicates audio and video media URLs", () => {
         const payload = {
             audio_url: "https://cdn.example.com/audio.mp3",
@@ -35,6 +44,21 @@ describe("specialized provider response compatibility", () => {
 
         expect(extractProviderMediaUrls(payload, "audio")).toEqual(["https://cdn.example.com/audio.mp3"]);
         expect(extractProviderMediaUrls(payload, "video")).toEqual(["https://cdn.example.com/video.mp4", "https://cdn.example.com/alternate.mp4"]);
+    });
+
+    it("extracts Kling avatar videos from task_result", () => {
+        expect(
+            extractProviderMediaUrls(
+                {
+                    data: {
+                        task_result: {
+                            videos: [{ id: "video-1", url: "https://cdn.example/avatar.mp4" }],
+                        },
+                    },
+                },
+                "video",
+            ),
+        ).toEqual(["https://cdn.example/avatar.mp4"]);
     });
 
     it("rejects malformed accepted responses and normalizes terminal errors", () => {
