@@ -1,5 +1,6 @@
 import { getDatabaseProvider, ensurePostgresSchema, postgresQuery, withPostgresTransaction } from "@/lib/server/database";
 import { readJsonDataFile, withJsonDataFileLock, writeJsonDataFile } from "@/lib/server/data-adapter";
+import { applyGenerationTaskBillingOutcome, type GenerationTaskBillingOutcome } from "@/lib/server/billing/generation-task-billing-hook";
 import type {
     GenerationTaskContext,
     GenerationTaskCostAggregate,
@@ -386,7 +387,9 @@ export async function transitionStoredGenerationTask<T extends { id: string; use
                 execution?.resultPayload ? JSON.stringify(execution.resultPayload) : null,
             ],
         );
-        return result.rows[0]?.payload || null;
+        const transitioned = result.rows[0]?.payload || null;
+        await applyTerminalTaskBilling(type, transitioned, tenantId);
+        return transitioned;
     }
     let transitioned: T | null = null;
     const allowed = new Set(allowedStatuses.map(normalizeGenerationTaskStatus));
@@ -405,6 +408,7 @@ export async function transitionStoredGenerationTask<T extends { id: string; use
             };
         }),
     );
+    await applyTerminalTaskBilling(type, transitioned, tenantId);
     return transitioned;
 }
 
@@ -412,7 +416,7 @@ export async function mutateStoredGenerationTask<T extends { id: string; userId:
     const updatedAt = Date.now();
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
-        return withPostgresTransaction(async (client) => {
+        const mutated = await withPostgresTransaction(async (client) => {
             const result = await client.query<{ payload: T }>("SELECT payload FROM generation_tasks WHERE id = $1 AND task_type = $2 AND tenant_id = $3 AND expires_at > now() FOR UPDATE", [id, type, cleanTenantId(tenantId) || "default"]);
             const current = result.rows[0]?.payload;
             if (!current) return null;
@@ -427,6 +431,8 @@ export async function mutateStoredGenerationTask<T extends { id: string; userId:
             );
             return updated.rows[0]?.payload || null;
         });
+        await applyTerminalTaskBilling(type, mutated, tenantId);
+        return mutated;
     }
     let mutated: T | null = null;
     await mutateFileTasks((tasks) =>
@@ -439,6 +445,7 @@ export async function mutateStoredGenerationTask<T extends { id: string; userId:
             return { ...record, status: normalizeGenerationTaskStatus(next.status), payload: next as unknown as Record<string, unknown>, updatedAt, expiresAt: updatedAt + ttlMs };
         }),
     );
+    await applyTerminalTaskBilling(type, mutated, tenantId);
     return mutated;
 }
 
@@ -697,6 +704,8 @@ function normalizeGenerationTaskContext(context: GenerationTaskContext): Generat
         appKey: cleanContextText(context.appKey),
         appVersion: cleanContextText(context.appVersion),
         workflowKey: cleanContextText(context.workflowKey),
+        taskBilling: normalizeTaskBilling(context.taskBilling),
+        taskBillingUsage: normalizeTaskBillingUsage(context.taskBillingUsage),
         conversationId: cleanContextText(context.conversationId),
         runId: cleanContextText(context.runId),
         surface: context.surface === "chat" || context.surface === "canvas" || context.surface === "drama" ? context.surface : undefined,
@@ -718,6 +727,8 @@ function preserveTaskContext(previous: StoredGenerationTaskRecord | undefined, n
         appKey: next.appKey || previous?.appKey,
         appVersion: next.appVersion || previous?.appVersion,
         workflowKey: next.workflowKey || previous?.workflowKey,
+        taskBilling: next.taskBilling || previous?.taskBilling,
+        taskBillingUsage: next.taskBillingUsage || previous?.taskBillingUsage,
         conversationId: next.conversationId || previous?.conversationId,
         runId: next.runId || previous?.runId,
         surface: next.surface || previous?.surface,
@@ -805,6 +816,11 @@ function mapStoredTaskRecord(row: Record<string, unknown>): StoredGenerationTask
         createdAt: databaseTime(row.created_at),
         updatedAt: databaseTime(row.updated_at),
         expiresAt: databaseTime(row.expires_at),
+        appKey: cleanContextText(String(payload.appKey || "")),
+        appVersion: cleanContextText(String(payload.appVersion || "")),
+        workflowKey: cleanContextText(String(payload.workflowKey || "")),
+        taskBilling: normalizeTaskBilling(payload.taskBilling),
+        taskBillingUsage: normalizeTaskBillingUsage(payload.taskBillingUsage),
         conversationId: cleanContextText(String(row.conversation_id || "")),
         runId: cleanContextText(String(row.run_id || "")),
         surface: isTaskSurface(row.surface) ? row.surface : undefined,
@@ -854,6 +870,28 @@ function isTaskStatus(value: unknown): value is GenerationTaskStatus {
 
 function isTaskSurface(value: unknown): value is NonNullable<GenerationTaskContext["surface"]> {
     return value === "chat" || value === "canvas" || value === "drama";
+}
+
+function normalizeTaskBilling(value: unknown): GenerationTaskContext["taskBilling"] {
+    const billing = recordObject(value);
+    const status = billing.status;
+    const outcome = billing.outcome;
+    const sourceEventId = cleanContextText(typeof billing.sourceEventId === "string" ? billing.sourceEventId : undefined);
+    if (!sourceEventId || !["pending", "settled", "released", "reversed", "not_applicable", "error"].includes(String(status)) || !["success", "error", "cancelled", "reverse"].includes(String(outcome))) return undefined;
+    return {
+        status: status as NonNullable<GenerationTaskContext["taskBilling"]>["status"],
+        outcome: outcome as NonNullable<GenerationTaskContext["taskBilling"]>["outcome"],
+        sourceEventId,
+        error: cleanContextText(typeof billing.error === "string" ? billing.error : undefined),
+        updatedAt: positiveTimestamp(billing.updatedAt),
+    };
+}
+
+function normalizeTaskBillingUsage(value: unknown): GenerationTaskContext["taskBillingUsage"] {
+    const usage = recordObject(value);
+    const saleAmount = positiveContextNumber(usage.saleAmount);
+    const costAmount = positiveContextNumber(usage.costAmount);
+    return saleAmount === undefined || costAmount === undefined ? undefined : { saleAmount, costAmount };
 }
 
 function isExecutionPhase(value: unknown): value is NonNullable<StoredGenerationTaskRecord["executionPhase"]> {
@@ -941,6 +979,35 @@ function positiveNumber(...values: unknown[]) {
         if (Number.isFinite(number) && number > 0) return number;
     }
     return 0;
+}
+
+async function applyTerminalTaskBilling<T extends { id: string; status: string; updatedAt: number }>(type: GenerationTaskType, task: T | null, fallbackTenantId?: string) {
+    if (!task) return;
+    const context = task as T & GenerationTaskContext;
+    const outcome = taskBillingOutcome(context.status);
+    if (!context.appKey || !outcome) return;
+    try {
+        await applyGenerationTaskBillingOutcome({
+            tenantId: taskTenantId({ tenantId: context.tenantId || fallbackTenantId }),
+            generationTaskId: context.id,
+            outcome,
+            ...(context.taskBillingUsage ? { billableUsage: context.taskBillingUsage } : {}),
+            sourceEventId: `generation-task-store:${type}:${context.id}:${outcome}:${context.updatedAt}`,
+        });
+    } catch (error) {
+        console.error("Generation task billing finalization failed", {
+            type,
+            taskId: context.id,
+            tenantId: taskTenantId({ tenantId: context.tenantId || fallbackTenantId }),
+            outcome,
+            error: error instanceof Error ? error.message : "Unknown error",
+        });
+    }
+}
+
+function taskBillingOutcome(status: string): GenerationTaskBillingOutcome | null {
+    const normalized = normalizeGenerationTaskStatus(status);
+    return normalized === "success" || normalized === "error" || normalized === "cancelled" ? normalized : null;
 }
 
 function normalizeMutation<T extends { id: string; userId: string; status: string; createdAt: number; updatedAt: number }>(current: T, next: T | null, updatedAt: number) {

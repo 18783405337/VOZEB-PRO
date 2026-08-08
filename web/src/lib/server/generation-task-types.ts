@@ -8,6 +8,17 @@ export type GenerationTaskContext = {
     appKey?: string;
     appVersion?: string;
     workflowKey?: string;
+    taskBilling?: {
+        status: "pending" | "settled" | "released" | "reversed" | "not_applicable" | "error";
+        outcome: "success" | "error" | "cancelled" | "reverse";
+        sourceEventId: string;
+        error?: string;
+        updatedAt?: number;
+    };
+    taskBillingUsage?: {
+        saleAmount: number;
+        costAmount: number;
+    };
     conversationId?: string;
     runId?: string;
     surface?: "chat" | "canvas" | "drama";

@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ records: [] as Array<Record<string, unknown>> }));
+const mocks = vi.hoisted(() => ({
+    records: [] as Array<Record<string, unknown>>,
+    applyBillingOutcome: vi.fn(),
+}));
 
 vi.mock("@/lib/server/database", () => ({
     ensurePostgresSchema: vi.fn(),
@@ -15,6 +18,9 @@ vi.mock("@/lib/server/data-adapter", () => ({
         mocks.records = structuredClone(value);
     }),
 }));
+vi.mock("@/lib/server/billing/generation-task-billing-hook", () => ({
+    applyGenerationTaskBillingOutcome: mocks.applyBillingOutcome,
+}));
 
 import { getDatabaseProvider, postgresQuery } from "@/lib/server/database";
 import {
@@ -25,6 +31,7 @@ import {
     listStoredGenerationTaskRecords,
     mutateStoredGenerationTask,
     summarizeStoredGenerationTaskCosts,
+    transitionStoredGenerationTask,
     withGenerationConcurrencyLimit,
 } from "./generation-task-store";
 
@@ -39,6 +46,8 @@ type TestTask = {
 
 describe("mutateStoredGenerationTask", () => {
     beforeEach(() => {
+        mocks.applyBillingOutcome.mockReset();
+        mocks.applyBillingOutcome.mockResolvedValue(undefined);
         const now = Date.now();
         mocks.records = [
             {
@@ -61,6 +70,78 @@ describe("mutateStoredGenerationTask", () => {
         ]);
 
         expect((mocks.records[0].payload as TestTask).events).toEqual(["first", "second"]);
+    });
+
+    it("applies app billing only after a terminal transition has been persisted", async () => {
+        const task = mocks.records[0].payload as TestTask & { appKey?: string; tenantId?: string };
+        task.appKey = "canvas";
+        task.tenantId = "default";
+        mocks.records[0].payload = task;
+        mocks.applyBillingOutcome.mockImplementation(async () => {
+            expect((mocks.records[0].payload as TestTask).status).toBe("success");
+        });
+
+        await expect(
+            transitionStoredGenerationTask<TestTask & { appKey?: string; tenantId?: string }>(
+                "agent",
+                "agent-one",
+                "user",
+                ["running"],
+                { status: "success" },
+                60_000,
+            ),
+        ).resolves.toMatchObject({ id: "agent-one", status: "success" });
+
+        expect(mocks.applyBillingOutcome).toHaveBeenCalledWith(
+            expect.objectContaining({
+                tenantId: "default",
+                generationTaskId: "agent-one",
+                outcome: "success",
+                sourceEventId: expect.any(String),
+            }),
+        );
+    });
+
+    it("does not let terminal billing failures undo the persisted generation outcome", async () => {
+        const task = mocks.records[0].payload as TestTask & { appKey?: string; tenantId?: string };
+        task.appKey = "canvas";
+        task.tenantId = "default";
+        mocks.records[0].payload = task;
+        mocks.applyBillingOutcome.mockRejectedValueOnce(new Error("billing unavailable"));
+        const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+        try {
+            await expect(
+                transitionStoredGenerationTask<TestTask & { appKey?: string; tenantId?: string }>(
+                    "agent",
+                    "agent-one",
+                    "user",
+                    ["running"],
+                    { status: "success" },
+                    60_000,
+                ),
+            ).resolves.toMatchObject({ id: "agent-one", status: "success" });
+            expect((mocks.records[0].payload as TestTask).status).toBe("success");
+        } finally {
+            error.mockRestore();
+        }
+    });
+
+    it("reconciles a terminal mutation through the same app billing boundary", async () => {
+        const task = mocks.records[0].payload as TestTask & { appKey?: string; tenantId?: string };
+        task.appKey = "canvas";
+        task.tenantId = "default";
+        mocks.records[0].payload = task;
+
+        await mutateStoredGenerationTask<TestTask & { appKey?: string; tenantId?: string }>("agent", "agent-one", 60_000, (current) => ({ ...current, status: "cancelled" }));
+
+        expect(mocks.applyBillingOutcome).toHaveBeenCalledWith(
+            expect.objectContaining({
+                tenantId: "default",
+                generationTaskId: "agent-one",
+                outcome: "cancelled",
+            }),
+        );
     });
 
     it("serializes concurrency checks with task creation", async () => {

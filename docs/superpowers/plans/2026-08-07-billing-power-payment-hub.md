@@ -382,14 +382,11 @@ git commit -m "feat: add double sided task billing"
 
 - Create: `web/src/lib/server/billing/generation-task-billing-hook.ts`
 - Create: `web/src/lib/server/billing/generation-task-billing-hook.test.ts`
-- Modify: `web/src/lib/server/generation-task-webhook.ts`
-- Modify: `web/src/lib/server/generation-task-webhook.test.ts`
-- Modify: `web/src/lib/server/generation-task-scheduler.ts`
-- Modify: `web/src/lib/server/generation-task-scheduler.test.ts`
-- Modify: `web/src/lib/server/generation-task-cancellation-service.ts`
-- Modify: `web/src/lib/server/generation-task-recovery-service.ts`
+- Modify: `web/src/lib/server/generation-task-store.ts`
+- Modify: `web/src/lib/server/generation-task-store.test.ts`
+- Modify: `web/src/lib/server/generation-task-types.ts`
 
-- [ ] **Step 1: Write terminal-event replay tests**
+- [x] **Step 1: Write terminal-event replay tests**
 
 Verify that:
 
@@ -399,7 +396,7 @@ Verify that:
 - A successful partial workflow settles only billable completed steps.
 - Manual reversal after settlement creates opposite ledger entries.
 
-- [ ] **Step 2: Implement one terminal hook**
+- [x] **Step 2: Implement one terminal hook**
 
 ```ts
 export async function applyGenerationTaskBillingOutcome(input: {
@@ -413,14 +410,14 @@ export async function applyGenerationTaskBillingOutcome(input: {
 
 Derive idempotency keys from `generationTaskId + outcome + sourceEventId`. Load the stored snapshot; never recalculate historical prices from current app settings.
 
-- [ ] **Step 3: Call the hook after task persistence**
+- [x] **Step 3: Call the hook after task persistence**
 
-Invoke the hook after the terminal task state is durably stored. A billing-hook failure must be retryable and visible in generation operations; it must not rewrite a successful generation result to failure.
+Webhook, scheduler, cancellation, and recovery paths converge on `transitionStoredGenerationTask` or `mutateStoredGenerationTask`, so invoke the hook there after durable persistence. A billing-hook failure is recorded in `payload.taskBilling`, remains retryable through the idempotent task outcome boundary, and never rewrites a successful generation result to failure.
 
-- [ ] **Step 4: Run regression tests**
+- [x] **Step 4: Run regression tests**
 
 ```powershell
-pnpm test -- src/lib/server/generation-task-webhook.test.ts src/lib/server/generation-task-scheduler.test.ts src/lib/server/generation-task-recovery-service.test.ts src/lib/server/billing/generation-task-billing-hook.test.ts
+pnpm test -- src/lib/server/billing/generation-task-billing-hook.test.ts src/lib/server/generation-task-store.test.ts src/lib/server/generation-task-webhook.test.ts src/lib/server/generation-task-scheduler.test.ts src/lib/server/generation-task-recovery-service.test.ts
 ```
 
 Expected: pass.
@@ -428,7 +425,7 @@ Expected: pass.
 - [ ] **Step 5: Commit**
 
 ```powershell
-git add web/src/lib/server/billing/generation-task-billing-hook.ts web/src/lib/server/billing/generation-task-billing-hook.test.ts web/src/lib/server/generation-task-webhook.ts web/src/lib/server/generation-task-webhook.test.ts web/src/lib/server/generation-task-scheduler.ts web/src/lib/server/generation-task-scheduler.test.ts web/src/lib/server/generation-task-cancellation-service.ts web/src/lib/server/generation-task-recovery-service.ts
+git add web/src/lib/server/billing/generation-task-billing-hook.ts web/src/lib/server/billing/generation-task-billing-hook.test.ts web/src/lib/server/generation-task-store.ts web/src/lib/server/generation-task-store.test.ts web/src/lib/server/generation-task-types.ts docs/superpowers/plans/2026-08-07-billing-power-payment-hub.md
 git commit -m "feat: settle app billing from task outcomes"
 ```
 
