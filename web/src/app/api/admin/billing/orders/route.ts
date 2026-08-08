@@ -32,5 +32,5 @@ export async function GET(request: NextRequest) {
 }
 
 function parseOrderStatus(value: string | null): BillingOrderStatus | undefined {
-    return value === "pending" || value === "paid" || value === "closed" || value === "canceled" || value === "refunding" || value === "refunded" ? value : undefined;
+    return value === "pending" || value === "paid" || value === "closed" || value === "canceled" || value === "refunding" || value === "partially_refunded" || value === "refunded" ? value : undefined;
 }

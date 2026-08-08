@@ -16,9 +16,14 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/server/payment-config-store", () => ({
+    bootstrapLegacyPaymentMerchantAccounts: vi.fn(async () => undefined),
     getPaymentRuntimeConfig: vi.fn(async () => mocks.runtimeConfig),
     getPaymentRuntimeEnv: (config: RuntimeFixture, name: string) => config.valuesByEnvName[name]?.trim() || "",
     getPaymentRuntimeValue: (config: RuntimeFixture, ...names: string[]) => names.map((name) => config.valuesByEnvName[name]?.trim() || "").find(Boolean) || "",
+}));
+
+vi.mock("@/lib/server/payment-merchant-runtime", () => ({
+    resolvePaymentMerchantRuntime: vi.fn(async () => ({ merchant: {}, config: mocks.runtimeConfig })),
 }));
 
 import { createProviderCheckout } from "./payment-checkout-providers";

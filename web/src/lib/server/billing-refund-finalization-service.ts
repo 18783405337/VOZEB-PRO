@@ -5,7 +5,7 @@ import { reverseTenantSettlementReceivable } from "@/lib/server/billing-settleme
 import { createPostgresRepositories, withPostgresTransaction, type JsonValue, type PaymentTransactionRecord } from "@/lib/server/database";
 import { adjustPermanentPointsInPostgresTransaction } from "@/lib/server/points-wallet-service";
 import { reverseReferralRewardsForRefundedOrder } from "@/lib/server/referral-service";
-import { buildRefundedOrderResult, mergeJson, paymentRefundMetadata, sanitizeJson } from "@/lib/server/billing-service-helpers";
+import { buildRefundedOrderResult, mergeJson, paymentRefundMetadata, readRefundSummary, sanitizeJson } from "@/lib/server/billing-service-helpers";
 import type { PaymentRefundResult } from "@/lib/server/payment-refund-service";
 
 export type BillingRefundFinalizationInput = {
@@ -13,6 +13,10 @@ export type BillingRefundFinalizationInput = {
     paymentId?: string;
     reason: string;
     operatorUserId: string;
+    amountCents: number;
+    refundRequestId: string;
+    cumulativeBeforeCents: number;
+    cumulativeAfterCents: number;
     providerRefund: PaymentRefundResult;
     rawPayload?: unknown;
 };
@@ -32,13 +36,14 @@ export async function finalizeBillingOrderRefund(input: BillingRefundFinalizatio
         const user = await repos.users.getById(order.userId);
         if (!user) throw new BillingInputError("订单用户不存在", 404);
         const now = new Date().toISOString();
-        await refundBillingOrderCoupon(client, order, now);
+        const fullRefund = input.cumulativeAfterCents >= order.amountCents;
+        if (fullRefund) await refundBillingOrderCoupon(client, order, now);
 
-        const refundedPayment = payment ? await markPaymentRefunded(payment, input, now, repos.billing.updatePaymentState) : undefined;
-        const settlementReversal = await reverseTenantSettlementReceivable(client, order, input.providerRefund);
+        const refundedPayment = payment ? await markPaymentRefunded(payment, input, now, repos.billing.updatePaymentState, fullRefund) : undefined;
+        const settlementReversal = await reverseTenantSettlementReceivable(client, order, input.providerRefund, input.amountCents, input.refundRequestId);
         const assignments = order.productKind === "plan" ? await repos.billing.listPlanAssignments({ userId: order.userId, source: "order", page: 1, pageSize: 100 }) : undefined;
         const assignment = assignments?.items.find((item) => item.sourceId === order.id);
-        const canceledAssignment = assignment
+        const canceledAssignment = fullRefund && assignment
             ? await repos.billing.updatePlanAssignment(assignment.id, {
                   status: "canceled",
                   endsAt: now,
@@ -46,19 +51,22 @@ export async function finalizeBillingOrderRefund(input: BillingRefundFinalizatio
               })
             : undefined;
 
-        const walletAdjustment = order.pointsAmount
+        const previousPointsReversed = readRefundSummary(order.metadata).pointsReversed;
+        const targetPointsReversed = fullRefund ? order.pointsAmount : Number(((order.pointsAmount * input.cumulativeAfterCents) / order.amountCents).toFixed(2));
+        const pointsDelta = Math.max(0, targetPointsReversed - previousPointsReversed);
+        const walletAdjustment = pointsDelta
             ? await adjustPermanentPointsInPostgresTransaction(client, {
                   userId: user.id,
-                  amount: -order.pointsAmount,
+                  amount: -pointsDelta,
                   description: `订单退款：${order.subject}`,
-                  idempotencyKey: `billing-order:${order.id}:refund`,
+                  idempotencyKey: `billing-order:${order.id}:refund:${input.refundRequestId}`,
                   type: "admin-adjust",
                   requireActive: false,
                   now: new Date(now),
               })
             : null;
-        const pointsReversed = Math.max(0, -(walletAdjustment?.record.amount || 0));
-        await reverseReferralRewardsForRefundedOrder(client, { orderId: order.id, refundedAt: now, reason: input.reason });
+        const pointsReversed = previousPointsReversed + Math.max(0, -(walletAdjustment?.record.amount || 0));
+        if (fullRefund) await reverseReferralRewardsForRefundedOrder(client, { orderId: order.id, refundedAt: now, reason: input.reason });
 
         let updatedUser = user;
         if (order.productKind === "plan") {
@@ -74,13 +82,18 @@ export async function finalizeBillingOrderRefund(input: BillingRefundFinalizatio
         }
 
         const updatedOrder = await repos.billing.updateOrder(order.id, {
-            status: "refunded",
-            closedAt: now,
+            status: fullRefund ? "refunded" : "partially_refunded",
+            closedAt: fullRefund ? now : undefined,
             metadata: mergeJson(order.metadata, {
                 refund: {
                     reason: input.reason,
                     operatorUserId: input.operatorUserId,
                     refundedAt: now,
+                    amountCents: input.amountCents,
+                    refundedAmountCents: input.cumulativeAfterCents,
+                    remainingAmountCents: Math.max(0, order.amountCents - input.cumulativeAfterCents),
+                    refundRequestId: input.refundRequestId,
+                    refundCount: readRefundCount(order.metadata) + 1,
                     pointsReversed,
                     settlementReversalId: settlementReversal?.entry.id || "",
                     settlementReversedCents: settlementReversal?.entry.amount || 0,
@@ -93,10 +106,16 @@ export async function finalizeBillingOrderRefund(input: BillingRefundFinalizatio
     });
 }
 
-async function markPaymentRefunded(payment: PaymentTransactionRecord, input: BillingRefundFinalizationInput, now: string, upsert: (payment: PaymentTransactionRecord) => Promise<PaymentTransactionRecord>) {
+async function markPaymentRefunded(
+    payment: PaymentTransactionRecord,
+    input: BillingRefundFinalizationInput,
+    now: string,
+    upsert: (payment: PaymentTransactionRecord) => Promise<PaymentTransactionRecord>,
+    fullRefund: boolean,
+) {
     return upsert({
         ...payment,
-        status: "refunded",
+        status: fullRefund ? "refunded" : payment.status,
         rawPayload: mergeJson(payment.rawPayload, {
             refund: {
                 reason: input.reason,
@@ -106,7 +125,14 @@ async function markPaymentRefunded(payment: PaymentTransactionRecord, input: Bil
                 providerRefund: paymentRefundMetadata(input.providerRefund, true),
             },
         }),
-        refundedAt: now,
+        refundedAt: fullRefund ? now : payment.refundedAt,
         updatedAt: now,
     });
+}
+
+function readRefundCount(metadata: JsonValue | undefined) {
+    if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return 0;
+    const refund = (metadata as Record<string, JsonValue>).refund;
+    if (!refund || typeof refund !== "object" || Array.isArray(refund)) return 0;
+    return Math.max(0, Math.floor(Number((refund as Record<string, JsonValue>).refundCount) || 0));
 }

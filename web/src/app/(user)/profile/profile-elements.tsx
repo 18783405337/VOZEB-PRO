@@ -307,6 +307,7 @@ export function pointRecordTypeLabel(type: PointRecord["type"]) {
 }
 
 export function orderStatusLabel(status: BillingOrderStatus) {
+    if (status === "partially_refunded") return "部分退款";
     if (status === "pending") return "待支付";
     if (status === "paid") return "已开通";
     if (status === "refunding") return "退款处理中";
@@ -316,6 +317,7 @@ export function orderStatusLabel(status: BillingOrderStatus) {
 }
 
 export function orderStatusColor(status: BillingOrderStatus) {
+    if (status === "partially_refunded") return "gold";
     if (status === "pending") return "gold";
     if (status === "paid") return "green";
     if (status === "refunded") return "blue";

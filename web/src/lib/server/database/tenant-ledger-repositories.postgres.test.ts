@@ -163,7 +163,7 @@ describe("tenant ledger repositories", () => {
             .mockResolvedValueOnce(queryResult([accountRow({ id: "power-a", available_amount: 140, version: 1 })]))
             .mockResolvedValueOnce(queryResult([]))
             .mockResolvedValueOnce(queryResult([ledgerRow({ id: "settle-entry", account_id: "power-a", entry_type: "settle", amount: 40 })]))
-            .mockResolvedValueOnce(queryResult([ledgerRow({ id: "reverse-entry", account_id: "power-a", reversal_of_id: "settle-entry" })]));
+            .mockResolvedValueOnce(queryResult([{ reversed_amount: 40 }]));
         const repository = new TenantPowerRepository({ query } as unknown as QueryExecutor);
         const input = {
             tenantId: "tenant-a",
@@ -183,6 +183,74 @@ describe("tenant ledger repositories", () => {
             code: "ALREADY_REVERSED",
         });
         expect(new TenantLedgerError("x", "ALREADY_REVERSED")).toBeInstanceOf(Error);
+    });
+
+    it("partially reverses one credit entry until its full amount is consumed", async () => {
+        const original = ledgerRow({
+            id: "settlement-credit",
+            account_id: "settlement-a",
+            entry_type: "credit",
+            direction: "credit",
+            amount: 100,
+        });
+        const query = vi.fn()
+            .mockResolvedValueOnce(queryResult([accountRow({ id: "settlement-a", currency: "CNY", available_amount: 100 })]))
+            .mockResolvedValueOnce(queryResult([]))
+            .mockResolvedValueOnce(queryResult([original]))
+            .mockResolvedValueOnce(queryResult([{ reversed_amount: 0 }]))
+            .mockResolvedValueOnce(
+                queryResult([
+                    ledgerRow({
+                        id: "partial-reversal-one",
+                        account_id: "settlement-a",
+                        entry_type: "reverse",
+                        direction: "debit",
+                        amount: 40,
+                        reversal_of_id: "settlement-credit",
+                    }),
+                ]),
+            )
+            .mockResolvedValueOnce(queryResult([accountRow({ id: "settlement-a", currency: "CNY", available_amount: 60, version: 1 })]))
+            .mockResolvedValueOnce(queryResult([accountRow({ id: "settlement-a", currency: "CNY", available_amount: 60, version: 1 })]))
+            .mockResolvedValueOnce(queryResult([]))
+            .mockResolvedValueOnce(queryResult([original]))
+            .mockResolvedValueOnce(queryResult([{ reversed_amount: 40 }]))
+            .mockResolvedValueOnce(
+                queryResult([
+                    ledgerRow({
+                        id: "partial-reversal-two",
+                        account_id: "settlement-a",
+                        entry_type: "reverse",
+                        direction: "debit",
+                        amount: 60,
+                        reversal_of_id: "settlement-credit",
+                    }),
+                ]),
+            )
+            .mockResolvedValueOnce(queryResult([accountRow({ id: "settlement-a", currency: "CNY", available_amount: 0, version: 2 })]));
+        const repository = new TenantSettlementRepository({ query } as unknown as QueryExecutor);
+        const baseInput = {
+            tenantId: "tenant-a",
+            accountId: "settlement-a",
+            referenceType: "billing-refund",
+            originalEntryId: "settlement-credit",
+        };
+
+        const first = await repository.reverse({
+            ...baseInput,
+            amount: 40,
+            referenceId: "refund-one",
+            idempotencyKey: "refund-one",
+        });
+        const second = await repository.reverse({
+            ...baseInput,
+            amount: 60,
+            referenceId: "refund-two",
+            idempotencyKey: "refund-two",
+        });
+
+        expect(first).toMatchObject({ account: { availableAmount: 60 }, entry: { amount: 40 } });
+        expect(second).toMatchObject({ account: { availableAmount: 0 }, entry: { amount: 60 } });
     });
 
     it("credits a settlement receivable and reverses the exact credit entry", async () => {

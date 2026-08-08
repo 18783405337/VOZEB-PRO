@@ -132,6 +132,37 @@ describe("payment refunds", () => {
         expect(body.get("metadata[orderNo]")).toBe(order.orderNo);
     });
 
+    it("creates a partial Stripe refund with a request-scoped idempotency key", async () => {
+        mocks.runtimeConfig.valuesByEnvName = {
+            VOZEB_PRO_STRIPE_SECRET_KEY: "sk_test_secret",
+            VOZEB_PRO_STRIPE_API_BASE: "https://stripe.test",
+        };
+        const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => Response.json({ id: "re_partial", status: "succeeded" }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        const result = await refundPaymentTransaction(order, payment, {
+            amountCents: 396,
+            refundRequestId: "partial-refund-one",
+        });
+
+        expect(result).toMatchObject({
+            provider: "stripe",
+            status: "succeeded",
+            providerRefundId: "re_partial",
+            amountCents: 396,
+        });
+        expect(fetchMock).toHaveBeenCalledWith(
+            "https://stripe.test/v1/refunds",
+            expect.objectContaining({
+                headers: expect.objectContaining({
+                    "Idempotency-Key": "vozeb-pro-refund-partial-refund-one",
+                }),
+            }),
+        );
+        const body = fetchMock.mock.calls[0]?.[1]?.body as URLSearchParams;
+        expect(body.get("amount")).toBe("396");
+    });
+
     it("uses a Stripe charge when that is the only refundable provider id", async () => {
         mocks.runtimeConfig.valuesByEnvName = { VOZEB_PRO_STRIPE_SECRET_KEY: "sk_test_secret" };
         const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => Response.json({ id: "re_456", status: "pending" }));

@@ -32,7 +32,7 @@
 - Modify: `web/src/lib/server/database/postgres.ts`
 - Modify: `web/src/lib/server/database/postgres.test.ts`
 
-- [ ] **Step 1: Add failing schema assertions**
+- [x] **Step 1: Add failing schema assertions**
 
 Assert these prefixed tables are included:
 
@@ -49,7 +49,7 @@ const saasBillingTables = [
 ];
 ```
 
-- [ ] **Step 2: Run the focused test and confirm failure**
+- [x] **Step 2: Run the focused test and confirm failure**
 
 ```powershell
 cd D:\homeWork\saas-api\VOZEB-PRO\web
@@ -58,7 +58,7 @@ pnpm test -- src/lib/server/database/postgres.test.ts
 
 Expected: failure because the eight tables are absent.
 
-- [ ] **Step 3: Define account and immutable ledger DDL**
+- [x] **Step 3: Define account and immutable ledger DDL**
 
 Each account table has `available_amount`, `reserved_amount`, `version`, and timestamps. Each ledger has `amount`, `direction`, `entry_type`, `reference_type`, `reference_id`, `idempotency_key`, `reversal_of_id`, `metadata_json`, and `created_at`.
 
@@ -161,7 +161,7 @@ CREATE TABLE IF NOT EXISTS tenant_settlement_ledger_entries (
 );
 ```
 
-- [ ] **Step 4: Define task reservations and merchant accounts**
+- [x] **Step 4: Define task reservations and merchant accounts**
 
 ```sql
 CREATE TABLE IF NOT EXISTS task_billing_reservations (
@@ -199,7 +199,7 @@ CREATE TABLE IF NOT EXISTS merchant_accounts (
 );
 ```
 
-- [ ] **Step 5: Extend existing commercial tables**
+- [x] **Step 5: Extend existing commercial tables**
 
 Plan 1 already adds non-null `billing_orders.tenant_id`. Add the remaining order lineage columns:
 
@@ -212,11 +212,11 @@ ALTER TABLE billing_orders ADD COLUMN IF NOT EXISTS commercial_snapshot_json JSO
 
 Add nullable-first `tenant_id` and `merchant_account_id` lineage to payment transactions and refunds. Plan 4 performs their default-tenant backfill and final non-null/check constraints.
 
-- [ ] **Step 6: Register lifecycle metadata**
+- [x] **Step 6: Register lifecycle metadata**
 
 Add the eight table names and index names to `postgres.ts`. Update the expected table count from `69` to `77`.
 
-- [ ] **Step 7: Run tests and commit**
+- [x] **Step 7: Run tests and commit**
 
 ```powershell
 pnpm test -- src/lib/server/database/postgres.test.ts
@@ -238,7 +238,7 @@ Expected: test passes and commit succeeds.
 - Create: `web/src/lib/server/database/tenant-ledger-repositories.postgres.test.ts`
 - Modify: `web/src/lib/server/database/repositories.ts`
 
-- [ ] **Step 1: Write PostgreSQL concurrency tests**
+- [x] **Step 1: Write PostgreSQL concurrency tests**
 
 Cover:
 
@@ -247,7 +247,7 @@ Cover:
 - Tenant A cannot mutate Tenant B's account.
 - A reversal references the original entry and cannot itself be reversed twice.
 
-- [ ] **Step 2: Run and confirm failure**
+- [x] **Step 2: Run and confirm failure**
 
 ```powershell
 $env:VOZEB_PRO_DATABASE_PROVIDER='postgres'
@@ -256,7 +256,7 @@ pnpm test -- src/lib/server/database/tenant-ledger-repositories.postgres.test.ts
 
 Expected: failure because repositories do not exist.
 
-- [ ] **Step 3: Define shared repository contracts**
+- [x] **Step 3: Define shared repository contracts**
 
 ```ts
 export type AccountMutation = Readonly<{
@@ -277,7 +277,7 @@ export interface ReservableAccountRepository {
 }
 ```
 
-- [ ] **Step 4: Implement row-locked transactions**
+- [x] **Step 4: Implement row-locked transactions**
 
 Inside a single database transaction:
 
@@ -289,7 +289,7 @@ Inside a single database transaction:
 
 Map PostgreSQL unique conflicts to idempotent reads instead of `500`.
 
-- [ ] **Step 5: Register repositories and run tests**
+- [x] **Step 5: Register repositories and run tests**
 
 ```powershell
 pnpm test -- src/lib/server/database/tenant-ledger-repositories.postgres.test.ts
@@ -297,7 +297,7 @@ pnpm test -- src/lib/server/database/tenant-ledger-repositories.postgres.test.ts
 
 Expected: pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add web/src/lib/server/database/tenant-wallet-repository.ts web/src/lib/server/database/tenant-power-repository.ts web/src/lib/server/database/tenant-settlement-repository.ts web/src/lib/server/database/tenant-ledger-repositories.postgres.test.ts web/src/lib/server/database/repositories.ts
@@ -422,7 +422,7 @@ pnpm test -- src/lib/server/billing/generation-task-billing-hook.test.ts src/lib
 
 Expected: pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add web/src/lib/server/billing/generation-task-billing-hook.ts web/src/lib/server/billing/generation-task-billing-hook.test.ts web/src/lib/server/generation-task-store.ts web/src/lib/server/generation-task-store.test.ts web/src/lib/server/generation-task-types.ts docs/superpowers/plans/2026-08-07-billing-power-payment-hub.md
@@ -513,7 +513,7 @@ git commit -m "feat: add scoped merchant accounts"
 - Modify: `web/src/app/api/billing/orders/[id]/checkout/route.ts`
 - Modify: `web/src/app/api/billing/orders/[id]/checkout/route.test.ts`
 
-- [ ] **Step 1: Write collection-mode tests**
+- [x] **Step 1: Write collection-mode tests**
 
 Cover:
 
@@ -523,7 +523,7 @@ Cover:
 - Existing default-tenant orders select the migrated platform merchant.
 - A user cannot checkout an order from another tenant.
 
-- [ ] **Step 2: Extend checkout options**
+- [x] **Step 2: Extend checkout options**
 
 ```ts
 export type CreatePaymentCheckoutOptions = {
@@ -536,7 +536,7 @@ export type CreatePaymentCheckoutOptions = {
 };
 ```
 
-- [ ] **Step 3: Persist the commercial snapshot at order creation**
+- [x] **Step 3: Persist the commercial snapshot at order creation**
 
 Store:
 
@@ -555,11 +555,11 @@ type CommercialOrderSnapshot = {
 
 The checkout endpoint must use this snapshot and reject attempts to override merchant or collection mode in the request body.
 
-- [ ] **Step 4: Inject decrypted merchant configuration server-side**
+- [x] **Step 4: Inject decrypted merchant configuration server-side**
 
 Provider adapters receive a `ResolvedMerchantAccount` from the service. Do not add credentials to `PaymentCheckoutResult`.
 
-- [ ] **Step 5: Run tests and commit**
+- [x] **Step 5: Run tests and commit**
 
 ```powershell
 pnpm test -- src/lib/server/payment-checkout-service.test.ts src/lib/server/database/billing-order-repository.test.ts src/lib/server/billing-commerce-service.test.ts src/app/api/billing/orders
@@ -581,11 +581,11 @@ git commit -m "feat: make checkout merchant aware"
 - Modify: `web/src/lib/server/payment-webhook-adapters.test.ts`
 - Modify: `web/src/lib/server/database/billing-payment-repository.ts`
 
-- [ ] **Step 1: Write merchant-resolution tests**
+- [x] **Step 1: Write merchant-resolution tests**
 
 Test valid platform and tenant callbacks, unknown merchant identity, valid signature from the wrong merchant, replayed event, and tenant ID spoofing in callback payload.
 
-- [ ] **Step 2: Add a two-stage adapter contract**
+- [x] **Step 2: Add a two-stage adapter contract**
 
 ```ts
 export interface MerchantAwareWebhookAdapter {
@@ -598,7 +598,7 @@ export interface MerchantAwareWebhookAdapter {
 }
 ```
 
-- [ ] **Step 3: Implement secure resolution order**
+- [x] **Step 3: Implement secure resolution order**
 
 1. Extract provider-controlled merchant identity.
 2. Load the enabled merchant account.
@@ -609,12 +609,12 @@ export interface MerchantAwareWebhookAdapter {
 
 Ignore tenant IDs contained in untrusted callback payload fields.
 
-- [ ] **Step 4: Credit the correct accounts**
+- [x] **Step 4: Credit the correct accounts**
 
 - Platform collection: fulfill user entitlement and append tenant settlement receivable.
 - Tenant collection: fulfill user entitlement only; do not credit tenant settlement.
 
-- [ ] **Step 5: Run tests and commit**
+- [x] **Step 5: Run tests and commit**
 
 ```powershell
 pnpm test -- src/lib/server/payment-webhook-service.test.ts src/lib/server/payment-webhook-adapters.test.ts src/app/api/billing/webhooks
@@ -638,7 +638,7 @@ git commit -m "feat: scope payment webhooks by merchant"
 - Create: `web/src/app/api/tenant/billing/reconciliation/route.ts`
 - Create: `web/src/app/api/tenant/billing/reconciliation/route.test.ts`
 
-- [ ] **Step 1: Write refund matrix tests**
+- [x] **Step 1: Write refund matrix tests**
 
 Cover full and partial refunds for both collection modes:
 
@@ -649,19 +649,21 @@ Cover full and partial refunds for both collection modes:
 
 Also test duplicate provider callbacks and retry after transient provider failure.
 
-- [ ] **Step 2: Route refunds through the order merchant**
+Implementation note: full and proportional partial refunds now use request-scoped idempotency keys, persist cumulative refund summaries, reverse tenant settlement receivables by the requested amount, and preserve tenant isolation. Replaying the same completed partial refund request returns the existing result without repeating wallet or settlement compensation. Provider callback handling accepts paid, partial, refunding, and refunded order states without re-granting entitlements.
+
+- [x] **Step 2: Route refunds through the order merchant**
 
 The refund service loads `merchant_account_id` from the order and decrypts only that account's credentials. An API caller cannot choose another merchant.
 
-- [ ] **Step 3: Append reversal entries**
+- [x] **Step 3: Append reversal entries**
 
 Never update historical ledger entries. Use `reversal_of_id` and a deterministic idempotency key based on refund ID and ledger type.
 
-- [ ] **Step 4: Scope reconciliation**
+- [x] **Step 4: Scope reconciliation**
 
 Platform administrators may reconcile all merchants. Tenant administrators may reconcile only their own merchants and orders. Reports group by `tenant_id`, `merchant_account_id`, currency, and collection mode.
 
-- [ ] **Step 5: Run tests and commit**
+- [x] **Step 5: Run tests and commit**
 
 ```powershell
 pnpm test -- src/lib/server/payment-refund-service.test.ts src/lib/server/payment-reconciliation-service.test.ts src/app/api/tenant/billing/reconciliation
@@ -684,11 +686,11 @@ git commit -m "feat: add tenant aware refunds and reconciliation"
 - Create: `web/e2e/saas-billing-payment.spec.ts`
 - Modify: `.env.example`
 
-- [ ] **Step 1: Build tenant billing views**
+- [x] **Step 1: Build tenant billing views**
 
 Provide tabs for `Wallets`, `Power`, `Settlement`, `Orders`, `Merchants`, and `Reconciliation`. Display amounts with explicit currency/unit labels. Use masked merchant status fields and explicit test/production badges.
 
-- [ ] **Step 2: Add E2E scenarios**
+- [x] **Step 2: Add E2E scenarios**
 
 Verify:
 
@@ -699,7 +701,7 @@ Verify:
 5. A refund reverses the correct ledger entries.
 6. Cross-tenant account and merchant access returns `404` or `403` without leaking existence.
 
-- [ ] **Step 3: Document environment requirements**
+- [x] **Step 3: Document environment requirements**
 
 Add non-secret variable names:
 
@@ -710,7 +712,7 @@ PAYMENT_CONFIG_MASTER_KEY=
 
 Document that the master key is required before merchant migration and must be backed up outside the database.
 
-- [ ] **Step 4: Run phase verification**
+- [x] **Step 4: Run phase verification**
 
 ```powershell
 pnpm test -- src/lib/server/billing src/lib/server/payment src/lib/server/payment-checkout-service.test.ts src/lib/server/payment-webhook-service.test.ts src/lib/server/payment-refund-service.test.ts
@@ -720,9 +722,9 @@ pnpm lint
 pnpm build
 ```
 
-Expected: every command exits with code `0`.
+Expected: every command exits with code `0`. The SaaS Playwright suite skips its five database-backed scenarios when `VOZEB_PRO_E2E_DATABASE_URL` or `DATABASE_URL` is not provided; provide a reachable PostgreSQL URL to execute them.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add web/src/app/tenant-admin/billing web/src/services/api/tenant-billing.ts web/src/services/api/tenant-billing.test.ts web/src/app/admin/page.tsx web/src/app/tenant-admin/page.tsx web/e2e/saas-billing-payment.spec.ts .env.example

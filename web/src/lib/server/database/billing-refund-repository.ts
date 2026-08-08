@@ -44,7 +44,7 @@ export class BillingRefundRepository {
                 merchant_account_id = COALESCE(billing_refund_jobs.merchant_account_id, EXCLUDED.merchant_account_id),
                 provider = EXCLUDED.provider,
                 status = EXCLUDED.status,
-                provider_refund_id = COALESCE(EXCLUDED.provider_refund_id, billing_refund_jobs.provider_refund_id),
+                provider_refund_id = EXCLUDED.provider_refund_id,
                 attempts = EXCLUDED.attempts,
                 max_attempts = EXCLUDED.max_attempts,
                 next_attempt_at = EXCLUDED.next_attempt_at,

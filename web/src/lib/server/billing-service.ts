@@ -306,7 +306,7 @@ export async function completeBillingOrderPayment(input: CompleteBillingOrderPay
             ? await repos.billing.getPaymentByProviderIdentifiers(provider, incomingIdentifiers, { ...paymentIdentityScope, forUpdate: true })
             : null;
         if (existingPayment) assertPaymentTransactionOwnership(existingPayment, order, provider);
-        if (order.status === "paid") {
+        if (order.status === "paid" || order.status === "partially_refunded" || order.status === "refunding" || order.status === "refunded") {
             assertDuplicatePaymentIdentity(order, input);
             return buildPaidOrderResult(order, client);
         }

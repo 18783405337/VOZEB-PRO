@@ -21,6 +21,19 @@ export function readRefundAttempt(metadata: JsonValue | undefined): Record<strin
     return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, typeof item === "string" ? item : String(item)]));
 }
 
+export function readRefundSummary(metadata: JsonValue | undefined) {
+    if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return { refundedAmountCents: 0, pointsReversed: 0, refundRequestId: "", refundCount: 0 };
+    const refund = (metadata as Record<string, JsonValue>).refund;
+    if (!refund || typeof refund !== "object" || Array.isArray(refund)) return { refundedAmountCents: 0, pointsReversed: 0, refundRequestId: "", refundCount: 0 };
+    const value = refund as Record<string, JsonValue>;
+    return {
+        refundedAmountCents: Math.max(0, Math.floor(Number(value.refundedAmountCents) || 0)),
+        pointsReversed: Math.max(0, Number((Number(value.pointsReversed) || 0).toFixed(2))),
+        refundRequestId: typeof value.refundRequestId === "string" ? value.refundRequestId : "",
+        refundCount: Math.max(0, Math.floor(Number(value.refundCount) || 0)),
+    };
+}
+
 export function isAutomaticallyExpiredOrder(order: BillingOrderRecord) {
     if (order.status !== "closed" || !order.metadata || typeof order.metadata !== "object" || Array.isArray(order.metadata)) return false;
     const close = (order.metadata as Record<string, JsonValue>).close;
@@ -52,6 +65,20 @@ export async function buildRefundedOrderResult(order: BillingOrderRecord, db?: Q
         assignment: assignments.items.find((item) => item.sourceId === order.id),
         user,
         pointsReversed: 0,
+    };
+}
+
+export async function buildPartiallyRefundedOrderResult(order: BillingOrderRecord, db?: QueryExecutor) {
+    const repos = createPostgresRepositories(db);
+    const payments = await repos.billing.listPayments({ orderId: order.id, page: 1, pageSize: 1 });
+    const assignments = order.productKind === "plan" ? await repos.billing.listPlanAssignments({ source: "order", userId: order.userId, page: 1, pageSize: 1 }) : { items: [] };
+    const user = order.userId ? await repos.users.getById(order.userId) : null;
+    return {
+        order,
+        payment: payments.items[0],
+        assignment: assignments.items.find((item) => item.sourceId === order.id),
+        user,
+        pointsReversed: readRefundSummary(order.metadata).pointsReversed,
     };
 }
 
@@ -242,6 +269,7 @@ export function paymentRefundMetadata(refund: PaymentRefundResult, includeRawPay
     const metadata: Record<string, JsonValue> = {
         provider: refund.provider,
         status: refund.status,
+        ...(refund.amountCents !== undefined ? { amountCents: refund.amountCents } : {}),
         providerRefundId: refund.providerRefundId || "",
     };
     if (includeRawPayload && refund.rawPayload !== undefined) metadata.rawPayload = refund.rawPayload;

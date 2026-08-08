@@ -203,9 +203,11 @@ function formatTimestamp(value: number | string) {
 }
 
 function orderStatusLabel(value: string) {
+    if (value === "partially_refunded") return "部分退款";
     return { pending: "待支付", paid: "已支付", closed: "已关闭", canceled: "已取消", refunding: "退款中", refunded: "已退款" }[value] || value;
 }
 
 function orderStatusColor(value: string) {
+    if (value === "partially_refunded") return "gold";
     return { pending: "gold", paid: "green", closed: "default", canceled: "default", refunding: "orange", refunded: "blue" }[value] || "default";
 }

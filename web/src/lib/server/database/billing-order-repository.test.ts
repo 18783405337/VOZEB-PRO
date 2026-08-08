@@ -96,7 +96,7 @@ describe("BillingOrderRepository.getSummary", () => {
         const [sql, params] = query.mock.calls[0] || [];
         expect(String(sql)).toContain("WITH scoped_orders AS MATERIALIZED");
         expect(String(sql)).toContain("scoped_payments AS MATERIALIZED");
-        expect(String(sql)).toContain("order_row.status NOT IN ('paid', 'refunded')");
+        expect(String(sql)).toContain("order_row.status NOT IN ('paid', 'partially_refunded', 'refunded')");
         expect(String(sql).match(/FROM payment_transactions/g)).toHaveLength(1);
         expect(String(sql).match(/FROM scoped_payments/g)).toHaveLength(4);
         expect(String(sql)).not.toMatch(/SELECT\s+\*/i);

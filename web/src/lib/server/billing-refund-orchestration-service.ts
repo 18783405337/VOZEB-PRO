@@ -4,11 +4,22 @@ import { lockAuthMutation } from "@/lib/server/auth-mutation-lock";
 import { BillingInputError, isBillingInputError } from "@/lib/server/billing-errors";
 import { finalizeBillingOrderRefund } from "@/lib/server/billing-refund-finalization-service";
 import { createPostgresRepositories, withPostgresTransaction, type BillingOrderRecord, type BillingRefundJobRecord, type JsonValue, type PaymentTransactionRecord } from "@/lib/server/database";
-import { assertBillingDatabaseReady, buildRefundedOrderResult, isRefundClaimStale, mergeJson, normalizeId, normalizeOptionalText, normalizeText, paymentRefundMetadata, readRefundAttempt, sanitizeJson } from "@/lib/server/billing-service-helpers";
+import { assertBillingDatabaseReady, buildPartiallyRefundedOrderResult, buildRefundedOrderResult, isRefundClaimStale, mergeJson, normalizeId, normalizeOptionalText, normalizeText, paymentRefundMetadata, readRefundAttempt, readRefundSummary, sanitizeJson } from "@/lib/server/billing-service-helpers";
 import { reconcilePaymentRefund, refundPaymentTransaction, type PaymentRefundResult } from "@/lib/server/payment-refund-service";
 
-type BillingRefundInput = { reason?: unknown; operatorUserId?: unknown; rawPayload?: unknown };
-type RefundClaim = { order: BillingOrderRecord; payment?: PaymentTransactionRecord; job: BillingRefundJobRecord; reason: string; operatorUserId: string; rawPayload?: unknown };
+type BillingRefundInput = { reason?: unknown; operatorUserId?: unknown; amountCents?: unknown; refundRequestId?: unknown; rawPayload?: unknown };
+type RefundClaim = {
+    order: BillingOrderRecord;
+    payment?: PaymentTransactionRecord;
+    job: BillingRefundJobRecord;
+    reason: string;
+    operatorUserId: string;
+    amountCents: number;
+    refundRequestId: string;
+    cumulativeBeforeCents: number;
+    cumulativeAfterCents: number;
+    rawPayload?: unknown;
+};
 
 const REFUND_JOB_MAX_ATTEMPTS = 8;
 const REFUND_JOB_LEASE_MS = 2 * 60_000;
@@ -43,7 +54,7 @@ export async function runBillingRefundReconciliationBatch(input: { workerId: str
     };
 }
 
-async function claimBillingRefund(orderId: string, input: BillingRefundInput, workerId: string): Promise<RefundClaim | { completed: Awaited<ReturnType<typeof buildRefundedOrderResult>> }> {
+async function claimBillingRefund(orderId: string, input: BillingRefundInput, workerId: string): Promise<RefundClaim | { completed: Awaited<ReturnType<typeof buildRefundedOrderResult>> | Awaited<ReturnType<typeof buildPartiallyRefundedOrderResult>> }> {
     return withPostgresTransaction(async (client) => {
         await lockAuthMutation(client);
         const repos = createPostgresRepositories(client);
@@ -53,20 +64,38 @@ async function claimBillingRefund(orderId: string, input: BillingRefundInput, wo
         const existing = await repos.billing.getRefundJobByOrderId(order.id, true);
         const now = new Date();
         if (jobLeaseActive(existing, now) || (order.status === "refunding" && !existing && !isRefundClaimStale(order))) throw new BillingInputError("退款正在处理中，请稍后再试", 409);
-        if (order.status !== "paid" && order.status !== "refunding") throw new BillingInputError("只有已支付订单可以退款", 409);
+        if (order.status !== "paid" && order.status !== "partially_refunded" && order.status !== "refunding") throw new BillingInputError("只有已支付订单可以退款", 409);
         if (!order.userId) throw new BillingInputError("订单没有绑定用户", 409);
         const payments = await repos.billing.listPayments({ orderId: order.id, page: 1, pageSize: 100 });
         const payment = payments.items.find((item) => item.status === "succeeded" || item.status === "refunded");
-        const reason = normalizeText(input.reason, "运营退款", 200);
         const operatorUserId = normalizeOptionalText(input.operatorUserId, 120) || "";
+        const refundSummary = readRefundSummary(order.metadata);
+        const requestedRefundRequestId = normalizeId(input.refundRequestId);
+        if (order.status === "partially_refunded" && requestedRefundRequestId && requestedRefundRequestId === normalizeId(refundSummary.refundRequestId)) {
+            return { completed: await buildPartiallyRefundedOrderResult(order, client) };
+        }
+        const jobContext = refundJobContext(existing?.rawPayload);
+        const resumedAmount = positiveInteger(jobContext.amountCents);
+        const cumulativeBeforeCents = order.status === "refunding" && resumedAmount ? positiveOrZeroInteger(jobContext.cumulativeBeforeCents) : refundSummary.refundedAmountCents;
+        const remainingCents = order.amountCents - cumulativeBeforeCents;
+        if (remainingCents <= 0) return { completed: await buildRefundedOrderResult({ ...order, status: "refunded" }, client) };
+        const requestedAmountCents = order.status === "refunding" && resumedAmount ? resumedAmount : normalizeRefundAmount(input.amountCents, remainingCents);
+        if (order.productKind === "plan" && requestedAmountCents < remainingCents) throw new BillingInputError("套餐订单不支持部分退款，请按全额退款", 409);
+        const cumulativeAfterCents = cumulativeBeforeCents + requestedAmountCents;
+        const refundRequestId = order.status === "refunding" && normalizeOptionalText(jobContext.refundRequestId, 120)
+            ? normalizeId(jobContext.refundRequestId)
+            : requestedRefundRequestId || randomUUID();
+        const reason = normalizeText(input.reason || jobContext.reason, "运营退款", 200);
         const claimId = randomUUID();
         const nowIso = now.toISOString();
         const claimedOrder = await repos.billing.updateOrder(order.id, {
             status: "refunding",
-            metadata: mergeJson(order.metadata, { refundAttempt: { claimId, reason, operatorUserId, startedAt: nowIso } }),
+            metadata: mergeJson(order.metadata, {
+                refundAttempt: { claimId, reason, operatorUserId, amountCents: requestedAmountCents, cumulativeBeforeCents, cumulativeAfterCents, refundRequestId, startedAt: nowIso },
+            }),
         });
         if (!claimedOrder) throw new BillingInputError("订单不存在", 404);
-        const currentRefund = paymentRefundFromJob(existing);
+        const currentRefund = existing && existing.status !== "completed" && existing.status !== "failed" && existing.status !== "manual" ? paymentRefundFromJob(existing) : undefined;
         const status = currentRefund && currentRefund.status !== "pending" ? "compensating" : "processing";
         const job = await repos.billing.upsertRefundJob({
             id: existing?.id || randomUUID(),
@@ -76,17 +105,17 @@ async function claimBillingRefund(orderId: string, input: BillingRefundInput, wo
             merchantAccountId: order.merchantAccountId,
             provider: payment?.provider || order.provider,
             status,
-            providerRefundId: currentRefund?.providerRefundId || existing?.providerRefundId,
+            providerRefundId: currentRefund?.providerRefundId,
             attempts: existing?.status === "manual" || existing?.status === "failed" ? 1 : (existing?.attempts || 0) + 1,
             maxAttempts: existing?.maxAttempts || REFUND_JOB_MAX_ATTEMPTS,
             nextAttemptAt: nowIso,
-            rawPayload: refundJobPayload(existing?.rawPayload, { reason, operatorUserId, providerRefund: currentRefund }),
+            rawPayload: refundJobPayload(existing?.rawPayload, { reason, operatorUserId, amountCents: requestedAmountCents, cumulativeBeforeCents, cumulativeAfterCents, refundRequestId, providerRefund: currentRefund, clearProviderRefund: !currentRefund }),
             workerId,
             leaseUntil: new Date(now.getTime() + REFUND_JOB_LEASE_MS).toISOString(),
             createdAt: existing?.createdAt || nowIso,
             updatedAt: nowIso,
         });
-        return { order: claimedOrder, payment, job, reason, operatorUserId, rawPayload: input.rawPayload };
+        return { order: claimedOrder, payment, job, reason, operatorUserId, amountCents: requestedAmountCents, refundRequestId, cumulativeBeforeCents, cumulativeAfterCents, rawPayload: input.rawPayload };
     });
 }
 
@@ -110,6 +139,10 @@ async function processClaimedJob(job: BillingRefundJobRecord, workerId: string) 
         job,
         reason: normalizeText(context.reason, "运营退款", 200),
         operatorUserId: normalizeText(context.operatorUserId, "", 120),
+        amountCents: positiveInteger(context.amountCents) || order.amountCents,
+        refundRequestId: normalizeText(context.refundRequestId, job.id, 120),
+        cumulativeBeforeCents: positiveOrZeroInteger(context.cumulativeBeforeCents),
+        cumulativeAfterCents: positiveInteger(context.cumulativeAfterCents) || order.amountCents,
     };
     try {
         const result = await processRefundClaim(claim, workerId);
@@ -127,10 +160,18 @@ async function processRefundClaim(claim: RefundClaim, workerId: string) {
     try {
         if (!providerRefund || providerRefund.status === "pending") {
             providerRefund = providerRefund
-                ? await reconcilePaymentRefund(claim.order, claim.payment, providerRefund, { reason: claim.reason, operatorUserId: claim.operatorUserId })
-                : await refundPaymentTransaction(claim.order, claim.payment, { reason: claim.reason, operatorUserId: claim.operatorUserId });
+                ? await reconcilePaymentRefund(claim.order, claim.payment, providerRefund, { reason: claim.reason, operatorUserId: claim.operatorUserId, amountCents: claim.amountCents, refundRequestId: claim.refundRequestId })
+                : await refundPaymentTransaction(claim.order, claim.payment, { reason: claim.reason, operatorUserId: claim.operatorUserId, amountCents: claim.amountCents, refundRequestId: claim.refundRequestId });
         }
-        const payload = refundJobPayload(claim.job.rawPayload, { reason: claim.reason, operatorUserId: claim.operatorUserId, providerRefund });
+        const payload = refundJobPayload(claim.job.rawPayload, {
+            reason: claim.reason,
+            operatorUserId: claim.operatorUserId,
+            amountCents: claim.amountCents,
+            cumulativeBeforeCents: claim.cumulativeBeforeCents,
+            cumulativeAfterCents: claim.cumulativeAfterCents,
+            refundRequestId: claim.refundRequestId,
+            providerRefund,
+        });
         if (providerRefund.status === "pending") {
             await releaseJob(claim.job, workerId, nextRetryStatus(claim.job), undefined, undefined, providerRefund, payload);
             return { order: claim.order, providerRefund, pending: true };
@@ -147,6 +188,10 @@ async function processRefundClaim(claim: RefundClaim, workerId: string) {
             paymentId: claim.payment?.id,
             reason: claim.reason,
             operatorUserId: claim.operatorUserId,
+            amountCents: claim.amountCents,
+            refundRequestId: claim.refundRequestId,
+            cumulativeBeforeCents: claim.cumulativeBeforeCents,
+            cumulativeAfterCents: claim.cumulativeAfterCents,
             providerRefund,
             rawPayload: claim.rawPayload,
         });
@@ -187,9 +232,10 @@ function nextRetryStatus(job: BillingRefundJobRecord): BillingRefundJobRecord["s
 }
 
 async function markOrderRefundDeferred(order: BillingOrderRecord, error: string, status: BillingRefundJobRecord["status"]) {
+    const refund = readRefundObject(order.metadata);
     await createPostgresRepositories().billing.updateOrder(order.id, {
         status: "refunding",
-        metadata: mergeJson(order.metadata, { refund: { status, error, updatedAt: new Date().toISOString() } }),
+        metadata: mergeJson(order.metadata, { refund: { ...refund, status, error, updatedAt: new Date().toISOString() } }),
     });
 }
 
@@ -198,8 +244,9 @@ async function markOrderRefundFailed(order: BillingOrderRecord, error: string) {
         const repos = createPostgresRepositories(client);
         const current = await repos.billing.getOrderById(order.id, true);
         if (current?.status !== "refunding") return;
+        const refundSummary = readRefundSummary(current.metadata);
         await repos.billing.updateOrder(current.id, {
-            status: "paid",
+            status: refundSummary.refundedAmountCents > 0 ? "partially_refunded" : "paid",
             metadata: mergeJson(current.metadata, { refundAttempt: { ...(readRefundAttempt(current.metadata) || {}), failedAt: new Date().toISOString(), error } }),
         });
     });
@@ -216,17 +263,36 @@ function paymentRefundFromJob(job: BillingRefundJobRecord | null | undefined): P
     return {
         provider,
         status,
+        amountCents: positiveInteger(record.amountCents),
         providerRefundId: normalizeOptionalText(record.providerRefundId, 160),
         rawPayload: sanitizeJson(record.rawPayload),
     };
 }
 
-function refundJobPayload(current: JsonValue | undefined, patch: { reason?: string; operatorUserId?: string; providerRefund?: PaymentRefundResult }) {
+function refundJobPayload(
+    current: JsonValue | undefined,
+    patch: {
+        reason?: string;
+        operatorUserId?: string;
+        amountCents?: number;
+        cumulativeBeforeCents?: number;
+        cumulativeAfterCents?: number;
+        refundRequestId?: string;
+        providerRefund?: PaymentRefundResult;
+        clearProviderRefund?: boolean;
+    },
+) {
     const source = refundJobContext(current);
+    const { providerRefund: previousProviderRefund, ...sourceWithoutProviderRefund } = source;
+    const base = patch.clearProviderRefund ? sourceWithoutProviderRefund : source;
     return sanitizeJson({
-        ...source,
+        ...base,
         ...(patch.reason !== undefined ? { reason: patch.reason } : {}),
         ...(patch.operatorUserId !== undefined ? { operatorUserId: patch.operatorUserId } : {}),
+        ...(patch.amountCents !== undefined ? { amountCents: patch.amountCents } : {}),
+        ...(patch.cumulativeBeforeCents !== undefined ? { cumulativeBeforeCents: patch.cumulativeBeforeCents } : {}),
+        ...(patch.cumulativeAfterCents !== undefined ? { cumulativeAfterCents: patch.cumulativeAfterCents } : {}),
+        ...(patch.refundRequestId !== undefined ? { refundRequestId: patch.refundRequestId } : {}),
         ...(patch.providerRefund
             ? {
                   providerRefund: {
@@ -242,8 +308,31 @@ function refundJobContext(value: JsonValue | undefined): Record<string, JsonValu
     return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, JsonValue>) : {};
 }
 
+function readRefundObject(metadata: JsonValue | undefined): Record<string, JsonValue> {
+    if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return {};
+    const value = (metadata as Record<string, JsonValue>).refund;
+    return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, JsonValue>) : {};
+}
+
 function pendingRefund(claim: RefundClaim): PaymentRefundResult {
-    return { provider: claim.payment?.provider || claim.order.provider, status: "pending" };
+    return { provider: claim.payment?.provider || claim.order.provider, status: "pending", amountCents: claim.amountCents };
+}
+
+function normalizeRefundAmount(value: unknown, remainingCents: number) {
+    const amount = Number(value);
+    if (value === undefined || value === null || value === "") return remainingCents;
+    if (!Number.isSafeInteger(amount) || amount <= 0 || amount > remainingCents) throw new BillingInputError("退款额必须为合法整数，不能超出可退余额", 400);
+    return amount;
+}
+
+function positiveInteger(value: unknown) {
+    const amount = Number(value);
+    return Number.isSafeInteger(amount) && amount > 0 ? amount : undefined;
+}
+
+function positiveOrZeroInteger(value: unknown) {
+    const amount = Number(value);
+    return Number.isSafeInteger(amount) && amount >= 0 ? amount : 0;
 }
 
 function jobLeaseActive(job: BillingRefundJobRecord | null, now: Date) {

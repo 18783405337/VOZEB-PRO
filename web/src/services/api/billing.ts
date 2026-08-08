@@ -28,7 +28,7 @@ export type BillingProduct = {
     updatedAt: string;
 };
 
-export type BillingOrderStatus = "pending" | "paid" | "closed" | "canceled" | "refunding" | "refunded";
+export type BillingOrderStatus = "pending" | "paid" | "closed" | "canceled" | "refunding" | "partially_refunded" | "refunded";
 
 export type BillingOrder = {
     id: string;

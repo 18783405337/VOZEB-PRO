@@ -19,7 +19,7 @@ export async function POST(request: Request, context: RouteContext) {
 
     const { id } = await context.params;
     try {
-        const body = await readJsonBody<{ reason?: unknown; rawPayload?: unknown }>(request);
+        const body = await readJsonBody<{ reason?: unknown; amountCents?: unknown; refundRequestId?: unknown; rawPayload?: unknown }>(request);
         const result = await refundBillingOrder(id, { ...body, operatorUserId: currentUser.id });
         const providerRefund = "providerRefund" in result ? result.providerRefund : undefined;
         await safeRecordAuditLog({
@@ -31,7 +31,8 @@ export async function POST(request: Request, context: RouteContext) {
                 reason: body.reason,
                 userId: result.order.userId,
                 pointsReversed: "pointsReversed" in result ? result.pointsReversed : 0,
-                amountCents: result.order.amountCents,
+                amountCents: "providerRefund" in result ? result.providerRefund?.amountCents || body.amountCents || result.order.amountCents : result.order.amountCents,
+                refundRequestId: body.refundRequestId,
                 currency: result.order.currency,
                 providerRefund: providerRefund
                     ? {

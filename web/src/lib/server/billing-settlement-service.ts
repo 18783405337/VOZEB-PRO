@@ -29,7 +29,13 @@ export async function creditTenantSettlementReceivable(client: QueryExecutor, or
     });
 }
 
-export async function reverseTenantSettlementReceivable(client: QueryExecutor, order: BillingOrderRecord, providerRefund: PaymentRefundResult) {
+export async function reverseTenantSettlementReceivable(
+    client: QueryExecutor,
+    order: BillingOrderRecord,
+    providerRefund: PaymentRefundResult,
+    amountCents = providerRefund.amountCents || order.amountCents,
+    refundReferenceIdOverride?: string,
+) {
     if (order.collectionMode === "tenant" || !order.tenantId || order.amountCents <= 0) return undefined;
     const repository = createPostgresRepositories(client).tenantSettlement;
     const account = await repository.getOrCreateAccount({
@@ -39,11 +45,11 @@ export async function reverseTenantSettlementReceivable(client: QueryExecutor, o
     const original = await repository.getEntryByIdempotencyKey(order.tenantId, account.id, settlementCreditKey(order.id));
     if (!original) return undefined;
 
-    const refundReferenceId = providerRefund.providerRefundId || `${providerRefund.provider}:${order.id}`;
+    const refundReferenceId = refundReferenceIdOverride || providerRefund.providerRefundId || `${providerRefund.provider}:${order.id}`;
     return repository.reverse({
         tenantId: order.tenantId,
         accountId: account.id,
-        amount: original.amount,
+        amount: Math.min(original.amount, amountCents),
         referenceType: "billing-refund",
         referenceId: refundReferenceId,
         idempotencyKey: `billing-refund:${providerRefund.provider}:${refundReferenceId}:tenant-settlement-reversal`,

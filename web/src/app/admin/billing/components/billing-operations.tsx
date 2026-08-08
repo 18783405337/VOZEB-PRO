@@ -26,6 +26,7 @@ const tabOptions: Array<{ label: string; value: BillingTab }> = [
     { label: "支付配置", value: "payments" },
 ];
 const statusOptions: Array<{ label: string; value: BillingOrderStatus | "" }> = [
+    { label: "部分退款", value: "partially_refunded" },
     { label: "全部状态", value: "" },
     { label: "待支付", value: "pending" },
     { label: "已支付", value: "paid" },
@@ -91,6 +92,15 @@ import {
     formatMoney,
     formatTime,
 } from "./billing-operation-elements";
+
+function refundRemainingCents(order: BillingOrder) {
+    const metadata = order.metadata;
+    if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return order.amountCents;
+    const refund = (metadata as { refund?: unknown }).refund;
+    if (!refund || typeof refund !== "object" || Array.isArray(refund)) return order.amountCents;
+    const refundedAmountCents = Math.max(0, Math.floor(Number((refund as { refundedAmountCents?: unknown }).refundedAmountCents) || 0));
+    return Math.max(0, order.amountCents - Math.min(order.amountCents, refundedAmountCents));
+}
 
 export function BillingOperations({ initialTab = "orders", initialPaymentConfig, embedded = false, hideTabs = false }: { initialTab?: BillingTab; initialPaymentConfig?: PaymentConfigSummary; embedded?: boolean; hideTabs?: boolean }) {
     const { message, modal } = App.useApp();
@@ -190,13 +200,13 @@ export function BillingOperations({ initialTab = "orders", initialPaymentConfig,
         if (activeTab === "payments" && !paymentConfig) void loadPaymentConfig();
     }, [activeTab, loadPaymentConfig, paymentConfig]);
 
-    const runOrderAction = async (order: BillingOrder, action: "complete" | "close" | "refund", reason?: string) => {
+    const runOrderAction = async (order: BillingOrder, action: "complete" | "close" | "refund", options?: { reason?: string; amountCents?: number; refundRequestId?: string }) => {
         setActionOrderId(`${action}:${order.id}`);
         try {
             const response = await fetch(`/api/admin/billing/orders/${order.id}/${action}`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(action === "complete" ? { provider: order.provider || "manual", channel: "admin-manual", providerTradeId: order.providerOrderId || order.orderNo } : { reason }),
+                body: JSON.stringify(action === "complete" ? { provider: order.provider || "manual", channel: "admin-manual", providerTradeId: order.providerOrderId || order.orderNo } : action === "refund" ? options : { reason: options?.reason }),
             });
             const payload = (await response.json().catch(() => null)) as { error?: string } | null;
             if (!response.ok) throw new Error(payload?.error || "订单操作失败");
@@ -222,9 +232,26 @@ export function BillingOperations({ initialTab = "orders", initialPaymentConfig,
         }
 
         let reason = "";
+        let amountCents = refundRemainingCents(order);
+        const refundRequestId = globalThis.crypto?.randomUUID?.() || `${order.id}-${Date.now()}`;
         modal.confirm({
             title: action === "close" ? "关闭这笔待支付订单？" : "标记这笔订单为已退款？",
             content: (
+                <Space direction="vertical" className="w-full">
+                    {action === "refund" ? (
+                        <InputNumber
+                            min={0.01}
+                            max={refundRemainingCents(order) / 100}
+                            precision={2}
+                            defaultValue={refundRemainingCents(order) / 100}
+                            addonBefore="退款金额"
+                            addonAfter={order.currency === "CNY" ? "元" : order.currency}
+                            className="w-full"
+                            onChange={(value) => {
+                                if (typeof value === "number") amountCents = Math.round(value * 100);
+                            }}
+                        />
+                    ) : null}
                 <Input.TextArea
                     rows={3}
                     maxLength={200}
@@ -233,11 +260,12 @@ export function BillingOperations({ initialTab = "orders", initialPaymentConfig,
                         reason = event.target.value;
                     }}
                 />
+                </Space>
             ),
             okText: action === "close" ? "关闭订单" : "标记退款",
             cancelText: "取消",
             okButtonProps: { danger: action === "refund" },
-            onOk: () => runOrderAction(order, action, reason),
+            onOk: () => runOrderAction(order, action, { reason, amountCents, refundRequestId }),
         });
     };
 
@@ -411,7 +439,7 @@ export function BillingOperations({ initialTab = "orders", initialPaymentConfig,
                             </Button>
                         </>
                     ) : null}
-                    {order.status === "paid" ? (
+                    {order.status === "paid" || order.status === "partially_refunded" ? (
                         <Button danger size="small" icon={<Undo2 className="size-3.5" />} loading={actionOrderId === `refund:${order.id}`} onClick={() => confirmOrderAction(order, "refund")}>
                             退款
                         </Button>

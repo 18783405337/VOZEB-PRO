@@ -98,7 +98,7 @@ export class BillingOrderRepository {
         const result = await this.db.query<Record<string, unknown>>(
             `
             WITH scoped_orders AS MATERIALIZED (
-                SELECT id, provider, status, amount_cents
+                SELECT id, provider, status, amount_cents, metadata
                 FROM billing_orders
                 WHERE ($1::timestamptz IS NULL OR created_at >= $1)
                   AND ($2::timestamptz IS NULL OR created_at <= $2)
@@ -113,14 +113,21 @@ export class BillingOrderRepository {
                 SELECT
                     count(*) AS total,
                     count(*) FILTER (WHERE status = 'pending') AS pending,
-                    count(*) FILTER (WHERE status = 'paid') AS paid,
+                    count(*) FILTER (WHERE status IN ('paid', 'partially_refunded')) AS paid,
                     count(*) FILTER (WHERE status = 'closed') AS closed,
                     count(*) FILTER (WHERE status = 'canceled') AS canceled,
                     count(*) FILTER (WHERE status = 'refunded') AS refunded,
-                    coalesce(sum(amount_cents) FILTER (WHERE status IN ('paid', 'refunded')), 0) AS gross_amount_cents,
-                    coalesce(sum(amount_cents) FILTER (WHERE status = 'paid'), 0) AS paid_amount_cents,
+                    coalesce(sum(amount_cents) FILTER (WHERE status IN ('paid', 'partially_refunded', 'refunded')), 0) AS gross_amount_cents,
+                    coalesce(sum(amount_cents) FILTER (WHERE status IN ('paid', 'partially_refunded')), 0) AS paid_amount_cents,
                     coalesce(sum(amount_cents) FILTER (WHERE status = 'pending'), 0) AS pending_amount_cents,
-                    coalesce(sum(amount_cents) FILTER (WHERE status = 'refunded'), 0) AS refunded_amount_cents
+                    coalesce(sum(amount_cents) FILTER (WHERE status = 'refunded'), 0)
+                        + coalesce(sum(
+                            CASE
+                                WHEN metadata->'refund'->>'refundedAmountCents' ~ '^[0-9]+$'
+                                    THEN LEAST(amount_cents, (metadata->'refund'->>'refundedAmountCents')::bigint)
+                                ELSE 0
+                            END
+                        ) FILTER (WHERE status = 'partially_refunded'), 0) AS refunded_amount_cents
                 FROM scoped_orders
             ),
             payment_summary AS (
@@ -136,10 +143,17 @@ export class BillingOrderRepository {
                     provider,
                     count(*) AS total_orders,
                     count(*) FILTER (WHERE status = 'pending') AS pending_orders,
-                    count(*) FILTER (WHERE status = 'paid') AS paid_orders,
+                    count(*) FILTER (WHERE status IN ('paid', 'partially_refunded')) AS paid_orders,
                     count(*) FILTER (WHERE status = 'refunded') AS refunded_orders,
-                    coalesce(sum(amount_cents) FILTER (WHERE status = 'paid'), 0) AS paid_amount_cents,
-                    coalesce(sum(amount_cents) FILTER (WHERE status = 'refunded'), 0) AS refunded_amount_cents
+                    coalesce(sum(amount_cents) FILTER (WHERE status IN ('paid', 'partially_refunded')), 0) AS paid_amount_cents,
+                    coalesce(sum(amount_cents) FILTER (WHERE status = 'refunded'), 0)
+                        + coalesce(sum(
+                            CASE
+                                WHEN metadata->'refund'->>'refundedAmountCents' ~ '^[0-9]+$'
+                                    THEN LEAST(amount_cents, (metadata->'refund'->>'refundedAmountCents')::bigint)
+                                ELSE 0
+                            END
+                        ) FILTER (WHERE status = 'partially_refunded'), 0) AS refunded_amount_cents
                 FROM scoped_orders
                 GROUP BY provider
             ),
@@ -148,7 +162,7 @@ export class BillingOrderRepository {
                     (
                         SELECT count(*)
                         FROM scoped_orders order_row
-                        WHERE order_row.status = 'paid'
+                        WHERE order_row.status IN ('paid', 'partially_refunded')
                           AND NOT EXISTS (
                               SELECT 1
                               FROM scoped_payments payment_row
@@ -159,7 +173,7 @@ export class BillingOrderRepository {
                         SELECT count(*)
                         FROM scoped_payments payment_row
                         JOIN scoped_orders order_row ON order_row.id = payment_row.order_id
-                        WHERE payment_row.status = 'succeeded' AND order_row.status NOT IN ('paid', 'refunded')
+                        WHERE payment_row.status = 'succeeded' AND order_row.status NOT IN ('paid', 'partially_refunded', 'refunded')
                     ) AS succeeded_payments_without_paid_order,
                     (
                         SELECT count(*)

@@ -260,11 +260,27 @@ test.describe("saas billing payment chain", () => {
         const tradeId = `trade-refund-${randomUUID()}`;
         await completeBillingOrderPayment({ orderId: order.id, providerTradeId: tradeId, paidAt: new Date().toISOString() });
 
-        const refunded = await refundBillingOrder(order.id);
+        const firstRefundAmountCents = Math.max(1, Math.floor(order.amountCents / 2));
+        const partial = await refundBillingOrder(order.id, {
+            amountCents: firstRefundAmountCents,
+            refundRequestId: `e2e-partial-${randomUUID()}`,
+        });
+        const partialReplay = await refundBillingOrder(order.id, {
+            amountCents: firstRefundAmountCents,
+            refundRequestId: partial.order.metadata && typeof partial.order.metadata === "object" && !Array.isArray(partial.order.metadata)
+                ? String((partial.order.metadata as { refund?: { refundRequestId?: unknown } }).refund?.refundRequestId || "")
+                : "",
+        });
+        const refunded = await refundBillingOrder(order.id, {
+            amountCents: order.amountCents - firstRefundAmountCents,
+            refundRequestId: `e2e-final-${randomUUID()}`,
+        });
         const refundedAgain = await refundBillingOrder(order.id);
         const settlementAfter = await repos.tenantSettlement.getOrCreateAccount({ tenantId: refundTenantId, currency: "CNY" });
         const pointsAfter = (await repos.users.getById(admin.id))!.pointsBalance;
 
+        expect(partial.order).toMatchObject({ status: "partially_refunded" });
+        expect(partialReplay.order).toMatchObject({ status: "partially_refunded" });
         expect(refunded.order).toMatchObject({ status: "refunded" });
         expect(refunded.pointsReversed).toBe(product.pointsAmount);
         expect(refundedAgain.order).toMatchObject({ status: "refunded" });

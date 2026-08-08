@@ -89,7 +89,7 @@ CREATE TABLE IF NOT EXISTS billing_orders (
     metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT billing_orders_status CHECK (status IN ('pending', 'paid', 'closed', 'canceled', 'refunding', 'refunded')),
+    CONSTRAINT billing_orders_status CHECK (status IN ('pending', 'paid', 'closed', 'canceled', 'refunding', 'partially_refunded', 'refunded')),
     CONSTRAINT billing_orders_amount CHECK (amount_cents >= 0),
     CONSTRAINT billing_orders_daily_points CHECK (daily_points >= 0),
     CONSTRAINT billing_orders_kind CHECK (product_kind IN ('plan', 'points')),
@@ -108,7 +108,7 @@ ALTER TABLE billing_orders ADD COLUMN IF NOT EXISTS product_kind text NOT NULL D
 ALTER TABLE billing_orders ADD COLUMN IF NOT EXISTS daily_points numeric(18, 2) NOT NULL DEFAULT 0;
 ALTER TABLE billing_orders ALTER COLUMN plan_id DROP NOT NULL;
 ALTER TABLE billing_orders DROP CONSTRAINT IF EXISTS billing_orders_status;
-ALTER TABLE billing_orders ADD CONSTRAINT billing_orders_status CHECK (status IN ('pending', 'paid', 'closed', 'canceled', 'refunding', 'refunded'));
+ALTER TABLE billing_orders ADD CONSTRAINT billing_orders_status CHECK (status IN ('pending', 'paid', 'closed', 'canceled', 'refunding', 'partially_refunded', 'refunded'));
 ALTER TABLE billing_orders DROP CONSTRAINT IF EXISTS billing_orders_kind;
 ALTER TABLE billing_orders ADD CONSTRAINT billing_orders_kind CHECK (product_kind IN ('plan', 'points'));
 ALTER TABLE billing_orders DROP CONSTRAINT IF EXISTS billing_orders_daily_points;

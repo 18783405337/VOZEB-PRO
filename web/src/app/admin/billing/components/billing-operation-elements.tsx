@@ -461,6 +461,7 @@ export function metricTone(tone: "emerald" | "amber" | "blue" | "rose" | "slate"
 }
 
 export function statusLabel(status: BillingOrderStatus) {
+    if (status === "partially_refunded") return "部分退款";
     if (status === "pending") return "待支付";
     if (status === "paid") return "已支付";
     if (status === "refunding") return "退款处理中";
@@ -470,6 +471,7 @@ export function statusLabel(status: BillingOrderStatus) {
 }
 
 export function statusColor(status: BillingOrderStatus) {
+    if (status === "partially_refunded") return "gold";
     if (status === "pending") return "gold";
     if (status === "paid") return "green";
     if (status === "refunded") return "red";

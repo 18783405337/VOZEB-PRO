@@ -14,18 +14,21 @@ export type PaymentRefundStatus = "succeeded" | "pending" | "manual";
 export type PaymentRefundResult = {
     provider: string;
     status: PaymentRefundStatus;
+    amountCents?: number;
     providerRefundId?: string;
     rawPayload?: JsonValue;
 };
 
-type PaymentRefundOptions = {
+export type PaymentRefundOptions = {
     reason?: string;
     operatorUserId?: string;
+    amountCents?: number;
+    refundRequestId?: string;
 };
 
 export async function refundPaymentTransaction(order: BillingOrderRecord, payment: PaymentTransactionRecord | undefined, options: PaymentRefundOptions = {}): Promise<PaymentRefundResult> {
     const provider = normalizeProvider(payment?.provider || order.provider);
-    if (provider === "manual") return { provider, status: "manual", rawPayload: { mode: "manual" } };
+    if (provider === "manual") return { provider, status: "manual", amountCents: refundAmount(order, options), rawPayload: { mode: "manual" } };
     if (!payment) throw new BillingInputError("订单缺少支付流水，不能自动退款", 409);
 
     const paymentConfig = (await resolvePaymentMerchantRuntime({ order, provider })).config;
@@ -39,10 +42,10 @@ export async function refundPaymentTransaction(order: BillingOrderRecord, paymen
 export async function reconcilePaymentRefund(order: BillingOrderRecord, payment: PaymentTransactionRecord | undefined, current: PaymentRefundResult, options: PaymentRefundOptions = {}): Promise<PaymentRefundResult> {
     if (!payment) throw new BillingInputError("订单缺少支付流水，不能查询退款", 409);
     const config = (await resolvePaymentMerchantRuntime({ order, provider: current.provider })).config;
-    if (current.provider === "stripe" && current.providerRefundId) return queryStripeRefund(current.providerRefundId, config);
-    if (current.provider === "wechat") return queryWechatRefund(order, config);
+    if (current.provider === "stripe" && current.providerRefundId) return queryStripeRefund(current.providerRefundId, current.amountCents, config);
+    if (current.provider === "wechat") return queryWechatRefund(order, current.amountCents, config, options);
     if (current.provider === "payply") {
-        const queried = await queryPayplyRefund(order, payment, current, config);
+        const queried = await queryPayplyRefund(order, payment, current, config, options);
         if (queried) return queried;
     }
     return refundPaymentTransaction(order, payment, options);
@@ -55,7 +58,7 @@ async function refundStripePayment(order: BillingOrderRecord, payment: PaymentTr
 
     const params = new URLSearchParams();
     params.set(target.kind, target.id);
-    params.set("amount", String(order.amountCents));
+    params.set("amount", String(refundAmount(order, options)));
     params.set("metadata[orderId]", order.id);
     params.set("metadata[orderNo]", order.orderNo);
     params.set("metadata[vozebProOrderId]", order.id);
@@ -69,7 +72,7 @@ async function refundStripePayment(order: BillingOrderRecord, payment: PaymentTr
         headers: {
             authorization: `Bearer ${secretKey}`,
             "content-type": "application/x-www-form-urlencoded",
-            "Idempotency-Key": `vozeb-pro-refund-${order.id}`,
+            "Idempotency-Key": providerRefundRequestNo(order, options),
         },
         body: params,
     });
@@ -80,6 +83,7 @@ async function refundStripePayment(order: BillingOrderRecord, payment: PaymentTr
     return {
         provider: "stripe",
         status,
+        amountCents: refundAmount(order, options),
         providerRefundId: normalizeOptionalText(payload.id, 160),
         rawPayload: sanitizeJson(payload),
     };
@@ -91,9 +95,9 @@ async function refundAlipayPayment(order: BillingOrderRecord, payment: PaymentTr
     const gateway = getPaymentRuntimeEnv(paymentConfig, "VOZEB_PRO_ALIPAY_GATEWAY_URL") || "https://openapi.alipay.com/gateway.do";
     const bizContent: Record<string, string> = {
         out_trade_no: order.orderNo,
-        refund_amount: centsToDecimal(order.amountCents),
+        refund_amount: centsToDecimal(refundAmount(order, options)),
         refund_reason: normalizeText(options.reason, "运营退款", 200),
-        out_request_no: providerRefundRequestNo(order),
+        out_request_no: providerRefundRequestNo(order, options),
     };
     const tradeNo = normalizeProviderTradeNo(payment.providerPaymentId || payment.providerTradeId, order);
     if (tradeNo) bizContent.trade_no = tradeNo;
@@ -121,6 +125,7 @@ async function refundAlipayPayment(order: BillingOrderRecord, payment: PaymentTr
     return {
         provider: "alipay",
         status: "succeeded",
+        amountCents: refundAmount(order, options),
         providerRefundId: normalizeOptionalText(readPath(resultObject, "out_request_no") || bizContent.out_request_no, 160),
         rawPayload: sanitizeJson(payload),
     };
@@ -133,10 +138,10 @@ async function refundWechatPayment(order: BillingOrderRecord, payment: PaymentTr
     if (order.currency.toUpperCase() !== "CNY") throw new BillingInputError("微信支付退款只支持 CNY 订单", 409);
     const transactionId = normalizeProviderTradeNo(payment.providerPaymentId || payment.providerTradeId, order);
     const payload: Record<string, unknown> = {
-        out_refund_no: providerRefundRequestNo(order),
+        out_refund_no: providerRefundRequestNo(order, options),
         reason: normalizeText(options.reason, "运营退款", 80),
         amount: {
-            refund: order.amountCents,
+            refund: refundAmount(order, options),
             total: order.amountCents,
             currency: order.currency.toUpperCase(),
         },
@@ -170,6 +175,7 @@ async function refundWechatPayment(order: BillingOrderRecord, payment: PaymentTr
     return {
         provider: "wechat",
         status,
+        amountCents: refundAmount(order, options),
         providerRefundId: normalizeOptionalText(responsePayload.refund_id, 160),
         rawPayload: sanitizeJson(responsePayload),
     };
@@ -179,7 +185,7 @@ async function refundPayplyPayment(order: BillingOrderRecord, payment: PaymentTr
     const refundUrl = getPaymentRuntimeValue(paymentConfig, "VOZEB_PRO_PAYPLY_REFUND_URL", "PAYPLY_REFUND_URL");
     if (!refundUrl) throw new BillingInputError("该支付渠道未配置自动退款接口，请先配置 PayPly 退款接口后再退款", 400);
     const apiKey = requiredConfig(paymentConfig, "VOZEB_PRO_PAYPLY_API_KEY", "PAYPLY_API_KEY");
-    const idempotencyKey = providerRefundRequestNo(order);
+    const idempotencyKey = providerRefundRequestNo(order, options);
     const body = buildPayplyRefundPayload(paymentConfig, order, payment, options);
     const contentType = payplyRefundContentType(paymentConfig);
     const request = buildPayplyRequest(refundUrl, payplyRefundRequestMethod(paymentConfig), contentType, body, payplyHeaders(paymentConfig, apiKey, contentType, idempotencyKey));
@@ -193,12 +199,13 @@ async function refundPayplyPayment(order: BillingOrderRecord, payment: PaymentTr
     return {
         provider: "payply",
         status,
+        amountCents: refundAmount(order, options),
         providerRefundId: normalizeOptionalText(readConfiguredPath(paymentConfig, payload, "VOZEB_PRO_PAYPLY_REFUND_ID_FIELD", ["refundId", "refund_id", "id", "data.refundId", "data.refund_id", "data.id", "result.id"]), 160),
         rawPayload: sanitizeJson(payload),
     };
 }
 
-async function queryStripeRefund(refundId: string, config: PaymentRuntimeConfig): Promise<PaymentRefundResult> {
+async function queryStripeRefund(refundId: string, amountCents: number | undefined, config: PaymentRuntimeConfig): Promise<PaymentRefundResult> {
     const secretKey = requiredConfig(config, "VOZEB_PRO_STRIPE_SECRET_KEY", "STRIPE_SECRET_KEY");
     const response = await fetchSafeOutbound(`${stripeApiBase(config)}/v1/refunds/${encodeURIComponent(refundId)}`, {
         headers: { authorization: `Bearer ${secretKey}` },
@@ -208,15 +215,15 @@ async function queryStripeRefund(refundId: string, config: PaymentRuntimeConfig)
     if (!response.ok) throw new BillingInputError(readStripeError(payload, "Stripe 退款查询失败"), response.status >= 500 ? 502 : 400);
     const status = normalizeStripeRefundStatus(payload.status);
     if (!status) throw new BillingInputError(`Stripe 退款状态异常：${normalizeText(payload.status, "unknown", 80)}`, 502);
-    return { provider: "stripe", status, providerRefundId: normalizeOptionalText(payload.id, 160) || refundId, rawPayload: sanitizeJson(payload) };
+    return { provider: "stripe", status, amountCents, providerRefundId: normalizeOptionalText(payload.id, 160) || refundId, rawPayload: sanitizeJson(payload) };
 }
 
-async function queryWechatRefund(order: BillingOrderRecord, config: PaymentRuntimeConfig): Promise<PaymentRefundResult> {
+async function queryWechatRefund(order: BillingOrderRecord, amountCents: number | undefined, config: PaymentRuntimeConfig, options: PaymentRefundOptions): Promise<PaymentRefundResult> {
     const mchid = requiredConfig(config, "VOZEB_PRO_WECHAT_PAY_MCH_ID");
     const serialNo = requiredConfig(config, "VOZEB_PRO_WECHAT_PAY_CERT_SERIAL_NO");
     const privateKey = loadPrivateKey(config, "VOZEB_PRO_WECHAT_PAY_PRIVATE_KEY", "VOZEB_PRO_WECHAT_PAY_PRIVATE_KEY_PATH");
     const apiBase = (getPaymentRuntimeEnv(config, "VOZEB_PRO_WECHAT_PAY_API_BASE") || "https://api.mch.weixin.qq.com").replace(/\/+$/, "");
-    const path = `/v3/refund/domestic/refunds/${encodeURIComponent(providerRefundRequestNo(order))}`;
+    const path = `/v3/refund/domestic/refunds/${encodeURIComponent(providerRefundRequestNo(order, options))}`;
     const timestamp = Math.floor(Date.now() / 1000).toString();
     const nonce = randomBytes(16).toString("hex");
     const signature = signWechatRequest("GET", path, timestamp, nonce, "", privateKey);
@@ -230,10 +237,10 @@ async function queryWechatRefund(order: BillingOrderRecord, config: PaymentRunti
     if (!verifyWechatResponse(raw, response.headers, config)) throw new BillingInputError("微信支付退款查询响应验签失败", 502);
     const status = normalizeWechatRefundStatus(payload.status);
     if (!status) throw new BillingInputError(`微信支付退款状态异常：${normalizeText(payload.status, "unknown", 80)}`, 502);
-    return { provider: "wechat", status, providerRefundId: normalizeOptionalText(payload.refund_id, 160), rawPayload: sanitizeJson(payload) };
+    return { provider: "wechat", status, amountCents, providerRefundId: normalizeOptionalText(payload.refund_id, 160), rawPayload: sanitizeJson(payload) };
 }
 
-async function queryPayplyRefund(order: BillingOrderRecord, payment: PaymentTransactionRecord, current: PaymentRefundResult, config: PaymentRuntimeConfig): Promise<PaymentRefundResult | null> {
+async function queryPayplyRefund(order: BillingOrderRecord, payment: PaymentTransactionRecord, current: PaymentRefundResult, config: PaymentRuntimeConfig, options: PaymentRefundOptions): Promise<PaymentRefundResult | null> {
     const template = getPaymentRuntimeValue(config, "VOZEB_PRO_PAYPLY_REFUND_QUERY_URL", "PAYPLY_REFUND_QUERY_URL");
     if (!template) return null;
     const apiKey = requiredConfig(config, "VOZEB_PRO_PAYPLY_API_KEY", "PAYPLY_API_KEY");
@@ -244,7 +251,7 @@ async function queryPayplyRefund(order: BillingOrderRecord, payment: PaymentTran
         providerTradeId: payment.providerTradeId || "",
         providerPaymentId: payment.providerPaymentId || "",
         providerRefundId: current.providerRefundId || "",
-        refundRequestNo: providerRefundRequestNo(order),
+        refundRequestNo: providerRefundRequestNo(order, options),
     });
     const customHeader = getPaymentRuntimeEnv(config, "VOZEB_PRO_PAYPLY_API_KEY_HEADER");
     const headers = customHeader ? { [customHeader]: apiKey } : { authorization: `Bearer ${apiKey}`, "x-api-key": apiKey };
@@ -257,6 +264,7 @@ async function queryPayplyRefund(order: BillingOrderRecord, payment: PaymentTran
     return {
         provider: "payply",
         status,
+        amountCents: current.amountCents,
         providerRefundId: normalizeOptionalText(readConfiguredPath(config, payload, "VOZEB_PRO_PAYPLY_REFUND_QUERY_ID_FIELD", ["refundId", "refund_id", "id", "data.refundId", "data.id"]), 160) || current.providerRefundId,
         rawPayload: sanitizeJson(payload),
     };
@@ -277,13 +285,14 @@ function normalizeProviderTradeNo(value: unknown, order: BillingOrderRecord) {
     return id;
 }
 
-function providerRefundRequestNo(order: BillingOrderRecord) {
-    const id = normalizeText(order.id || order.orderNo, "", 80).replace(/[^a-zA-Z0-9_-]/g, "");
+function providerRefundRequestNo(order: BillingOrderRecord, options: PaymentRefundOptions = {}) {
+    const requestId = normalizeText(options.refundRequestId, "", 80).replace(/[^a-zA-Z0-9_-]/g, "");
+    const id = (requestId || order.id || order.orderNo).replace(/[^a-zA-Z0-9_-]/g, "");
     return `vozeb-pro-refund-${id || order.orderNo}`.slice(0, 64);
 }
 
 function buildPayplyRefundPayload(paymentConfig: PaymentRuntimeConfig, order: BillingOrderRecord, payment: PaymentTransactionRecord, options: PaymentRefundOptions) {
-    const refundRequestNo = providerRefundRequestNo(order);
+    const refundRequestNo = providerRefundRequestNo(order, options);
     const defaultPayload: Record<string, unknown> = {
         merchantId: getPaymentRuntimeEnv(paymentConfig, "VOZEB_PRO_PAYPLY_MERCHANT_ID") || undefined,
         orderId: order.id,
@@ -291,8 +300,8 @@ function buildPayplyRefundPayload(paymentConfig: PaymentRuntimeConfig, order: Bi
         providerOrderId: order.providerOrderId || payment.providerTradeId || order.orderNo,
         providerTradeId: payment.providerTradeId || order.providerOrderId || "",
         providerPaymentId: payment.providerPaymentId || order.providerPaymentId || "",
-        amountCents: order.amountCents,
-        amount: centsToDecimal(order.amountCents),
+        amountCents: refundAmount(order, options),
+        amount: centsToDecimal(refundAmount(order, options)),
         currency: order.currency,
         reason: normalizeText(options.reason, "运营退款", 200),
         operatorUserId: normalizeText(options.operatorUserId, "", 120),
@@ -312,8 +321,8 @@ function buildPayplyRefundPayload(paymentConfig: PaymentRuntimeConfig, order: Bi
         providerOrderId: normalizeText(defaultPayload.providerOrderId, "", 160),
         providerTradeId: normalizeText(defaultPayload.providerTradeId, "", 160),
         providerPaymentId: normalizeText(defaultPayload.providerPaymentId, "", 160),
-        amountCents: String(order.amountCents),
-        amount: centsToDecimal(order.amountCents),
+        amountCents: String(refundAmount(order, options)),
+        amount: centsToDecimal(refundAmount(order, options)),
         currency: order.currency,
         reason: normalizeText(options.reason, "运营退款", 200),
         operatorUserId: normalizeText(options.operatorUserId, "", 120),
@@ -535,6 +544,11 @@ function normalizeOptionalText(value: unknown, maxLength: number) {
 
 function centsToDecimal(cents: number) {
     return (cents / 100).toFixed(2);
+}
+
+function refundAmount(order: BillingOrderRecord, options: PaymentRefundOptions) {
+    const amount = Number(options.amountCents);
+    return Number.isSafeInteger(amount) && amount > 0 && amount <= order.amountCents ? amount : order.amountCents;
 }
 
 function alipayTimestamp(date = new Date()) {

@@ -390,4 +390,81 @@ describe("billing payment completion", () => {
         expect(mocks.getSettlementEntryByIdempotencyKey).not.toHaveBeenCalled();
         expect(mocks.reverseSettlement).not.toHaveBeenCalled();
     });
+
+    it("supports proportional partial refunds and completes the remaining refund later", async () => {
+        const paidOrder = { ...pointsOrder, status: "paid" } satisfies BillingOrderRecord;
+        mocks.order = paidOrder;
+        mocks.user = { ...baseUser, pointsBalance: 600 };
+        mocks.payments = [
+            {
+                id: "payment-partial",
+                orderId: paidOrder.id,
+                userId: paidOrder.userId,
+                provider: "manual",
+                channel: "manual",
+                status: "succeeded",
+                amountCents: paidOrder.amountCents,
+                currency: paidOrder.currency,
+                providerTradeId: "trade-partial",
+                providerPaymentId: "trade-partial",
+                createdAt: now,
+                updatedAt: now,
+            },
+        ];
+        mocks.reverseSettlement
+            .mockResolvedValueOnce({
+                applied: true,
+                account: { id: "settlement-a", availableAmount: 594 },
+                entry: { id: "settlement-reversal-one", amount: 396, entryType: "reverse", direction: "debit", reversalOfId: "settlement-credit" },
+            })
+            .mockResolvedValueOnce({
+                applied: true,
+                account: { id: "settlement-a", availableAmount: 0 },
+                entry: { id: "settlement-reversal-two", amount: 594, entryType: "reverse", direction: "debit", reversalOfId: "settlement-credit" },
+            });
+
+        const first = await refundBillingOrder(paidOrder.id, { amountCents: 396, refundRequestId: "partial-one" });
+
+        expect(first).toMatchObject({
+            order: { status: "partially_refunded" },
+            user: { pointsBalance: 400 },
+            pointsReversed: 200,
+            providerRefund: { amountCents: 396 },
+        });
+        expect(mocks.adjustPoints).toHaveBeenLastCalledWith(
+            mocks.client,
+            expect.objectContaining({ amount: -200, idempotencyKey: `billing-order:${paidOrder.id}:refund:partial-one` }),
+        );
+        expect(mocks.reverseSettlement).toHaveBeenNthCalledWith(
+            1,
+            expect.objectContaining({ amount: 396, originalEntryId: "settlement-credit" }),
+        );
+
+        const replay = await refundBillingOrder(paidOrder.id, { amountCents: 396, refundRequestId: "partial-one" });
+
+        expect(replay).toMatchObject({
+            order: { status: "partially_refunded" },
+            pointsReversed: 200,
+        });
+        expect(mocks.adjustPoints).toHaveBeenCalledTimes(1);
+        expect(mocks.reverseSettlement).toHaveBeenCalledTimes(1);
+
+        const second = await refundBillingOrder(paidOrder.id, { amountCents: 594, refundRequestId: "partial-two" });
+
+        expect(second).toMatchObject({
+            order: { status: "refunded" },
+            user: { pointsBalance: 100 },
+            pointsReversed: 500,
+            providerRefund: { amountCents: 594 },
+        });
+        expect(mocks.adjustPoints).toHaveBeenLastCalledWith(
+            mocks.client,
+            expect.objectContaining({ amount: -300, idempotencyKey: `billing-order:${paidOrder.id}:refund:partial-two` }),
+        );
+        expect(mocks.reverseSettlement).toHaveBeenNthCalledWith(
+            2,
+            expect.objectContaining({ amount: 594, originalEntryId: "settlement-credit" }),
+        );
+        expect(mocks.updatePaymentState).toHaveBeenLastCalledWith(expect.objectContaining({ status: "refunded" }));
+    });
 });

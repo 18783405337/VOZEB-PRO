@@ -70,7 +70,7 @@ export function pageResult<T>(items: T[], total: number, page: number, pageSize:
 }
 
 export function billingOrderStatusValue(value: unknown): BillingOrderStatus {
-    return value === "paid" || value === "closed" || value === "canceled" || value === "refunding" || value === "refunded" ? value : "pending";
+    return value === "paid" || value === "closed" || value === "canceled" || value === "refunding" || value === "partially_refunded" || value === "refunded" ? value : "pending";
 }
 
 export function billingProductKindValue(value: unknown): BillingProductKind {

@@ -219,14 +219,17 @@ export class TenantLedgerRepository implements ReservableAccountRepository {
                 if (original.entryType === "reverse") throw new TenantLedgerError("A reversal entry cannot be reversed", "INVALID_REVERSAL");
 
                 const reversedResult = await executor.query(
-                    `SELECT * FROM ${this.config.ledgerTable}
+                    `SELECT COALESCE(SUM(amount), 0) AS reversed_amount FROM ${this.config.ledgerTable}
                      WHERE reversal_of_id = $1 AND account_id = $2 AND tenant_id = $3
-                     LIMIT 1`,
+                    `,
                     [originalEntryId, input.accountId, input.tenantId],
                 );
-                if (reversedResult.rows[0]) throw new TenantLedgerError("Ledger entry has already been reversed", "ALREADY_REVERSED");
+                const reversedAmount = numberValue(reversedResult.rows[0]?.reversed_amount);
+                const remainingAmount = original.amount - reversedAmount;
+                if (remainingAmount <= 0) throw new TenantLedgerError("Ledger entry has already been reversed", "ALREADY_REVERSED");
+                if (input.amount > remainingAmount) throw new TenantLedgerError("Reversal amount exceeds the remaining ledger amount", "INVALID_REVERSAL");
 
-                const reversal = calculateReversal(original, account);
+                const reversal = calculateReversal(original, account, input.amount);
                 availableAmount = reversal.availableAmount;
                 reservedAmount = reversal.reservedAmount;
                 entryAmount = reversal.amount;
@@ -310,39 +313,39 @@ function validateMutation(kind: MutationKind, input: AccountMutation | (AccountM
     }
 }
 
-function calculateReversal(original: TenantLedgerEntryRecord, account: TenantAccountRecord) {
+function calculateReversal(original: TenantLedgerEntryRecord, account: TenantAccountRecord, amount: number) {
     if (original.entryType === "reserve") {
-        if (account.reservedAmount < original.amount) throw new TenantLedgerError("Reserved balance is insufficient for reversal", "INSUFFICIENT_RESERVED_BALANCE");
+        if (account.reservedAmount < amount) throw new TenantLedgerError("Reserved balance is insufficient for reversal", "INSUFFICIENT_RESERVED_BALANCE");
         return {
-            amount: original.amount,
+            amount,
             direction: "credit" as const,
-            availableAmount: account.availableAmount + original.amount,
-            reservedAmount: account.reservedAmount - original.amount,
+            availableAmount: account.availableAmount + amount,
+            reservedAmount: account.reservedAmount - amount,
         };
     }
     if (original.entryType === "release") {
-        if (account.availableAmount < original.amount) throw new TenantLedgerError("Available balance is insufficient for reversal", "INSUFFICIENT_BALANCE");
+        if (account.availableAmount < amount) throw new TenantLedgerError("Available balance is insufficient for reversal", "INSUFFICIENT_BALANCE");
         return {
-            amount: original.amount,
+            amount,
             direction: "debit" as const,
-            availableAmount: account.availableAmount - original.amount,
-            reservedAmount: account.reservedAmount + original.amount,
+            availableAmount: account.availableAmount - amount,
+            reservedAmount: account.reservedAmount + amount,
         };
     }
     if (original.entryType === "credit") {
-        if (account.availableAmount < original.amount) throw new TenantLedgerError("Available balance is insufficient for reversal", "INSUFFICIENT_BALANCE");
+        if (account.availableAmount < amount) throw new TenantLedgerError("Available balance is insufficient for reversal", "INSUFFICIENT_BALANCE");
         return {
-            amount: original.amount,
+            amount,
             direction: "debit" as const,
-            availableAmount: account.availableAmount - original.amount,
+            availableAmount: account.availableAmount - amount,
             reservedAmount: account.reservedAmount,
         };
     }
     const actualAmount = numberValue(original.metadata.actualAmount) || original.amount;
     return {
-        amount: actualAmount,
+        amount: Math.min(amount, actualAmount),
         direction: "credit" as const,
-        availableAmount: account.availableAmount + actualAmount,
+        availableAmount: account.availableAmount + Math.min(amount, actualAmount),
         reservedAmount: account.reservedAmount,
     };
 }
