@@ -112,12 +112,26 @@ describe("PostgreSQL schema lifecycle", () => {
 
         const tableNames = [...ddl.matchAll(/CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+([a-z][a-z0-9_]*)/gi)].map((match) => match[1]).sort();
         const applicationTables = ["apps", "app_versions", "tenant_apps", "tenant_app_settings", "tenant_app_pricing"];
-        expect(tableNames).toHaveLength(69);
+        const saasBillingTables = [
+            "tenant_user_wallets",
+            "tenant_user_wallet_ledger_entries",
+            "tenant_power_accounts",
+            "tenant_power_ledger_entries",
+            "tenant_settlement_accounts",
+            "tenant_settlement_ledger_entries",
+            "merchant_accounts",
+            "task_billing_reservations",
+        ];
+        expect(tableNames).toHaveLength(77);
         expect(tableNames.every((name) => name.startsWith("vozeb_pro_"))).toBe(true);
         expect(tableNames).not.toContain("vozeb_pro_check_ins");
-        for (const table of applicationTables) {
+        for (const table of [...applicationTables, ...saasBillingTables]) {
             expect(tableNames).toContain(`vozeb_pro_${table}`);
         }
+        expect(ddl).toContain("ALTER TABLE vozeb_pro_billing_orders ADD COLUMN IF NOT EXISTS collection_mode text");
+        expect(ddl).toContain("ALTER TABLE vozeb_pro_billing_orders ADD COLUMN IF NOT EXISTS merchant_account_id text REFERENCES vozeb_pro_merchant_accounts(id)");
+        expect(ddl).toContain("ALTER TABLE vozeb_pro_payment_transactions ADD COLUMN IF NOT EXISTS tenant_id text REFERENCES vozeb_pro_tenants(id)");
+        expect(ddl).toContain("ALTER TABLE vozeb_pro_billing_refund_jobs ADD COLUMN IF NOT EXISTS merchant_account_id text REFERENCES vozeb_pro_merchant_accounts(id)");
         expect(ddl).toContain("DROP TABLE IF EXISTS vozeb_pro_check_ins");
         expect(ddl).not.toContain("20260731_generation_task_recovery");
 
