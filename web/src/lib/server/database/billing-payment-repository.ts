@@ -13,6 +13,15 @@ import type {
 } from "./repository-shared";
 import { jsonParam, mapBillingReconciliationRow, mapBillingReconciliationRun, mapPaymentProviderEvent, mapPaymentTransaction, mapUserPlanAssignment, normalizePage, normalizePageSize, pageResult } from "./repository-shared";
 
+type PaymentIdentityScope = {
+    tenantId?: string | null;
+    merchantAccountId?: string | null;
+};
+
+type PaymentIdentityLookupOptions = PaymentIdentityScope & {
+    forUpdate?: boolean;
+};
+
 export class BillingPaymentRepository {
     constructor(private readonly db: QueryExecutor) {}
 
@@ -20,16 +29,19 @@ export class BillingPaymentRepository {
         const result = await this.db.query(
             `
             INSERT INTO payment_transactions (
-                id, order_id, user_id, provider, channel, status, amount_cents, currency, provider_trade_id,
-                provider_payment_id, raw_payload, paid_at, refunded_at, failed_at, created_at, updated_at
+                id, order_id, tenant_id, merchant_account_id, user_id, provider, channel, status, amount_cents,
+                currency, provider_trade_id, provider_payment_id, raw_payload, paid_at, refunded_at, failed_at,
+                created_at, updated_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
             ON CONFLICT (id) DO NOTHING
             RETURNING *
             `,
             [
                 payment.id,
                 payment.orderId,
+                payment.tenantId || null,
+                payment.merchantAccountId || null,
                 payment.userId || null,
                 payment.provider,
                 payment.channel,
@@ -88,48 +100,66 @@ export class BillingPaymentRepository {
         return pageResult(result.rows.map(mapPaymentTransaction), Number(result.rows[0]?.total_count || 0), page, pageSize);
     }
 
-    async lockPaymentIdentity(provider: string, identifiers: string[]) {
+    async lockPaymentIdentity(provider: string, identifiers: string[], scope: PaymentIdentityScope = {}) {
         const values = [...new Set(identifiers.map((item) => item.trim()).filter(Boolean))].sort();
-        for (const identifier of values) await this.db.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`${provider}:${identifier}`]);
+        const scopeKey = [
+            scope.tenantId !== undefined ? `tenant:${scope.tenantId || "legacy"}` : "",
+            scope.merchantAccountId !== undefined ? `merchant:${scope.merchantAccountId || "legacy"}` : "",
+        ]
+            .filter(Boolean)
+            .join(":");
+        for (const identifier of values) {
+            await this.db.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`${scopeKey ? `${scopeKey}:` : ""}${provider}:${identifier}`]);
+        }
     }
 
-    async getPaymentByProviderIdentifiers(provider: string, identifiers: string[], forUpdate = false) {
+    async getPaymentByProviderIdentifiers(provider: string, identifiers: string[], options: PaymentIdentityLookupOptions = {}) {
         const values = identifiers.map((item) => item.trim()).filter(Boolean);
         if (!values.length) return null;
+        const conditions = ["provider = $1", "(provider_trade_id = ANY($2::text[]) OR provider_payment_id = ANY($2::text[]))"];
+        const parameters: unknown[] = [provider, values];
+        if (options.tenantId !== undefined) {
+            parameters.push(options.tenantId || null);
+            conditions.push(`tenant_id IS NOT DISTINCT FROM $${parameters.length}::text`);
+        }
+        if (options.merchantAccountId !== undefined) {
+            parameters.push(options.merchantAccountId || null);
+            conditions.push(`merchant_account_id IS NOT DISTINCT FROM $${parameters.length}::text`);
+        }
         const result = await this.db.query(
             `
             SELECT *
             FROM payment_transactions
-            WHERE provider = $1
-              AND (provider_trade_id = ANY($2::text[]) OR provider_payment_id = ANY($2::text[]))
+            WHERE ${conditions.join("\n              AND ")}
             ORDER BY created_at DESC
             LIMIT 1
-            ${forUpdate ? "FOR UPDATE" : ""}
+            ${options.forUpdate ? "FOR UPDATE" : ""}
             `,
-            [provider, values],
+            parameters,
         );
         return result.rows[0] ? mapPaymentTransaction(result.rows[0]) : null;
     }
 
-    async getPaymentByProviderIdentifier(provider: string, identifier: string, forUpdate = false) {
-        return this.getPaymentByProviderIdentifiers(provider, [identifier], forUpdate);
+    async getPaymentByProviderIdentifier(provider: string, identifier: string, options: PaymentIdentityLookupOptions = {}) {
+        return this.getPaymentByProviderIdentifiers(provider, [identifier], options);
     }
 
     async createReconciliationRun(run: BillingReconciliationRunRecord, rows: BillingReconciliationRowRecord[]) {
         const result = await this.db.query(
             `
             INSERT INTO billing_reconciliation_runs (
-                id, provider, source, status, total_rows, matched_rows, ok_rows, issue_rows,
+                id, tenant_id, provider, source, status, total_rows, matched_rows, ok_rows, issue_rows,
                 statement_paid_amount_cents, statement_refunded_amount_cents, local_matched_amount_cents,
                 difference_amount_cents, imported_by_user_id, imported_by_username, file_name, file_hash, note,
                 metadata, created_at, updated_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
-            ON CONFLICT (provider, file_hash) WHERE file_hash IS NOT NULL AND file_hash <> '' DO NOTHING
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+            ON CONFLICT DO NOTHING
             RETURNING *
             `,
             [
                 run.id,
+                run.tenantId || null,
                 run.provider,
                 run.source,
                 run.status,
@@ -159,9 +189,9 @@ export class BillingPaymentRepository {
                     id, run_id, row_number, row_key, provider, order_no, provider_order_id,
                     provider_payment_id, statement_status, amount_cents, currency, local_order_id,
                     local_order_no, local_order_status, local_amount_cents, local_currency,
-                    issue_codes, issues, created_at, updated_at
+                    tenant_id, merchant_account_id, collection_mode, issue_codes, issues, created_at, updated_at
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
                 `,
                 [
                     row.id,
@@ -180,6 +210,9 @@ export class BillingPaymentRepository {
                     row.localOrderStatus || null,
                     row.localAmountCents ?? null,
                     row.localCurrency || null,
+                    row.tenantId || null,
+                    row.merchantAccountId || null,
+                    row.collectionMode || null,
                     jsonParam(row.issueCodes),
                     jsonParam(row.issues),
                     row.createdAt,
@@ -190,12 +223,12 @@ export class BillingPaymentRepository {
         return mapBillingReconciliationRun(result.rows[0]);
     }
 
-    async getReconciliationRunByFileHash(provider: string, fileHash: string) {
-        const result = await this.db.query("SELECT * FROM billing_reconciliation_runs WHERE provider = $1 AND file_hash = $2 LIMIT 1", [provider, fileHash]);
+    async getReconciliationRunByFileHash(provider: string, fileHash: string, tenantId?: string) {
+        const result = await this.db.query("SELECT * FROM billing_reconciliation_runs WHERE provider = $1 AND file_hash = $2 AND tenant_id IS NOT DISTINCT FROM $3 LIMIT 1", [provider, fileHash, tenantId || null]);
         return result.rows[0] ? mapBillingReconciliationRun(result.rows[0]) : null;
     }
 
-    async listReconciliationRuns(input: PageInput & { provider?: string } = {}): Promise<PageResult<BillingReconciliationRunRecord>> {
+    async listReconciliationRuns(input: PageInput & { provider?: string; tenantId?: string } = {}): Promise<PageResult<BillingReconciliationRunRecord>> {
         const page = normalizePage(input.page);
         const pageSize = normalizePageSize(input.pageSize);
         const result = await this.db.query(
@@ -203,16 +236,17 @@ export class BillingPaymentRepository {
             SELECT *, count(*) OVER() AS total_count
             FROM billing_reconciliation_runs
             WHERE ($1::text IS NULL OR provider = $1)
+              AND ($2::text IS NULL OR tenant_id = $2)
             ORDER BY created_at DESC
-            LIMIT $2 OFFSET $3
+            LIMIT $3 OFFSET $4
             `,
-            [input.provider || null, pageSize, (page - 1) * pageSize],
+            [input.provider || null, input.tenantId || null, pageSize, (page - 1) * pageSize],
         );
         return pageResult(result.rows.map(mapBillingReconciliationRun), Number(result.rows[0]?.total_count || 0), page, pageSize);
     }
 
-    async getReconciliationRun(id: string) {
-        const result = await this.db.query("SELECT * FROM billing_reconciliation_runs WHERE id = $1", [id]);
+    async getReconciliationRun(id: string, tenantId?: string) {
+        const result = await this.db.query("SELECT * FROM billing_reconciliation_runs WHERE id = $1 AND ($2::text IS NULL OR tenant_id = $2)", [id, tenantId || null]);
         return result.rows[0] ? mapBillingReconciliationRun(result.rows[0]) : null;
     }
 

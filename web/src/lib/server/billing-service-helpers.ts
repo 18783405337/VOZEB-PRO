@@ -168,8 +168,10 @@ export function generateOrderNo() {
     return `VZ${stamp}${randomBytes(4).toString("hex").toUpperCase()}`;
 }
 
-export function deterministicPaymentId(provider: string, providerTradeId: string) {
-    return `pay_${createHash("sha256").update(`${provider}:${providerTradeId}`).digest("hex").slice(0, 32)}`;
+export function deterministicPaymentId(provider: string, providerTradeId: string, scope: { tenantId?: string | null; merchantAccountId?: string | null } = {}) {
+    const tenantScope = scope.tenantId || "global";
+    const merchantScope = scope.merchantAccountId || "legacy";
+    return `pay_${createHash("sha256").update(`${tenantScope}:${merchantScope}:${provider}:${providerTradeId}`).digest("hex").slice(0, 32)}`;
 }
 
 export function orderExpiresMinutes() {

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { PAYMENT_PROVIDER_DEFINITIONS, type PaymentProviderDefinition } from "@/lib/payment-config-types";
 import { BillingInputError } from "@/lib/server/billing-errors";
-import { encryptSecretValue } from "@/lib/server/secret-crypto";
+import { decryptSecretValue, encryptSecretValue } from "@/lib/server/secret-crypto";
 import type {
     MerchantAccountEnvironment,
     MerchantAccountOwnerScope,
@@ -19,6 +19,10 @@ export type MerchantAccountSummary = {
     environment: "test" | "production";
     status: "enabled" | "disabled";
     configuredFields: string[];
+};
+
+export type ResolvedMerchantAccount = MerchantAccountRecord & {
+    credentials: Record<string, string>;
 };
 
 export type SaveMerchantAccountInput = {
@@ -60,6 +64,35 @@ export class MerchantAccountService implements MerchantAccountServicePort {
         return toSummary(merchant);
     }
 
+    async resolveForCheckout(input: {
+        id?: string;
+        scope?: MerchantAccountOwnerScope;
+        provider: string;
+        environment: MerchantAccountEnvironment;
+    }): Promise<ResolvedMerchantAccount> {
+        const record = input.id
+            ? await this.repository.getById(input.id)
+            : input.scope
+              ? await this.repository.getEnabled(input.scope, input.provider, input.environment)
+              : null;
+        if (
+            !record ||
+            record.status !== "enabled" ||
+            record.provider !== input.provider ||
+            record.environment !== input.environment ||
+            (input.scope && !sameScope(record, input.scope))
+        ) {
+            throw new BillingInputError("Merchant account is not configured.", 409, "MERCHANT_ACCOUNT_NOT_CONFIGURED");
+        }
+        return resolveCredentials(record);
+    }
+
+    async resolveForWebhook(input: { provider: string; environment: MerchantAccountEnvironment; webhookIdentity: string }): Promise<ResolvedMerchantAccount> {
+        const record = await this.repository.getEnabledByWebhookIdentity(input.provider, input.environment, input.webhookIdentity);
+        if (!record) throw new BillingInputError("Merchant account is not configured.", 404, "MERCHANT_WEBHOOK_IDENTITY_UNKNOWN");
+        return resolveCredentials(record);
+    }
+
     private async saveRecord(scope: MerchantAccountOwnerScope, input: SaveMerchantAccountInput, status: MerchantAccountStatus, bootstrapIdempotencyKey?: string) {
         const definition = findProviderDefinition(input.provider);
         const credentials = normalizeCredentials(definition, input.credentials);
@@ -79,6 +112,20 @@ export class MerchantAccountService implements MerchantAccountServicePort {
         };
         return this.repository.save(record);
     }
+}
+
+function resolveCredentials(record: MerchantAccountRecord): ResolvedMerchantAccount {
+        const decrypted = decryptSecretValue(record.encryptedConfig);
+        let credentials: unknown;
+        try {
+            credentials = JSON.parse(decrypted);
+        } catch {
+            throw new BillingInputError("Merchant account configuration is invalid.", 409, "MERCHANT_ACCOUNT_INVALID");
+        }
+        if (!credentials || typeof credentials !== "object" || Array.isArray(credentials)) {
+            throw new BillingInputError("Merchant account configuration is invalid.", 409, "MERCHANT_ACCOUNT_INVALID");
+        }
+        return { ...record, credentials: credentials as Record<string, string> };
 }
 
 function findProviderDefinition(provider: string) {
@@ -125,4 +172,8 @@ function toSummary(record: MerchantAccountRecord): MerchantAccountSummary {
         status: record.status,
         configuredFields: [...record.configuredFields],
     };
+}
+
+function sameScope(record: MerchantAccountRecord, scope: MerchantAccountOwnerScope) {
+    return record.ownerType === scope.ownerType && record.ownerId === scope.ownerId && (record.tenantId || undefined) === (scope.tenantId || undefined);
 }

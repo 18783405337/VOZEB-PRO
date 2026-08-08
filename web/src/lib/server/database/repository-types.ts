@@ -323,6 +323,7 @@ export type AuditLogRecord = {
 export type BillingOrderRecord = {
     id: string;
     orderNo: string;
+    tenantId?: string;
     productId?: string;
     userId?: string;
     userAccountId?: string;
@@ -349,8 +350,12 @@ export type BillingOrderRecord = {
     expiresAt?: string;
     paidAt?: string;
     closedAt?: string;
+    collectionMode?: "platform" | "tenant";
+    merchantAccountId?: string;
+    beneficiaryType?: "platform" | "tenant";
     pricingSnapshot?: JsonValue;
     metadata?: JsonValue;
+    commercialSnapshot?: JsonValue;
     createdAt: string;
     updatedAt: string;
 };
@@ -530,6 +535,8 @@ export type BillingProductRecord = {
 export type PaymentTransactionRecord = {
     id: string;
     orderId: string;
+    tenantId?: string;
+    merchantAccountId?: string;
     userId?: string;
     provider: string;
     channel: string;
@@ -548,6 +555,7 @@ export type PaymentTransactionRecord = {
 
 export type BillingReconciliationRunRecord = {
     id: string;
+    tenantId?: string;
     provider: string;
     source: BillingReconciliationSource;
     status: BillingReconciliationRunStatus;
@@ -586,6 +594,9 @@ export type BillingReconciliationRowRecord = {
     localOrderStatus?: string;
     localAmountCents?: number;
     localCurrency?: string;
+    tenantId?: string;
+    merchantAccountId?: string;
+    collectionMode?: "platform" | "tenant";
     issueCodes: JsonValue;
     issues: JsonValue;
     createdAt: string;

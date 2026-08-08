@@ -185,6 +185,66 @@ describe("tenant ledger repositories", () => {
         expect(new TenantLedgerError("x", "ALREADY_REVERSED")).toBeInstanceOf(Error);
     });
 
+    it("credits a settlement receivable and reverses the exact credit entry", async () => {
+        const creditedAccount = accountRow({ id: "settlement-a", currency: "CNY", available_amount: 140, version: 1 });
+        const creditEntry = ledgerRow({
+            id: "settlement-credit",
+            account_id: "settlement-a",
+            entry_type: "credit",
+            direction: "credit",
+            amount: 40,
+            idempotency_key: "billing-order:order-a:settlement-credit",
+        });
+        const reversedAccount = accountRow({ id: "settlement-a", currency: "CNY", available_amount: 100, version: 2 });
+        const query = vi.fn()
+            .mockResolvedValueOnce(queryResult([accountRow({ id: "settlement-a", currency: "CNY" })]))
+            .mockResolvedValueOnce(queryResult([]))
+            .mockResolvedValueOnce(queryResult([creditEntry]))
+            .mockResolvedValueOnce(queryResult([creditedAccount]))
+            .mockResolvedValueOnce(queryResult([creditedAccount]))
+            .mockResolvedValueOnce(queryResult([]))
+            .mockResolvedValueOnce(queryResult([creditEntry]))
+            .mockResolvedValueOnce(queryResult([]))
+            .mockResolvedValueOnce(
+                queryResult([
+                    ledgerRow({
+                        id: "settlement-reversal",
+                        account_id: "settlement-a",
+                        entry_type: "reverse",
+                        direction: "debit",
+                        amount: 40,
+                        reversal_of_id: "settlement-credit",
+                        idempotency_key: "billing-refund:refund-a:settlement-reversal",
+                    }),
+                ]),
+            )
+            .mockResolvedValueOnce(queryResult([reversedAccount]));
+        const repository = new TenantSettlementRepository({ query } as unknown as QueryExecutor);
+
+        const credited = await repository.credit({
+            tenantId: "tenant-a",
+            accountId: "settlement-a",
+            amount: 40,
+            referenceType: "billing-order",
+            referenceId: "order-a",
+            idempotencyKey: "billing-order:order-a:settlement-credit",
+        });
+        const reversed = await repository.reverse({
+            tenantId: "tenant-a",
+            accountId: "settlement-a",
+            amount: 40,
+            referenceType: "billing-refund",
+            referenceId: "refund-a",
+            idempotencyKey: "billing-refund:refund-a:settlement-reversal",
+            originalEntryId: credited.entry.id,
+        });
+
+        expect(credited.account.availableAmount).toBe(140);
+        expect(credited.entry).toMatchObject({ entryType: "credit", direction: "credit" });
+        expect(reversed.account.availableAmount).toBe(100);
+        expect(reversed.entry).toMatchObject({ entryType: "reverse", direction: "debit", reversalOfId: "settlement-credit" });
+    });
+
     it("creates a wallet account with a tenant-scoped unique identity", async () => {
         const query = vi.fn()
             .mockResolvedValueOnce(queryResult([]))
@@ -201,5 +261,20 @@ describe("tenant ledger repositories", () => {
         expect(account.id).toBe("wallet-new");
         expect(query.mock.calls[1]?.[0]).toContain("ON CONFLICT DO NOTHING");
         expect(query.mock.calls[1]?.[1]).toEqual(expect.arrayContaining(["tenant-b", "user-b", "CNY", 123]));
+    });
+
+    it("lists only accounts owned by the requested tenant", async () => {
+        const query = vi.fn().mockResolvedValue(
+            queryResult([
+                accountRow({ id: "wallet-a", tenant_id: "tenant-a", updated_at: 20 }),
+                accountRow({ id: "wallet-b", tenant_id: "tenant-a", updated_at: 10 }),
+            ]),
+        );
+        const repository = new TenantWalletRepository({ query } as unknown as QueryExecutor);
+
+        await expect(repository.listAccounts("tenant-a")).resolves.toHaveLength(2);
+
+        expect(query).toHaveBeenCalledWith(expect.stringContaining("WHERE tenant_id = $1"), ["tenant-a"]);
+        expect(query.mock.calls[0]?.[0]).toContain("ORDER BY updated_at DESC");
     });
 });

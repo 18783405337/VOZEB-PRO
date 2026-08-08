@@ -5,6 +5,46 @@ import { calculateBillingPrice, selectCurrentPromotion, type CouponPriceRule, ty
 import { createPostgresRepositories, withPostgresTransaction, type BillingOrderRecord, type BillingProductRecord, type CouponTemplateRecord, type JsonValue, type QueryExecutor, type UserCouponRecord } from "@/lib/server/database";
 import { assertBillingDatabaseReady, normalizeId, normalizePositiveInteger } from "@/lib/server/billing-service-helpers";
 
+export type CommercialOrderSnapshot = {
+    tenantId: string;
+    collectionMode: "platform" | "tenant";
+    merchantAccountId: string;
+    beneficiaryType: "platform" | "tenant";
+    currency: string;
+    tenantSaleAmount: number;
+    platformCostAmount: number;
+    product: { id: string; name: string };
+};
+
+export async function buildCommercialOrderSnapshot(input: {
+    db: QueryExecutor;
+    tenantId: string;
+    collectionMode: "platform" | "tenant";
+    provider: string;
+    environment: "test" | "production";
+    product: Pick<BillingProductRecord, "id" | "name" | "currency">;
+    tenantSaleAmount: number;
+    platformCostAmount: number;
+}): Promise<CommercialOrderSnapshot> {
+    const repositories = createPostgresRepositories(input.db);
+    const scope =
+        input.collectionMode === "tenant"
+            ? { ownerType: "tenant" as const, ownerId: input.tenantId, tenantId: input.tenantId }
+            : { ownerType: "platform" as const, ownerId: "platform" };
+    const merchant = await repositories.merchantAccounts.getEnabled(scope, input.provider, input.environment);
+    if (!merchant) throw new BillingInputError("Merchant account is not configured.", 409, "MERCHANT_ACCOUNT_NOT_CONFIGURED");
+    return {
+        tenantId: input.tenantId,
+        collectionMode: input.collectionMode,
+        merchantAccountId: merchant.id,
+        beneficiaryType: "tenant",
+        currency: input.product.currency,
+        tenantSaleAmount: input.tenantSaleAmount,
+        platformCostAmount: input.platformCostAmount,
+        product: { id: input.product.id, name: input.product.name },
+    };
+}
+
 export async function quoteBillingOrder(input: { userId: string; productId?: unknown; quantity?: unknown; userCouponId?: unknown }) {
     await assertBillingDatabaseReady();
     return withPostgresTransaction(async (client) => {

@@ -2,6 +2,7 @@ import { createPostgresRepositories, ensurePostgresSchema, getPostgresConnection
 import { readJsonDataFile, writeJsonDataFile } from "@/lib/server/data-adapter";
 import { BillingInputError } from "@/lib/server/billing-errors";
 import { MerchantAccountService, type MerchantAccountSummary } from "@/lib/server/payment/merchant-account-service";
+import type { ResolvedMerchantAccount } from "@/lib/server/payment/merchant-account-service";
 import { decryptSecretValue, encryptSecretValue } from "@/lib/server/secret-crypto";
 import { PAYMENT_PROVIDER_DEFINITIONS, type PaymentProviderConfigField, type PaymentProviderId, type SavedPaymentConfig, type SavedPaymentProviderConfig } from "@/lib/payment-config-types";
 
@@ -127,7 +128,7 @@ export async function bootstrapLegacyPaymentMerchantAccounts(input: {
     const summaries: MerchantAccountSummary[] = [];
 
     for (const definition of PAYMENT_PROVIDER_DEFINITIONS) {
-        const saved = runtimeConfig.saved.providers[definition.id];
+        const saved = runtimeConfig.saved.providers[definition.id] || (definition.id === "manual" ? { enabled: true, values: {} } : undefined);
         if (!saved) continue;
         const credentials = Object.fromEntries(Object.entries(saved.values).filter(([, value]) => Boolean(value?.trim())));
         const status = definition.id === "manual" || saved.enabled ? "enabled" : "disabled";
@@ -147,6 +148,10 @@ export async function bootstrapLegacyPaymentMerchantAccounts(input: {
     }
 
     return summaries;
+}
+
+export function paymentMerchantEnvironment(value = process.env.VOZEB_PRO_PAYMENT_ENVIRONMENT): "test" | "production" {
+    return value?.trim().toLowerCase() === "test" ? "test" : "production";
 }
 
 export function getPaymentRuntimeEnv(config: PaymentRuntimeConfig, name: string) {
@@ -173,6 +178,23 @@ export function isPaymentRuntimeProviderCheckoutReady(config: PaymentRuntimeConf
         const field = definition.fields.find((item) => item.key === key);
         return Boolean(field && fieldHasRuntimeValue(config, field));
     });
+}
+
+export function buildPaymentRuntimeConfigFromMerchant(merchant: ResolvedMerchantAccount): PaymentRuntimeConfig {
+    const definition = PAYMENT_PROVIDER_DEFINITIONS.find((item) => item.id === merchant.provider);
+    if (!definition) throw new BillingInputError(`Unsupported payment provider: ${merchant.provider}`);
+    const values = { ...merchant.credentials };
+    const valuesByEnvName: Record<string, string> = {};
+    for (const field of definition.fields) {
+        const value = values[field.key]?.trim();
+        if (!value) continue;
+        for (const envName of field.envNames) valuesByEnvName[envName] = value;
+    }
+    return {
+        saved: { providers: { [definition.id]: { enabled: true, values } } },
+        valuesByEnvName,
+        providers: { [definition.id]: { enabled: true, saved: true } },
+    };
 }
 
 export function fieldHasRuntimeValue(config: PaymentRuntimeConfig, field: PaymentProviderConfigField) {

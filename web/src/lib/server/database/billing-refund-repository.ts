@@ -7,6 +7,8 @@ export type BillingRefundJobRecord = {
     id: string;
     orderId: string;
     paymentId?: string;
+    tenantId?: string;
+    merchantAccountId?: string;
     provider: string;
     status: BillingRefundJobStatus;
     providerRefundId?: string;
@@ -33,11 +35,13 @@ export class BillingRefundRepository {
     async upsert(job: BillingRefundJobRecord) {
         const result = await this.db.query(
             `INSERT INTO billing_refund_jobs (
-                id, order_id, payment_id, provider, status, provider_refund_id, attempts, max_attempts,
+                id, order_id, payment_id, tenant_id, merchant_account_id, provider, status, provider_refund_id, attempts, max_attempts,
                 next_attempt_at, last_error, raw_payload, worker_id, lease_until, completed_at, created_at, updated_at
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
              ON CONFLICT (order_id) DO UPDATE SET
                 payment_id = COALESCE(EXCLUDED.payment_id, billing_refund_jobs.payment_id),
+                tenant_id = COALESCE(billing_refund_jobs.tenant_id, EXCLUDED.tenant_id),
+                merchant_account_id = COALESCE(billing_refund_jobs.merchant_account_id, EXCLUDED.merchant_account_id),
                 provider = EXCLUDED.provider,
                 status = EXCLUDED.status,
                 provider_refund_id = COALESCE(EXCLUDED.provider_refund_id, billing_refund_jobs.provider_refund_id),
@@ -55,6 +59,8 @@ export class BillingRefundRepository {
                 job.id,
                 job.orderId,
                 job.paymentId || null,
+                job.tenantId || null,
+                job.merchantAccountId || null,
                 job.provider,
                 job.status,
                 job.providerRefundId || null,
@@ -154,6 +160,8 @@ function mapBillingRefundJob(row: Record<string, unknown>): BillingRefundJobReco
         id: stringValue(row.id),
         orderId: stringValue(row.order_id),
         paymentId: optionalString(row.payment_id),
+        tenantId: optionalString(row.tenant_id),
+        merchantAccountId: optionalString(row.merchant_account_id),
         provider: stringValue(row.provider),
         status: isStatus(status) ? status : "failed",
         providerRefundId: optionalString(row.provider_refund_id),

@@ -2,7 +2,7 @@ import { createSign, generateKeyPairSync } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import type { PaymentRuntimeConfig } from "./payment-config-store";
-import { resolveWebhookAdapter } from "./payment-webhook-adapters";
+import { identifyWebhookMerchant, resolveWebhookAdapter } from "./payment-webhook-adapters";
 
 const alipayKeyPair = generateKeyPairSync("rsa", { modulusLength: 2048 });
 const alipayPublicKey = alipayKeyPair.publicKey.export({ type: "spki", format: "pem" }).toString();
@@ -31,6 +31,25 @@ describe("Alipay payment webhook adapter", () => {
         const parsed = resolveWebhookAdapter("alipay").parse("alipay", params.toString(), new Headers(), alipayConfig());
 
         expect(parsed.signatureValid).toBe(false);
+    });
+});
+
+describe("payment webhook merchant identification", () => {
+    it("uses the provider-controlled merchant identity header and preserves the declared environment", () => {
+        expect(
+            identifyWebhookMerchant({
+                provider: "payply",
+                rawBody: JSON.stringify({ tenantId: "spoofed-tenant", merchantId: "untrusted-merchant" }),
+                headers: new Headers({
+                    "x-vozeb-pro-webhook-identity": "merchant-tenant-a",
+                    "x-vozeb-pro-payment-environment": "test",
+                }),
+            }),
+        ).toEqual({
+            provider: "payply",
+            environment: "test",
+            webhookIdentity: "merchant-tenant-a",
+        });
     });
 });
 

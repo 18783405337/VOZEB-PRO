@@ -11,7 +11,7 @@ describe("BillingOrderRepository.listOrders", () => {
         await repository.listOrders({ keyword: "0001", page: 1, pageSize: 20 });
 
         expect(String(query.mock.calls[0]?.[0])).toContain("lpad(users.account_id::text, 4, '0') LIKE $6");
-        expect(query.mock.calls[0]?.[1]).toEqual([null, null, null, null, "0001", "%0001%", 20, 0]);
+        expect(query.mock.calls[0]?.[1]).toEqual([null, null, null, null, "0001", "%0001%", 20, 0, null]);
     });
 });
 

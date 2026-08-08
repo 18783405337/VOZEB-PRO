@@ -26,6 +26,7 @@ import {
     reconcilePaymentStatementRows,
     reconciliationLookupCacheKey,
     statementIdentifiers,
+    type BillingReconciliationScope,
     type BillingReconciliationActor,
     type LocalBillingReconciliationRecord,
     type PaymentStatementRow,
@@ -44,10 +45,10 @@ type ListBillingReconciliationRunsInput = {
     provider?: unknown;
 };
 
-export type { BillingReconciliationActor, LocalBillingReconciliationRecord, PaymentStatementRow } from "./payment-reconciliation-core";
+export type { BillingReconciliationActor, BillingReconciliationScope, LocalBillingReconciliationRecord, PaymentStatementRow } from "./payment-reconciliation-core";
 export { createBillingReconciliationPersistenceRecords, parsePaymentStatementCsv, reconcilePaymentStatementRows } from "./payment-reconciliation-core";
 
-export async function listBillingReconciliationRuns(input: ListBillingReconciliationRunsInput = {}) {
+export async function listBillingReconciliationRuns(input: ListBillingReconciliationRunsInput = {}, scope: BillingReconciliationScope = {}) {
     if (!isPostgresDatabaseEnabled()) throw new BillingInputError("支付对账需要启用 PostgreSQL", 501);
     await ensurePostgresSchema();
     const provider = normalizeOptionalProvider(input.provider);
@@ -55,33 +56,36 @@ export async function listBillingReconciliationRuns(input: ListBillingReconcilia
         page: normalizeInteger(input.page, 1, 1, 10_000),
         pageSize: normalizeInteger(input.pageSize, 10, 1, 50),
         provider,
+        tenantId: normalizeOptionalId(scope.tenantId),
     });
 }
 
-export async function getBillingReconciliationRun(id: string): Promise<BillingReconciliationResult | null> {
+export async function getBillingReconciliationRun(id: string, scope: BillingReconciliationScope = {}): Promise<BillingReconciliationResult | null> {
     if (!isPostgresDatabaseEnabled()) throw new BillingInputError("支付对账需要启用 PostgreSQL", 501);
     await ensurePostgresSchema();
     const repos = createPostgresRepositories();
-    const run = await repos.billing.getReconciliationRun(normalizeText(id, "", 120));
+    const run = await repos.billing.getReconciliationRun(normalizeText(id, "", 120), normalizeOptionalId(scope.tenantId));
     if (!run) return null;
     const rows = await repos.billing.listReconciliationRows({ runId: run.id, page: 1, pageSize: MAX_STATEMENT_ROWS });
     return buildStoredReconciliationResult(run, rows.items);
 }
 
-export async function importBillingStatement(input: ReconcileBillingStatementInput, actor: BillingReconciliationActor = {}): Promise<BillingReconciliationResult> {
+export async function importBillingStatement(input: ReconcileBillingStatementInput, actor: BillingReconciliationActor = {}, scope: BillingReconciliationScope = {}): Promise<BillingReconciliationResult> {
     if (!isPostgresDatabaseEnabled()) throw new BillingInputError("支付对账需要启用 PostgreSQL", 501);
     await ensurePostgresSchema();
     const provider = normalizeProvider(input.provider);
     const csvText = normalizeText(input.csvText, "", 200_000);
     const fileHash = createHash("sha256").update(csvText, "utf8").digest("hex");
     const repos = createPostgresRepositories();
-    if (await repos.billing.getReconciliationRunByFileHash(provider, fileHash)) throw new BillingInputError("该支付渠道的同一账单文件已经导入", 409);
-    const result = await reconcileBillingStatement({ ...input, provider, csvText });
+    const tenantId = normalizeOptionalId(scope.tenantId);
+    if (await repos.billing.getReconciliationRunByFileHash(provider, fileHash, tenantId)) throw new BillingInputError("该支付渠道的同一账单文件已经导入", 409);
+    const result = await reconcileBillingStatement({ ...input, provider, csvText }, scope);
     const { run, rows } = createBillingReconciliationPersistenceRecords(result, {
         actor,
         fileName: input.fileName,
         fileHash,
         note: input.note,
+        scope,
     });
     const created = await withPostgresTransaction(async (client) => {
         return createPostgresRepositories(client).billing.createReconciliationRun(run, rows);
@@ -90,7 +94,7 @@ export async function importBillingStatement(input: ReconcileBillingStatementInp
     return { ...result, runId: run.id, source: run.source, fileName: run.fileName, importedByUsername: run.importedByUsername };
 }
 
-export async function reconcileBillingStatement(input: ReconcileBillingStatementInput): Promise<BillingReconciliationResult> {
+export async function reconcileBillingStatement(input: ReconcileBillingStatementInput, scope: BillingReconciliationScope = {}): Promise<BillingReconciliationResult> {
     if (!isPostgresDatabaseEnabled()) throw new BillingInputError("支付对账需要启用 PostgreSQL", 501);
     await ensurePostgresSchema();
     const provider = normalizeProvider(input.provider);
@@ -116,15 +120,28 @@ export async function reconcileBillingStatement(input: ReconcileBillingStatement
     async function findLocalOrder(row: PaymentStatementRow) {
         if (row.orderNo) {
             const exact = await repos.billing.getOrderByOrderNo(row.orderNo);
-            if (exact && localOrderMatchesStatement(exact, row)) return exact;
+            if (exact && belongsToScope(exact) && localOrderMatchesStatement(exact, row)) return exact;
         }
         for (const identifier of statementIdentifiers(row)) {
-            const result = await repos.billing.listOrders({ keyword: identifier, page: 1, pageSize: 10 });
-            const exact = result.items.find((order) => localOrderMatchesStatement(order, row));
+            const result = await repos.billing.listOrders({ keyword: identifier, page: 1, pageSize: 10, tenantId: normalizeOptionalId(scope.tenantId) });
+            const exact = result.items.find((order) => belongsToScope(order) && localOrderMatchesStatement(order, row));
             if (exact) return exact;
-            const payment = await repos.billing.getPaymentByProviderIdentifier(row.provider, identifier);
-            if (payment) return repos.billing.getOrderById(payment.orderId);
+            const payment = await repos.billing.getPaymentByProviderIdentifier(row.provider, identifier, {
+                tenantId: normalizeOptionalId(scope.tenantId),
+            });
+            if (payment) {
+                const paymentOrder = await repos.billing.getOrderById(payment.orderId);
+                if (paymentOrder && belongsToScope(paymentOrder)) return paymentOrder;
+            }
         }
         return undefined;
     }
+
+    function belongsToScope(order: BillingOrderRecord) {
+        return !scope.tenantId || order.tenantId === scope.tenantId;
+    }
+}
+
+function normalizeOptionalId(value: unknown) {
+    return normalizeText(value, "", 120) || undefined;
 }

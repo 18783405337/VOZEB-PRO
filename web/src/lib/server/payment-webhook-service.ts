@@ -3,9 +3,10 @@ import { randomUUID } from "node:crypto";
 import { BillingInputError, isBillingInputError } from "@/lib/server/billing-errors";
 import { completeBillingOrderPayment } from "@/lib/server/billing-service";
 import { createPostgresRepositories, ensurePostgresSchema, isPostgresDatabaseEnabled, type JsonValue } from "@/lib/server/database";
-import { getPaymentRuntimeConfig } from "@/lib/server/payment-config-store";
+import type { ResolvedMerchantAccount } from "@/lib/server/payment/merchant-account-service";
 import { verifyPaymentTransaction } from "@/lib/server/payment-transaction-verification";
-import { deterministicEventId, normalizeProvider, parseFallbackEvent, resolveWebhookAdapter, sanitizeJson, type ParsedPaymentWebhook } from "./payment-webhook-adapters";
+import { identifyWebhookMerchant, deterministicEventId, normalizeProvider, parseFallbackEvent, resolveWebhookAdapter, sanitizeJson, type ParsedPaymentWebhook } from "./payment-webhook-adapters";
+import { resolvePaymentWebhookMerchantRuntime } from "./payment-merchant-runtime";
 
 type ProcessPaymentWebhookResult = {
     received: true;
@@ -27,7 +28,8 @@ export async function processPaymentWebhook(input: { provider: string; rawBody: 
     await ensurePostgresSchema();
 
     const provider = normalizeProvider(input.provider);
-    const paymentConfig = await getPaymentRuntimeConfig();
+    const merchantRuntime = await resolvePaymentWebhookMerchantRuntime(identifyWebhookMerchant(input));
+    const paymentConfig = merchantRuntime.config;
     const adapter = resolveWebhookAdapter(provider);
     let parsed: ParsedPaymentWebhook;
     try {
@@ -77,7 +79,8 @@ export async function processPaymentWebhook(input: { provider: string; rawBody: 
             await markWebhookEventProcessed(event.id, "payment order not found");
             return { received: true, provider, eventId: parsed.eventId, eventType: parsed.eventType, ignored: true, orderId, orderNo: parsed.orderNo };
         }
-        const verification = await verifyPaymentTransaction(provider, parsed, order);
+        assertWebhookOrderMerchantLineage(order, merchantRuntime.merchant);
+        const verification = await verifyPaymentTransaction(provider, parsed, order, paymentConfig);
         if (!verification.verified) {
             await releaseWebhookEvent(event.id, `pending_verification: ${verification.reason}`);
             return {
@@ -121,6 +124,21 @@ export async function processPaymentWebhook(input: { provider: string; rawBody: 
         }
         await releaseWebhookEvent(event.id, error instanceof Error ? error.message : "payment complete failed");
         throw error;
+    }
+}
+
+function assertWebhookOrderMerchantLineage(
+    order: { tenantId?: string; merchantAccountId?: string; collectionMode?: "platform" | "tenant" },
+    merchant: Pick<ResolvedMerchantAccount, "id" | "tenantId" | "ownerType">,
+) {
+    if (order.merchantAccountId && order.merchantAccountId !== merchant.id) {
+        throw new BillingInputError("Webhook merchant does not own the billing order.", 409, "MERCHANT_ACCOUNT_LINEAGE_MISMATCH");
+    }
+    if (!order.merchantAccountId && (order.collectionMode === "tenant" || merchant.ownerType !== "platform")) {
+        throw new BillingInputError("Webhook merchant does not match the billing order.", 409, "MERCHANT_ACCOUNT_LINEAGE_MISMATCH");
+    }
+    if (order.collectionMode === "tenant" && order.tenantId !== merchant.tenantId) {
+        throw new BillingInputError("Webhook merchant tenant does not match the billing order.", 409, "MERCHANT_ACCOUNT_LINEAGE_MISMATCH");
     }
 }
 

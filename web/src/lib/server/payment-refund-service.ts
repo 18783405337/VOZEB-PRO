@@ -4,7 +4,8 @@ import { readFileSync } from "node:fs";
 import { normalizePaymentProvider } from "@/lib/payment-provider";
 import { BillingInputError } from "@/lib/server/billing-errors";
 import type { BillingOrderRecord, JsonValue, PaymentTransactionRecord } from "@/lib/server/database";
-import { getPaymentRuntimeConfig, getPaymentRuntimeEnv, getPaymentRuntimeValue, type PaymentRuntimeConfig } from "@/lib/server/payment-config-store";
+import { getPaymentRuntimeEnv, getPaymentRuntimeValue, type PaymentRuntimeConfig } from "@/lib/server/payment-config-store";
+import { resolvePaymentMerchantRuntime } from "@/lib/server/payment-merchant-runtime";
 import { loadPaymentPublicKey, verifyRsaSha256 } from "@/lib/server/payment-signature-utils";
 import { fetchSafeOutbound } from "@/lib/server/safe-outbound-fetch";
 
@@ -27,7 +28,7 @@ export async function refundPaymentTransaction(order: BillingOrderRecord, paymen
     if (provider === "manual") return { provider, status: "manual", rawPayload: { mode: "manual" } };
     if (!payment) throw new BillingInputError("订单缺少支付流水，不能自动退款", 409);
 
-    const paymentConfig = await getPaymentRuntimeConfig();
+    const paymentConfig = (await resolvePaymentMerchantRuntime({ order, provider })).config;
     if (provider === "stripe") return refundStripePayment(order, payment, options, paymentConfig);
     if (provider === "alipay") return refundAlipayPayment(order, payment, options, paymentConfig);
     if (provider === "wechat") return refundWechatPayment(order, payment, options, paymentConfig);
@@ -37,7 +38,7 @@ export async function refundPaymentTransaction(order: BillingOrderRecord, paymen
 
 export async function reconcilePaymentRefund(order: BillingOrderRecord, payment: PaymentTransactionRecord | undefined, current: PaymentRefundResult, options: PaymentRefundOptions = {}): Promise<PaymentRefundResult> {
     if (!payment) throw new BillingInputError("订单缺少支付流水，不能查询退款", 409);
-    const config = await getPaymentRuntimeConfig();
+    const config = (await resolvePaymentMerchantRuntime({ order, provider: current.provider })).config;
     if (current.provider === "stripe" && current.providerRefundId) return queryStripeRefund(current.providerRefundId, config);
     if (current.provider === "wechat") return queryWechatRefund(order, config);
     if (current.provider === "payply") {

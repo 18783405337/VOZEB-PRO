@@ -1,4 +1,6 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
+import { ReceiptText } from "lucide-react";
 
 import { AuthUserHydrator } from "@/components/auth/auth-user-hydrator";
 import { AdminDashboard } from "@/components/admin/admin-dashboard";
@@ -56,6 +58,10 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
                     setupSummary={setup}
                     headerActions={
                         <>
+                            <Link href="/admin/billing" className="inline-flex h-9 items-center gap-2 rounded-md border border-zinc-200 px-3 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 dark:border-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-900">
+                                <ReceiptText className="size-4" />
+                                财务中心
+                            </Link>
                             <AdminReturnButton />
                             <UserStatusActions initialUser={currentUser} />
                         </>

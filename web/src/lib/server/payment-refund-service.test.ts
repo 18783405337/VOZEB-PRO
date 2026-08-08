@@ -11,12 +11,16 @@ const mocks = vi.hoisted(() => ({
         valuesByEnvName: {} as Record<string, string>,
         providers: {},
     },
+    resolveMerchantRuntime: vi.fn(),
 }));
 
 vi.mock("@/lib/server/payment-config-store", () => ({
     getPaymentRuntimeConfig: vi.fn(async () => mocks.runtimeConfig),
     getPaymentRuntimeEnv: (config: typeof mocks.runtimeConfig, name: string) => config.valuesByEnvName[name]?.trim() || process.env[name]?.trim() || "",
     getPaymentRuntimeValue: (config: typeof mocks.runtimeConfig, ...names: string[]) => names.map((name) => config.valuesByEnvName[name]?.trim() || process.env[name]?.trim() || "").find(Boolean) || "",
+}));
+vi.mock("@/lib/server/payment-merchant-runtime", () => ({
+    resolvePaymentMerchantRuntime: mocks.resolveMerchantRuntime,
 }));
 vi.mock("@/lib/server/safe-outbound-fetch", () => ({ fetchSafeOutbound: (url: string | URL, init?: RequestInit) => fetch(url, init) }));
 
@@ -41,6 +45,9 @@ const order = {
     periodDays: 30,
     quantity: 1,
     provider: "stripe",
+    tenantId: "tenant-a",
+    merchantAccountId: "merchant-a",
+    collectionMode: "tenant",
     providerOrderId: "cs_test_session",
     providerPaymentId: "cs_test_session",
     createdAt: "2026-01-01T00:00:00.000Z",
@@ -71,7 +78,30 @@ function testPrivateKey() {
 describe("payment refunds", () => {
     beforeEach(() => {
         mocks.runtimeConfig.valuesByEnvName = {};
+        mocks.resolveMerchantRuntime.mockResolvedValue({
+            merchant: { id: "merchant-a" },
+            config: mocks.runtimeConfig,
+        });
         vi.unstubAllGlobals();
+    });
+
+    it("uses the merchant locked to the order for provider credentials", async () => {
+        mocks.runtimeConfig.valuesByEnvName = {
+            VOZEB_PRO_STRIPE_SECRET_KEY: "tenant-stripe-secret",
+            VOZEB_PRO_STRIPE_API_BASE: "https://stripe.test",
+        };
+        const fetchMock = vi.fn(async () => Response.json({ id: "re_merchant", status: "succeeded" }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        await refundPaymentTransaction(order, payment);
+
+        expect(mocks.resolveMerchantRuntime).toHaveBeenCalledWith({ order, provider: "stripe" });
+        expect(fetchMock).toHaveBeenCalledWith(
+            "https://stripe.test/v1/refunds",
+            expect.objectContaining({
+                headers: expect.objectContaining({ authorization: "Bearer tenant-stripe-secret" }),
+            }),
+        );
     });
 
     it("creates a Stripe refund with a payment intent and idempotency key", async () => {

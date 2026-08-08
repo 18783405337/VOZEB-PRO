@@ -6,7 +6,7 @@ const port = Number(process.env.VOZEB_PRO_E2E_PORT || 3100);
 const baseURL = `http://127.0.0.1:${port}`;
 const protocolFixturePort = Number(process.env.VOZEB_PRO_PROTOCOL_FIXTURE_PORT || 4010);
 const paymentFixturePort = Number(process.env.VOZEB_PRO_PAYMENT_FIXTURE_PORT || 4020);
-const databaseUrl = process.env.VOZEB_PRO_E2E_DATABASE_URL?.trim() || "";
+const databaseUrl = process.env.VOZEB_PRO_E2E_DATABASE_URL?.trim() || process.env.DATABASE_URL?.trim() || "";
 const storageState = path.join(process.cwd(), ".e2e-data", "admin-state.json");
 const tenantIsolationRequested = ["E2E_TENANT_A_URL", "E2E_TENANT_A_STORAGE_STATE", "E2E_TENANT_B_URL", "E2E_TENANT_B_STORAGE_STATE"].some(
     (name) => Boolean(process.env[name]?.trim()),
@@ -23,6 +23,7 @@ export default defineConfig({
     reporter: process.env.CI ? [["github"], ["html", { open: "never", outputFolder: "playwright-report" }]] : "list",
     use: {
         baseURL,
+        channel: "chrome",
         trace: "retain-on-failure",
         screenshot: "only-on-failure",
         video: "retain-on-failure",
@@ -30,6 +31,7 @@ export default defineConfig({
     projects: [
         { name: "setup", testMatch: /installation\.spec\.ts/ },
         { name: "chromium", testMatch: [/(?:core|responsive)\.spec\.ts/], dependencies: ["setup"], use: { ...devices["Desktop Chrome"], storageState } },
+        { name: "saas-billing-payment", testMatch: /saas-billing-payment\.spec\.ts/, use: { ...devices["Desktop Chrome"] } },
         ...(tenantIsolationRequested ? [{ name: "tenant-isolation", testMatch: /tenant-isolation\.spec\.ts/, use: { ...devices["Desktop Chrome"] } }] : []),
         { name: "mobile-390", testMatch: /responsive\.spec\.ts/, dependencies: ["setup"], use: { ...devices["iPhone 13"], browserName: "chromium", viewport: { width: 390, height: 844 }, storageState } },
         { name: "mobile-430", testMatch: /responsive\.spec\.ts/, dependencies: ["setup"], use: { ...devices["iPhone 14 Pro Max"], browserName: "chromium", viewport: { width: 430, height: 932 }, storageState } },

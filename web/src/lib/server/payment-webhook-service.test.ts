@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
     getOrderById: vi.fn(),
     getOrderByOrderNo: vi.fn(),
     getPaymentConfig: vi.fn(),
+    resolveMerchantRuntime: vi.fn(),
     verifyPayment: vi.fn(),
     completePayment: vi.fn(),
 }));
@@ -37,6 +38,7 @@ vi.mock("@/lib/server/payment-config-store", () => ({
 }));
 vi.mock("@/lib/server/billing-service", () => ({ completeBillingOrderPayment: mocks.completePayment }));
 vi.mock("@/lib/server/payment-transaction-verification", () => ({ verifyPaymentTransaction: mocks.verifyPayment }));
+vi.mock("./payment-merchant-runtime", () => ({ resolvePaymentWebhookMerchantRuntime: mocks.resolveMerchantRuntime }));
 
 import { processPaymentWebhook } from "./payment-webhook-service";
 
@@ -67,9 +69,25 @@ describe("payment webhook processing", () => {
             providers: { payply: { enabled: true, saved: true } },
             valuesByEnvName: { VOZEB_PRO_PAYPLY_WEBHOOK_SECRET: webhookSecret },
         } satisfies PaymentConfig);
+        mocks.resolveMerchantRuntime.mockResolvedValue({
+            merchant: { id: "merchant-tenant-a", tenantId: "tenant-a", ownerType: "tenant" },
+            config: {
+                saved: { providers: {} },
+                providers: { payply: { enabled: true, saved: true } },
+                valuesByEnvName: { VOZEB_PRO_PAYPLY_WEBHOOK_SECRET: webhookSecret },
+            } satisfies PaymentConfig,
+        });
         mocks.upsertEvent.mockResolvedValue({ event: { id: "provider-event-one" }, conflict: false });
         mocks.claimEvent.mockResolvedValue({ id: "provider-event-one" });
-        mocks.getOrderById.mockResolvedValue({ id: "order-one", orderNo: "VZ001", amountCents: 1299, currency: "CNY" });
+        mocks.getOrderById.mockResolvedValue({
+            id: "order-one",
+            orderNo: "VZ001",
+            tenantId: "tenant-a",
+            merchantAccountId: "merchant-tenant-a",
+            collectionMode: "tenant",
+            amountCents: 1299,
+            currency: "CNY",
+        });
         mocks.verifyPayment.mockResolvedValue({
             verified: true,
             payment: { providerTradeId: "trade-one", providerPaymentId: "payment-one", amountCents: 1299, currency: "CNY", paidAt: "2026-07-30T08:00:00.000Z", rawPayload: JSON.parse(rawBody) },
@@ -106,6 +124,17 @@ describe("payment webhook processing", () => {
         });
         expect(mocks.markProcessed).toHaveBeenCalledWith("provider-event-one", undefined);
         expect(mocks.releaseEvent).not.toHaveBeenCalled();
+        expect(mocks.resolveMerchantRuntime).toHaveBeenCalledWith({
+            provider: "payply",
+            environment: "production",
+            webhookIdentity: "merchant-tenant-a",
+        });
+        expect(mocks.verifyPayment).toHaveBeenCalledWith(
+            "payply",
+            expect.objectContaining({ eventId: "event-one" }),
+            expect.objectContaining({ id: "order-one", merchantAccountId: "merchant-tenant-a" }),
+            expect.objectContaining({ valuesByEnvName: { VOZEB_PRO_PAYPLY_WEBHOOK_SECRET: webhookSecret } }),
+        );
     });
 
     it("returns an already processed callback as a duplicate", async () => {
@@ -125,7 +154,11 @@ describe("payment webhook processing", () => {
     });
 
     it("records and rejects an invalid signature before claiming the event", async () => {
-        const headers = new Headers({ "x-vozeb-pro-signature": "invalid" });
+        const headers = new Headers({
+            "x-vozeb-pro-signature": "invalid",
+            "x-vozeb-pro-webhook-identity": "merchant-tenant-a",
+            "x-vozeb-pro-payment-environment": "production",
+        });
 
         await expect(processPaymentWebhook({ provider: "payply", rawBody, headers })).rejects.toMatchObject({ message: "支付回调签名无效", status: 401 });
         expect(mocks.upsertEvent).toHaveBeenCalledWith(expect.objectContaining({ provider: "payply", eventId: expect.stringContaining("event-one:invalid:"), signatureValid: false, error: "signature invalid" }));
@@ -157,8 +190,32 @@ describe("payment webhook processing", () => {
         expect(mocks.releaseEvent).toHaveBeenCalledWith("provider-event-one", "payment amount mismatch");
         expect(mocks.markProcessed).not.toHaveBeenCalled();
     });
+
+    it("rejects a verified webhook when its merchant does not own the order", async () => {
+        mocks.getOrderById.mockResolvedValue({
+            id: "order-one",
+            orderNo: "VZ001",
+            tenantId: "tenant-a",
+            merchantAccountId: "merchant-tenant-b",
+            collectionMode: "tenant",
+            amountCents: 1299,
+            currency: "CNY",
+        });
+
+        await expect(processPaymentWebhook({ provider: "payply", rawBody, headers: signedHeaders(rawBody) })).rejects.toMatchObject({
+            status: 409,
+            reason: "MERCHANT_ACCOUNT_LINEAGE_MISMATCH",
+        });
+        expect(mocks.verifyPayment).not.toHaveBeenCalled();
+        expect(mocks.completePayment).not.toHaveBeenCalled();
+        expect(mocks.markProcessed).toHaveBeenCalledWith("provider-event-one", expect.any(String));
+    });
 });
 
 function signedHeaders(body: string) {
-    return new Headers({ "x-vozeb-pro-signature": createHmac("sha256", webhookSecret).update(body).digest("hex") });
+    return new Headers({
+        "x-vozeb-pro-signature": createHmac("sha256", webhookSecret).update(body).digest("hex"),
+        "x-vozeb-pro-webhook-identity": "merchant-tenant-a",
+        "x-vozeb-pro-payment-environment": "production",
+    });
 }

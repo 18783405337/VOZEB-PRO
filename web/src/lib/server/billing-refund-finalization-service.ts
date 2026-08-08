@@ -1,6 +1,7 @@
 import { lockAuthMutation } from "@/lib/server/auth-mutation-lock";
 import { refundBillingOrderCoupon } from "@/lib/server/billing-commerce-service";
 import { BillingInputError } from "@/lib/server/billing-errors";
+import { reverseTenantSettlementReceivable } from "@/lib/server/billing-settlement-service";
 import { createPostgresRepositories, withPostgresTransaction, type JsonValue, type PaymentTransactionRecord } from "@/lib/server/database";
 import { adjustPermanentPointsInPostgresTransaction } from "@/lib/server/points-wallet-service";
 import { reverseReferralRewardsForRefundedOrder } from "@/lib/server/referral-service";
@@ -34,6 +35,7 @@ export async function finalizeBillingOrderRefund(input: BillingRefundFinalizatio
         await refundBillingOrderCoupon(client, order, now);
 
         const refundedPayment = payment ? await markPaymentRefunded(payment, input, now, repos.billing.updatePaymentState) : undefined;
+        const settlementReversal = await reverseTenantSettlementReceivable(client, order, input.providerRefund);
         const assignments = order.productKind === "plan" ? await repos.billing.listPlanAssignments({ userId: order.userId, source: "order", page: 1, pageSize: 100 }) : undefined;
         const assignment = assignments?.items.find((item) => item.sourceId === order.id);
         const canceledAssignment = assignment
@@ -80,6 +82,8 @@ export async function finalizeBillingOrderRefund(input: BillingRefundFinalizatio
                     operatorUserId: input.operatorUserId,
                     refundedAt: now,
                     pointsReversed,
+                    settlementReversalId: settlementReversal?.entry.id || "",
+                    settlementReversedCents: settlementReversal?.entry.amount || 0,
                     providerRefund: paymentRefundMetadata(input.providerRefund, false),
                 },
             }),

@@ -42,7 +42,7 @@ export type TenantLedgerEntryRecord = Readonly<{
     accountId: string;
     amount: number;
     direction: "debit" | "credit";
-    entryType: "reserve" | "settle" | "release" | "reverse";
+    entryType: "reserve" | "settle" | "release" | "credit" | "reverse";
     referenceType: string;
     referenceId: string;
     idempotencyKey: string;
@@ -91,7 +91,7 @@ type EnsureAccountInput = Readonly<{
     now?: number;
 }>;
 
-type MutationKind = "reserve" | "settle" | "release" | "reverse";
+type MutationKind = "reserve" | "settle" | "release" | "credit" | "reverse";
 
 export class TenantLedgerRepository implements ReservableAccountRepository {
     private readonly transaction: TenantLedgerTransactionRunner;
@@ -114,6 +114,10 @@ export class TenantLedgerRepository implements ReservableAccountRepository {
 
     async release(input: AccountMutation) {
         return this.mutate("release", input);
+    }
+
+    async credit(input: AccountMutation) {
+        return this.mutate("credit", input);
     }
 
     async reverse(input: AccountMutation & { originalEntryId: string }) {
@@ -198,6 +202,9 @@ export class TenantLedgerRepository implements ReservableAccountRepository {
                     actualAmount,
                     releasedAmount: input.amount - actualAmount,
                 };
+            } else if (kind === "credit") {
+                availableAmount += input.amount;
+                direction = "credit";
             } else {
                 const originalEntryId = (input as AccountMutation & { originalEntryId: string }).originalEntryId;
                 const originalResult = await executor.query(
@@ -265,6 +272,16 @@ export class TenantLedgerRepository implements ReservableAccountRepository {
         return this.transaction((executor) => this.getEntryByIdempotencyKeyWithExecutor(executor, accountId, idempotencyKey, tenantId));
     }
 
+    async listAccounts(tenantId: string) {
+        const result = await this.db.query(
+            `SELECT * FROM ${this.config.accountTable}
+             WHERE tenant_id = $1
+             ORDER BY updated_at DESC, id ASC`,
+            [tenantId],
+        );
+        return result.rows.map(mapAccount);
+    }
+
     private async getEntryByIdempotencyKeyWithExecutor(executor: QueryExecutor, accountId: string, idempotencyKey: string, tenantId?: string) {
         const result = await executor.query(
             `SELECT * FROM ${this.config.ledgerTable}
@@ -312,6 +329,15 @@ function calculateReversal(original: TenantLedgerEntryRecord, account: TenantAcc
             reservedAmount: account.reservedAmount + original.amount,
         };
     }
+    if (original.entryType === "credit") {
+        if (account.availableAmount < original.amount) throw new TenantLedgerError("Available balance is insufficient for reversal", "INSUFFICIENT_BALANCE");
+        return {
+            amount: original.amount,
+            direction: "debit" as const,
+            availableAmount: account.availableAmount - original.amount,
+            reservedAmount: account.reservedAmount,
+        };
+    }
     const actualAmount = numberValue(original.metadata.actualAmount) || original.amount;
     return {
         amount: actualAmount,
@@ -345,7 +371,7 @@ function mapEntry(row: Record<string, unknown>): TenantLedgerEntryRecord {
         accountId: stringValue(row.account_id),
         amount: numberValue(row.amount),
         direction: direction === "credit" ? "credit" : "debit",
-        entryType: entryType === "settle" || entryType === "release" || entryType === "reverse" ? entryType : "reserve",
+        entryType: entryType === "settle" || entryType === "release" || entryType === "credit" || entryType === "reverse" ? entryType : "reserve",
         referenceType: stringValue(row.reference_type),
         referenceId: stringValue(row.reference_id),
         idempotencyKey: stringValue(row.idempotency_key),

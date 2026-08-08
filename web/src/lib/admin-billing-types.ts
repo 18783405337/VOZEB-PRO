@@ -62,8 +62,25 @@ export type BillingReconciliationRow = {
     localOrderStatus?: string;
     localAmountCents?: number;
     localCurrency?: string;
+    tenantId?: string;
+    merchantAccountId?: string;
+    collectionMode?: "platform" | "tenant";
     issueCodes: BillingReconciliationIssueCode[];
     issues: BillingReconciliationIssue[];
+};
+
+export type BillingReconciliationGroup = {
+    tenantId?: string;
+    merchantAccountId?: string;
+    collectionMode?: "platform" | "tenant";
+    currency: string;
+    rowCount: number;
+    matchedRows: number;
+    issueRows: number;
+    statementPaidAmountCents: number;
+    statementRefundedAmountCents: number;
+    localMatchedAmountCents: number;
+    differenceAmountCents: number;
 };
 
 export type BillingReconciliationResult = {
@@ -82,6 +99,7 @@ export type BillingReconciliationResult = {
         localMatchedAmountCents: number;
         differenceAmountCents: number;
     };
+    groups: BillingReconciliationGroup[];
     rows: BillingReconciliationRow[];
     generatedAt: string;
 };

@@ -118,6 +118,7 @@ describe("payment statement reconciliation", () => {
         const records = createBillingReconciliationPersistenceRecords(result, {
             actor: { userId: "admin-one", username: "owner" },
             fileName: "stripe-statement.csv",
+            scope: { tenantId: "tenant-a" },
         });
 
         expect(records.run).toMatchObject({
@@ -129,6 +130,7 @@ describe("payment statement reconciliation", () => {
             importedByUserId: "admin-one",
             importedByUsername: "owner",
             fileName: "stripe-statement.csv",
+            tenantId: "tenant-a",
         });
         expect(records.rows).toHaveLength(1);
         expect(records.rows[0]).toMatchObject({
@@ -137,6 +139,7 @@ describe("payment statement reconciliation", () => {
             orderNo: "VZ404",
             providerPaymentId: "ch_missing",
             statementStatus: "paid",
+            tenantId: "tenant-a",
         });
         expect(JSON.stringify(records)).not.toContain("不要保存整份原始账单");
     });
@@ -146,5 +149,38 @@ describe("payment statement reconciliation", () => {
         const result = reconcilePaymentStatementRows("stripe", rows, [local(baseOrder, [])]);
 
         expect(result.rows[0]?.issueCodes).toEqual(expect.arrayContaining(["missing_local_payment", "amount_mismatch", "currency_mismatch", "status_mismatch"]));
+    });
+
+    it("retains merchant lineage and exposes reconciliation groups", () => {
+        const scopedOrder = {
+            ...baseOrder,
+            tenantId: "tenant-a",
+            merchantAccountId: "merchant-a",
+            collectionMode: "tenant",
+            currency: "USD",
+            amountCents: 2500,
+        } satisfies BillingOrderRecord;
+        const scopedPayment = {
+            ...basePayment,
+            orderId: scopedOrder.id,
+            tenantId: "tenant-a",
+            merchantAccountId: "merchant-a",
+            currency: "USD",
+            amountCents: 2500,
+        } satisfies PaymentTransactionRecord;
+        const rows = parsePaymentStatementCsv("order_no,payment_id,amount,currency,status\nVZ001,ch_local,25.00,USD,succeeded", "stripe");
+        const result = reconcilePaymentStatementRows("stripe", rows, [local(scopedOrder, [scopedPayment])]);
+
+        expect(result.rows[0]).toMatchObject({ tenantId: "tenant-a", merchantAccountId: "merchant-a", collectionMode: "tenant" });
+        expect(result.groups).toEqual([
+            expect.objectContaining({
+                tenantId: "tenant-a",
+                merchantAccountId: "merchant-a",
+                collectionMode: "tenant",
+                currency: "USD",
+                rowCount: 1,
+                matchedRows: 1,
+            }),
+        ]);
     });
 });

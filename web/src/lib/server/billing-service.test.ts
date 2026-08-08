@@ -30,6 +30,10 @@ const mocks = vi.hoisted(() => ({
     lockAuthMutation: vi.fn(),
     getReferralRelationshipByInviteeUserId: vi.fn(),
     getReferralRewardsByTriggerOrder: vi.fn(),
+    getOrCreateSettlementAccount: vi.fn(),
+    creditSettlement: vi.fn(),
+    getSettlementEntryByIdempotencyKey: vi.fn(),
+    reverseSettlement: vi.fn(),
 }));
 
 vi.mock("@/lib/server/auth-mutation-lock", () => ({ lockAuthMutation: mocks.lockAuthMutation }));
@@ -59,6 +63,12 @@ vi.mock("@/lib/server/database", () => ({
         referrals: {
             getRelationshipByInviteeUserId: mocks.getReferralRelationshipByInviteeUserId,
             getRewardsByTriggerOrder: mocks.getReferralRewardsByTriggerOrder,
+        },
+        tenantSettlement: {
+            getOrCreateAccount: mocks.getOrCreateSettlementAccount,
+            credit: mocks.creditSettlement,
+            getEntryByIdempotencyKey: mocks.getSettlementEntryByIdempotencyKey,
+            reverse: mocks.reverseSettlement,
         },
     })),
     ensurePostgresSchema: vi.fn(),
@@ -106,6 +116,9 @@ const pointsOrder = {
     periodDays: 0,
     quantity: 1,
     provider: "stripe",
+    tenantId: "tenant-a",
+    merchantAccountId: "merchant-a",
+    collectionMode: "platform",
     createdAt: now,
     updatedAt: now,
 } satisfies BillingOrderRecord;
@@ -155,6 +168,76 @@ describe("billing payment completion", () => {
         mocks.getSettings.mockResolvedValue({ settings: { defaultPlanId: "free" } });
         mocks.getReferralRelationshipByInviteeUserId.mockResolvedValue(undefined);
         mocks.getReferralRewardsByTriggerOrder.mockResolvedValue([]);
+        mocks.getOrCreateSettlementAccount.mockResolvedValue({
+            id: "settlement-a",
+            tenantId: "tenant-a",
+            currency: "CNY",
+            availableAmount: 0,
+            reservedAmount: 0,
+            version: 0,
+            createdAt: 1,
+            updatedAt: 1,
+        });
+        mocks.creditSettlement.mockResolvedValue({
+            applied: true,
+            account: { id: "settlement-a", availableAmount: 990 },
+            entry: { id: "settlement-credit", amount: 990, entryType: "credit", direction: "credit" },
+        });
+        mocks.getSettlementEntryByIdempotencyKey.mockResolvedValue({
+            id: "settlement-credit",
+            tenantId: "tenant-a",
+            accountId: "settlement-a",
+            amount: 990,
+            direction: "credit",
+            entryType: "credit",
+            referenceType: "billing-order",
+            referenceId: pointsOrder.id,
+            idempotencyKey: `billing-order:${pointsOrder.id}:tenant-settlement-credit`,
+            metadata: {},
+            createdAt: 1,
+        });
+        mocks.reverseSettlement.mockResolvedValue({
+            applied: true,
+            account: { id: "settlement-a", availableAmount: 0 },
+            entry: { id: "settlement-reversal", amount: 990, entryType: "reverse", direction: "debit", reversalOfId: "settlement-credit" },
+        });
+    });
+
+    it("persists the order tenant and merchant lineage on the payment transaction", async () => {
+        const result = await completeBillingOrderPayment({ orderId: pointsOrder.id, providerTradeId: "trade-lineage", paidAt: now });
+
+        expect(result.payment).toMatchObject({
+            tenantId: "tenant-a",
+            merchantAccountId: "merchant-a",
+        });
+        expect(mocks.lockPaymentIdentity).toHaveBeenCalledWith("stripe", ["trade-lineage"], {
+            tenantId: "tenant-a",
+            merchantAccountId: "merchant-a",
+        });
+        expect(mocks.getPaymentByProviderIdentifiers).toHaveBeenCalledWith("stripe", ["trade-lineage"], {
+            tenantId: "tenant-a",
+            merchantAccountId: "merchant-a",
+            forUpdate: true,
+        });
+        expect(mocks.creditSettlement).toHaveBeenCalledWith(
+            expect.objectContaining({
+                tenantId: "tenant-a",
+                accountId: "settlement-a",
+                amount: 990,
+                referenceType: "billing-order",
+                referenceId: pointsOrder.id,
+                idempotencyKey: `billing-order:${pointsOrder.id}:tenant-settlement-credit`,
+            }),
+        );
+    });
+
+    it("does not append a platform settlement receivable for tenant collection", async () => {
+        mocks.order = { ...pointsOrder, collectionMode: "tenant", merchantAccountId: "merchant-tenant-a" };
+
+        await completeBillingOrderPayment({ orderId: pointsOrder.id, providerTradeId: "trade-tenant-collection", paidAt: now });
+
+        expect(mocks.getOrCreateSettlementAccount).not.toHaveBeenCalled();
+        expect(mocks.creditSettlement).not.toHaveBeenCalled();
     });
 
     it("credits a points product without replacing the user's plan and remains idempotent", async () => {
@@ -256,5 +339,55 @@ describe("billing payment completion", () => {
         expect(mocks.listPlanAssignments).not.toHaveBeenCalled();
         expect(mocks.getActivePlanAssignment).not.toHaveBeenCalled();
         expect(mocks.getSettings).not.toHaveBeenCalled();
+        expect(mocks.upsertRefundJob).toHaveBeenCalledWith(expect.objectContaining({ tenantId: "tenant-a", merchantAccountId: "merchant-a" }));
+        expect(mocks.reverseSettlement).toHaveBeenCalledWith(
+            expect.objectContaining({
+                tenantId: "tenant-a",
+                accountId: "settlement-a",
+                amount: 990,
+                originalEntryId: "settlement-credit",
+                referenceType: "billing-refund",
+            }),
+        );
+    });
+
+    it("refunds tenant-collected value without reversing platform settlement", async () => {
+        const paidOrder = {
+            ...pointsOrder,
+            status: "paid",
+            collectionMode: "tenant",
+            merchantAccountId: "merchant-tenant-a",
+        } satisfies BillingOrderRecord;
+        mocks.order = paidOrder;
+        mocks.user = { ...baseUser, pointsBalance: 600 };
+        mocks.payments = [
+            {
+                id: "payment-tenant-points",
+                orderId: paidOrder.id,
+                userId: paidOrder.userId,
+                tenantId: paidOrder.tenantId,
+                merchantAccountId: paidOrder.merchantAccountId,
+                provider: "manual",
+                channel: "manual",
+                status: "succeeded",
+                amountCents: paidOrder.amountCents,
+                currency: paidOrder.currency,
+                providerTradeId: "trade-tenant-points",
+                providerPaymentId: "trade-tenant-points",
+                createdAt: now,
+                updatedAt: now,
+            },
+        ];
+
+        const result = await refundBillingOrder(paidOrder.id);
+
+        expect(result).toMatchObject({
+            order: { status: "refunded", collectionMode: "tenant" },
+            user: { pointsBalance: 100 },
+            pointsReversed: 500,
+        });
+        expect(mocks.getOrCreateSettlementAccount).not.toHaveBeenCalled();
+        expect(mocks.getSettlementEntryByIdempotencyKey).not.toHaveBeenCalled();
+        expect(mocks.reverseSettlement).not.toHaveBeenCalled();
     });
 });

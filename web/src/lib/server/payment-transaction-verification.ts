@@ -22,13 +22,13 @@ export type VerifiedPaymentTransaction = {
 
 export type PaymentVerificationResult = { verified: true; payment: VerifiedPaymentTransaction } | { verified: false; reason: string; payment?: VerifiedPaymentTransaction };
 
-export async function verifyPaymentTransaction(provider: string, parsed: ParsedPaymentWebhook, order: BillingOrderRecord): Promise<PaymentVerificationResult> {
+export async function verifyPaymentTransaction(provider: string, parsed: ParsedPaymentWebhook, order: BillingOrderRecord, paymentConfig?: PaymentRuntimeConfig): Promise<PaymentVerificationResult> {
     const callback = normalizedPayment(parsed);
     if (paymentCompleteForOrder(callback, order)) return { verified: true, payment: callback };
 
     let queried: VerifiedPaymentTransaction | null = null;
     try {
-        const config = await getPaymentRuntimeConfig();
+        const config = paymentConfig || (await getPaymentRuntimeConfig());
         if (provider === "stripe") queried = await queryStripePayment(order, callback, config);
         else if (provider === "alipay") queried = await queryAlipayPayment(order, callback, config);
         else if (provider === "wechat") queried = await queryWechatPayment(order, config);

@@ -679,6 +679,7 @@ ${POSTGRESQL_SAAS_BILLING_SCHEMA_SQL}
 
 CREATE TABLE IF NOT EXISTS billing_reconciliation_runs (
     id text PRIMARY KEY,
+    tenant_id text REFERENCES tenants(id) ON DELETE SET NULL,
     provider text NOT NULL,
     source text NOT NULL DEFAULT 'csv',
     status text NOT NULL DEFAULT 'completed',
@@ -704,7 +705,9 @@ CREATE TABLE IF NOT EXISTS billing_reconciliation_runs (
 
 CREATE INDEX IF NOT EXISTS billing_reconciliation_runs_created_idx ON billing_reconciliation_runs (created_at DESC);
 CREATE INDEX IF NOT EXISTS billing_reconciliation_runs_provider_created_idx ON billing_reconciliation_runs (provider, created_at DESC);
-CREATE UNIQUE INDEX IF NOT EXISTS billing_reconciliation_runs_provider_file_hash_idx ON billing_reconciliation_runs (provider, file_hash) WHERE file_hash IS NOT NULL AND file_hash <> '';
+ALTER TABLE billing_reconciliation_runs ADD COLUMN IF NOT EXISTS tenant_id text REFERENCES tenants(id) ON DELETE SET NULL;
+DROP INDEX IF EXISTS billing_reconciliation_runs_provider_file_hash_idx;
+CREATE UNIQUE INDEX IF NOT EXISTS billing_reconciliation_runs_provider_file_hash_idx ON billing_reconciliation_runs (provider, coalesce(tenant_id, ''), file_hash) WHERE file_hash IS NOT NULL AND file_hash <> '';
 
 CREATE TABLE IF NOT EXISTS billing_reconciliation_rows (
     id text PRIMARY KEY,
@@ -723,6 +726,9 @@ CREATE TABLE IF NOT EXISTS billing_reconciliation_rows (
     local_order_status text,
     local_amount_cents bigint,
     local_currency text,
+    tenant_id text REFERENCES tenants(id) ON DELETE SET NULL,
+    merchant_account_id text REFERENCES merchant_accounts(id) ON DELETE SET NULL,
+    collection_mode text,
     issue_codes jsonb NOT NULL DEFAULT '[]'::jsonb,
     issues jsonb NOT NULL DEFAULT '[]'::jsonb,
     created_at timestamptz NOT NULL DEFAULT now(),
@@ -732,6 +738,9 @@ CREATE TABLE IF NOT EXISTS billing_reconciliation_rows (
 
 CREATE INDEX IF NOT EXISTS billing_reconciliation_rows_run_idx ON billing_reconciliation_rows (run_id, row_number ASC);
 CREATE INDEX IF NOT EXISTS billing_reconciliation_rows_issue_codes_gin_idx ON billing_reconciliation_rows USING gin (issue_codes);
+ALTER TABLE billing_reconciliation_rows ADD COLUMN IF NOT EXISTS tenant_id text REFERENCES tenants(id) ON DELETE SET NULL;
+ALTER TABLE billing_reconciliation_rows ADD COLUMN IF NOT EXISTS merchant_account_id text REFERENCES merchant_accounts(id) ON DELETE SET NULL;
+ALTER TABLE billing_reconciliation_rows ADD COLUMN IF NOT EXISTS collection_mode text;
 
 CREATE TABLE IF NOT EXISTS user_plan_assignments (
     id text PRIMARY KEY,

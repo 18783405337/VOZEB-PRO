@@ -11,12 +11,14 @@ const mocks = vi.hoisted(() => ({
     createRedemption: vi.fn(),
     incrementTemplateRedeemedCount: vi.fn(),
     refundRedemptionByOrderId: vi.fn(),
+    getEnabledMerchant: vi.fn(),
 }));
 
 vi.mock("@/lib/server/database", async (importOriginal) => ({
     ...(await importOriginal<typeof import("@/lib/server/database")>()),
     createPostgresRepositories: vi.fn(() => ({
         promotions: { listActiveProductPrices: mocks.listActiveProductPrices },
+        merchantAccounts: { getEnabled: mocks.getEnabledMerchant },
         coupons: {
             getUserCouponById: mocks.getUserCouponById,
             getTemplateById: mocks.getTemplateById,
@@ -29,7 +31,7 @@ vi.mock("@/lib/server/database", async (importOriginal) => ({
     })),
 }));
 
-import { prepareBillingOrderCommerce, redeemBillingOrderCoupon, refundBillingOrderCoupon, releaseBillingOrderCoupon } from "./billing-commerce-service";
+import { buildCommercialOrderSnapshot, prepareBillingOrderCommerce, redeemBillingOrderCoupon, refundBillingOrderCoupon, releaseBillingOrderCoupon } from "./billing-commerce-service";
 
 const now = new Date("2026-07-20T00:00:00.000Z");
 const db = { query: vi.fn() } as unknown as QueryExecutor;
@@ -121,6 +123,19 @@ describe("billing commerce service", () => {
         mocks.updateUserCoupon.mockImplementation(async (_id: string, patch: Partial<UserCouponRecord>) => ({ ...coupon, ...patch }));
         mocks.createRedemption.mockImplementation(async (record: CouponRedemptionRecord) => record);
         mocks.refundRedemptionByOrderId.mockResolvedValue({ status: "refunded" });
+        mocks.getEnabledMerchant.mockResolvedValue({
+            id: "merchant-platform",
+            ownerType: "platform",
+            ownerId: "platform",
+            provider: "stripe",
+            environment: "production",
+            status: "enabled",
+            encryptedConfig: "ciphertext",
+            configuredFields: ["secretKey"],
+            webhookIdentity: "legacy:platform:stripe:production",
+            createdAt: 1,
+            updatedAt: 1,
+        });
     });
 
     it("uses the authoritative coupon rule and replaces a non-stackable promotion", async () => {
@@ -183,5 +198,50 @@ describe("billing commerce service", () => {
 
         expect(mocks.refundRedemptionByOrderId).toHaveBeenCalledWith("order-one", now.toISOString());
         expect(mocks.updateUserCoupon).not.toHaveBeenCalled();
+    });
+
+    it("persists the selected merchant and immutable commercial values in the order snapshot", async () => {
+        const snapshot = await buildCommercialOrderSnapshot({
+            db,
+            tenantId: "tenant-a",
+            collectionMode: "platform",
+            provider: "stripe",
+            environment: "production",
+            product,
+            tenantSaleAmount: 850,
+            platformCostAmount: 100,
+        });
+
+        expect(snapshot).toEqual({
+            tenantId: "tenant-a",
+            collectionMode: "platform",
+            merchantAccountId: "merchant-platform",
+            beneficiaryType: "tenant",
+            currency: "CNY",
+            tenantSaleAmount: 850,
+            platformCostAmount: 100,
+            product: { id: product.id, name: product.name },
+        });
+    });
+
+    it("fails with an internal merchant-resolution reason when a tenant merchant is absent", async () => {
+        mocks.getEnabledMerchant.mockResolvedValueOnce(null);
+
+        await expect(
+            buildCommercialOrderSnapshot({
+                db,
+                tenantId: "tenant-a",
+                collectionMode: "tenant",
+                provider: "stripe",
+                environment: "production",
+                product,
+                tenantSaleAmount: 850,
+                platformCostAmount: 0,
+            }),
+        ).rejects.toMatchObject({
+            status: 409,
+            reason: "MERCHANT_ACCOUNT_NOT_CONFIGURED",
+            message: "Merchant account is not configured.",
+        });
     });
 });

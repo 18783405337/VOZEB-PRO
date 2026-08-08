@@ -6,6 +6,7 @@ import { getCurrentUser } from "@/lib/auth/session";
 import { auditActorFromRequest, safeRecordAuditLog } from "@/lib/server/audit-log-store";
 import { createBillingOrder, isBillingInputError, listUserBillingOrders } from "@/lib/server/billing-service";
 import type { BillingOrderStatus } from "@/lib/server/database";
+import { getTrustedTenantId } from "@/lib/server/tenant/tenant-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,12 +16,13 @@ export async function GET(request: NextRequest) {
     if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
 
     try {
+        const tenantId = await getTrustedTenantId(request, currentUser);
         const params = request.nextUrl.searchParams;
         const result = await listUserBillingOrders(currentUser.id, {
             page: Number(params.get("page")) || 1,
             pageSize: Number(params.get("pageSize")) || 20,
             status: parseOrderStatus(params.get("status")),
-        });
+        }, tenantId);
         return NextResponse.json({ orders: result.items, total: result.total, page: result.page, pageSize: result.pageSize });
     } catch (error) {
         if (isBillingInputError(error)) return NextResponse.json({ error: error.message }, { status: error.status });
@@ -34,8 +36,14 @@ export async function POST(request: Request) {
     if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
 
     try {
-        const body = await readJsonBody<{ productId?: unknown; quantity?: unknown; provider?: unknown; userCouponId?: unknown }>(request);
-        const order = await createBillingOrder({ ...body, userId: currentUser.id });
+        const tenantId = await getTrustedTenantId(request, currentUser);
+        const body = await readJsonBody<{ productId?: unknown; quantity?: unknown; provider?: unknown; userCouponId?: unknown; collectionMode?: unknown }>(request);
+        const order = await createBillingOrder({
+            ...body,
+            userId: currentUser.id,
+            tenantId,
+            collectionMode: body.collectionMode === "tenant" ? "tenant" : "platform",
+        });
         await safeRecordAuditLog({
             action: "billing.order.create",
             actor: auditActorFromRequest(request, currentUser),

@@ -41,6 +41,9 @@ export type MerchantAccountTransactionRunner = <T>(handler: (executor: QueryExec
 
 export interface MerchantAccountRepositoryPort {
     list(scope: MerchantAccountOwnerScope): Promise<MerchantAccountRecord[]>;
+    getById(id: string): Promise<MerchantAccountRecord | null>;
+    getEnabled(scope: MerchantAccountOwnerScope, provider: string, environment: MerchantAccountEnvironment): Promise<MerchantAccountRecord | null>;
+    getEnabledByWebhookIdentity(provider: string, environment: MerchantAccountEnvironment, webhookIdentity: string): Promise<MerchantAccountRecord | null>;
     save(input: SaveMerchantAccountRecordInput): Promise<MerchantAccountRecord>;
     disable(input: DisableMerchantAccountInput): Promise<MerchantAccountRecord | null>;
 }
@@ -65,6 +68,40 @@ export class MerchantAccountRepository implements MerchantAccountRepositoryPort 
             [scope.ownerType, scope.ownerId, scope.tenantId || null],
         );
         return result.rows.map(mapMerchantAccount);
+    }
+
+    async getById(id: string) {
+        const result = await this.db.query("SELECT * FROM merchant_accounts WHERE id = $1", [id]);
+        return result.rows[0] ? mapMerchantAccount(result.rows[0]) : null;
+    }
+
+    async getEnabled(scope: MerchantAccountOwnerScope, provider: string, environment: MerchantAccountEnvironment) {
+        const result = await this.db.query(
+            `SELECT * FROM merchant_accounts
+             WHERE owner_type = $1
+               AND owner_id = $2
+               AND tenant_id IS NOT DISTINCT FROM $3
+               AND provider = $4
+               AND environment = $5
+               AND status = 'enabled'
+             ORDER BY updated_at DESC, created_at DESC
+             LIMIT 1`,
+            [scope.ownerType, scope.ownerId, scope.tenantId || null, provider, environment],
+        );
+        return result.rows[0] ? mapMerchantAccount(result.rows[0]) : null;
+    }
+
+    async getEnabledByWebhookIdentity(provider: string, environment: MerchantAccountEnvironment, webhookIdentity: string) {
+        const result = await this.db.query(
+            `SELECT * FROM merchant_accounts
+             WHERE provider = $1
+               AND environment = $2
+               AND webhook_identity = $3
+               AND status = 'enabled'
+             LIMIT 1`,
+            [provider, environment, webhookIdentity],
+        );
+        return result.rows[0] ? mapMerchantAccount(result.rows[0]) : null;
     }
 
     async save(input: SaveMerchantAccountRecordInput) {

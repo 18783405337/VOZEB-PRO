@@ -6,6 +6,7 @@ import { auditActorFromRequest, safeRecordAuditLog } from "@/lib/server/audit-lo
 import { BillingInputError, isBillingInputError } from "@/lib/server/billing-service";
 import { createPaymentCheckoutForOrder } from "@/lib/server/payment-checkout-service";
 import { readRequestBodyText, RequestBodyTooLargeError } from "@/lib/server/request-body-limit";
+import { getTrustedTenantId } from "@/lib/server/tenant/tenant-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,10 +23,14 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
     const { id } = await context.params;
     try {
-        const body = await readOptionalJsonBody<{ provider?: unknown }>(request);
+        const tenantId = await getTrustedTenantId(request, currentUser);
+        const body = await readOptionalJsonBody<{ provider?: unknown; merchantAccountId?: unknown; collectionMode?: unknown }>(request);
         const checkout = await createPaymentCheckoutForOrder(id, {
             userId: currentUser.id,
+            tenantId,
             provider: body.provider,
+            merchantAccountId: typeof body.merchantAccountId === "string" ? body.merchantAccountId : undefined,
+            collectionMode: body.collectionMode === "tenant" || body.collectionMode === "platform" ? body.collectionMode : undefined,
             origin: request.nextUrl.origin,
         });
         await safeRecordAuditLog({
@@ -41,7 +46,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
             status: "failure",
             actor: auditActorFromRequest(request, currentUser),
             target: { type: "billing_order", id },
-            metadata: { error: error instanceof Error ? error.message : "unknown" },
+            metadata: { error: error instanceof Error ? error.message : "unknown", reason: error instanceof BillingInputError ? error.reason : undefined },
         });
         if (isBillingInputError(error)) return apiCompatError(error.status, error.message);
         if (error instanceof RequestBodyTooLargeError) return apiCompatError(error.status, error.message);

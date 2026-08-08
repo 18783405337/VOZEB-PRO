@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 
-import { lockBillingOrderCoupon, prepareBillingOrderCommerce, redeemBillingOrderCoupon, releaseBillingOrderCoupon } from "@/lib/server/billing-commerce-service";
+import { buildCommercialOrderSnapshot, lockBillingOrderCoupon, prepareBillingOrderCommerce, redeemBillingOrderCoupon, releaseBillingOrderCoupon } from "@/lib/server/billing-commerce-service";
 import { BillingInputError, isBillingInputError } from "@/lib/server/billing-errors";
+import { creditTenantSettlementReceivable } from "@/lib/server/billing-settlement-service";
 import { lockAuthMutation } from "@/lib/server/auth-mutation-lock";
 import { expirePendingBillingOrders } from "@/lib/server/billing-order-expiration-service";
 import {
@@ -17,7 +18,8 @@ import {
     type QueryExecutor,
     type UserPlanAssignmentRecord,
 } from "@/lib/server/database";
-import { getPaymentRuntimeConfig, isPaymentRuntimeProviderCheckoutReady } from "@/lib/server/payment-config-store";
+import { bootstrapLegacyPaymentMerchantAccounts, buildPaymentRuntimeConfigFromMerchant, getPaymentRuntimeConfig, isPaymentRuntimeProviderCheckoutReady, paymentMerchantEnvironment } from "@/lib/server/payment-config-store";
+import { MerchantAccountService } from "@/lib/server/payment/merchant-account-service";
 import { adjustPermanentPointsInPostgresTransaction } from "@/lib/server/points-wallet-service";
 import { resolveBillingProductPrices } from "@/lib/server/promotion-service";
 import { prepareReferralRewardsForPaidOrder } from "@/lib/server/referral-service";
@@ -67,10 +69,12 @@ export type BillingProductInput = {
 
 type CreateBillingOrderInput = {
     userId: string;
+    tenantId?: string;
     productId?: unknown;
     quantity?: unknown;
     provider?: unknown;
     userCouponId?: unknown;
+    collectionMode?: unknown;
 };
 
 type CompleteBillingOrderPaymentInput = {
@@ -132,9 +136,9 @@ export async function deleteBillingProduct(id: string) {
     });
 }
 
-export async function listUserBillingOrders(userId: string, input: { page?: number; pageSize?: number; status?: BillingOrderStatus } = {}) {
+export async function listUserBillingOrders(userId: string, input: { page?: number; pageSize?: number; status?: BillingOrderStatus } = {}, tenantId?: string) {
     await expirePendingBillingOrders();
-    return createPostgresRepositories().billing.listOrders({ ...input, userId });
+    return createPostgresRepositories().billing.listOrders({ ...input, userId, tenantId });
 }
 
 export async function listAdminBillingOrders(input: { page?: number; pageSize?: number; status?: BillingOrderStatus; userId?: string; productId?: string; keyword?: string } = {}) {
@@ -176,6 +180,7 @@ export async function cancelBillingOrderForUser(userId: string, orderId: string)
 export async function createBillingOrder(input: CreateBillingOrderInput) {
     await assertBillingDatabaseReady();
     const paymentConfig = await getPaymentRuntimeConfig();
+    await bootstrapLegacyPaymentMerchantAccounts({ runtimeConfig: paymentConfig });
     return withPostgresTransaction(async (client) => {
         const repos = createPostgresRepositories(client);
         const user = await repos.users.getById(input.userId);
@@ -189,6 +194,18 @@ export async function createBillingOrder(input: CreateBillingOrderInput) {
         const plan = product.productKind === "plan" ? await resolveEnabledPlan(product.planId || "", client) : undefined;
         const quantity = normalizePositiveInteger(input.quantity, 1, 100, 1);
         const provider = normalizeProvider(input.provider);
+        const tenantId = normalizeId(input.tenantId) || "default";
+        const collectionMode = input.collectionMode === "tenant" ? "tenant" : "platform";
+        const merchantScope =
+            collectionMode === "tenant"
+                ? { ownerType: "tenant" as const, ownerId: tenantId, tenantId }
+                : { ownerType: "platform" as const, ownerId: "platform" };
+        const merchant = await new MerchantAccountService(repos.merchantAccounts).resolveForCheckout({
+            scope: merchantScope,
+            provider,
+            environment: paymentMerchantEnvironment(),
+        });
+        Object.assign(paymentConfig, buildPaymentRuntimeConfigFromMerchant(merchant));
         if (!isPaymentRuntimeProviderCheckoutReady(paymentConfig, provider)) throw new BillingInputError("该支付渠道未启用或配置不完整", 400);
         const now = new Date();
         const nowIso = now.toISOString();
@@ -200,9 +217,20 @@ export async function createBillingOrder(input: CreateBillingOrderInput) {
             userCouponId: normalizeId(input.userCouponId) || undefined,
             now,
         });
+        const commercialSnapshot = await buildCommercialOrderSnapshot({
+            db: client,
+            tenantId,
+            collectionMode,
+            provider,
+            environment: paymentMerchantEnvironment(),
+            product,
+            tenantSaleAmount: commerce.price.payableAmountCents,
+            platformCostAmount: 0,
+        });
         const order: BillingOrderRecord = {
             id: randomUUID(),
             orderNo: generateOrderNo(),
+            tenantId,
             productId: product.id,
             userId: user.id,
             productKind: product.productKind,
@@ -219,10 +247,14 @@ export async function createBillingOrder(input: CreateBillingOrderInput) {
             periodDays: product.productKind === "plan" ? product.periodDays * quantity : 0,
             quantity,
             provider,
+            collectionMode,
+            merchantAccountId: commercialSnapshot.merchantAccountId,
+            beneficiaryType: commercialSnapshot.beneficiaryType,
             promotionCampaignId: commerce.price.promotion?.id,
             userCouponId: commerce.coupon?.id,
             expiresAt: new Date(now.getTime() + orderExpiresMinutes() * 60_000).toISOString(),
             pricingSnapshot: commerce.pricingSnapshot,
+            commercialSnapshot,
             metadata: {
                 product: {
                     id: product.id,
@@ -265,8 +297,14 @@ export async function completeBillingOrderPayment(input: CompleteBillingOrderPay
         const incomingPaymentId = normalizeText(input.providerPaymentId, "", 160);
         const incomingIdentifiers = [...new Set([incomingTradeId, incomingPaymentId].filter(Boolean))];
         if (providerVerified && !incomingIdentifiers.length) throw new BillingInputError("支付交易号尚未核实", 409);
-        await repos.billing.lockPaymentIdentity(provider, incomingIdentifiers.length ? incomingIdentifiers : [`order:${order.id}`]);
-        const existingPayment = incomingIdentifiers.length ? await repos.billing.getPaymentByProviderIdentifiers(provider, incomingIdentifiers, true) : null;
+        const paymentIdentityScope = {
+            tenantId: order.tenantId || null,
+            merchantAccountId: order.merchantAccountId || null,
+        };
+        await repos.billing.lockPaymentIdentity(provider, incomingIdentifiers.length ? incomingIdentifiers : [`order:${order.id}`], paymentIdentityScope);
+        const existingPayment = incomingIdentifiers.length
+            ? await repos.billing.getPaymentByProviderIdentifiers(provider, incomingIdentifiers, { ...paymentIdentityScope, forUpdate: true })
+            : null;
         if (existingPayment) assertPaymentTransactionOwnership(existingPayment, order, provider);
         if (order.status === "paid") {
             assertDuplicatePaymentIdentity(order, input);
@@ -283,8 +321,10 @@ export async function completeBillingOrderPayment(input: CompleteBillingOrderPay
         const providerPaymentId = incomingPaymentId || providerTradeId;
         await redeemBillingOrderCoupon(client, order, paidAt);
         const payment: PaymentTransactionRecord = {
-            id: deterministicPaymentId(provider, providerTradeId),
+            id: deterministicPaymentId(provider, providerTradeId, paymentIdentityScope),
             orderId: order.id,
+            tenantId: order.tenantId,
+            merchantAccountId: order.merchantAccountId,
             userId: user.id,
             provider,
             channel: normalizeText(input.channel, "", 60),
@@ -300,6 +340,7 @@ export async function completeBillingOrderPayment(input: CompleteBillingOrderPay
         };
         const savedPayment = await repos.billing.upsertPayment(payment);
         assertPaymentTransactionOwnership(savedPayment, order, provider);
+        await creditTenantSettlementReceivable(client, order, savedPayment);
 
         if (order.pointsAmount > 0) {
             await adjustPermanentPointsInPostgresTransaction(client, {
@@ -348,6 +389,9 @@ export async function completeBillingOrderPayment(input: CompleteBillingOrderPay
 function assertPaymentTransactionOwnership(payment: PaymentTransactionRecord, order: BillingOrderRecord, provider: string) {
     if (payment.orderId !== order.id || payment.userId !== order.userId || normalizeProvider(payment.provider) !== provider) {
         throw new BillingInputError("该支付交易已绑定其他订单，禁止重复发放权益", 409);
+    }
+    if ((payment.tenantId || undefined) !== (order.tenantId || undefined) || (payment.merchantAccountId || undefined) !== (order.merchantAccountId || undefined)) {
+        throw new BillingInputError("Payment transaction belongs to another tenant or merchant.", 409, "PAYMENT_MERCHANT_LINEAGE_MISMATCH");
     }
     if (payment.amountCents !== order.amountCents || normalizeCurrency(payment.currency) !== normalizeCurrency(order.currency)) {
         throw new BillingInputError("支付交易金额或币种与订单快照不一致", 409);

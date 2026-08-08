@@ -2,6 +2,7 @@ export class BillingInputError extends Error {
     constructor(
         message: string,
         readonly status = 400,
+        readonly reason?: string,
     ) {
         super(message);
     }

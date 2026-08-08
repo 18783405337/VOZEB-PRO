@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, ReceiptText } from "lucide-react";
 
 import { TenantAdminShell } from "@/components/tenant-admin/tenant-admin-shell";
 import { UserStatusActions } from "@/components/layout/user-status-actions";
@@ -29,7 +29,13 @@ export default async function TenantAdminPage() {
                         <ArrowLeft className="size-4" />
                         返回工作台
                     </Link>
-                    <UserStatusActions initialUser={currentUser} />
+                    <div className="flex items-center gap-3">
+                        <Link href="/tenant-admin/billing" className="inline-flex items-center gap-2 text-sm font-medium text-zinc-600 transition hover:text-zinc-950 dark:text-zinc-300 dark:hover:text-white">
+                            <ReceiptText className="size-4" />
+                            账单后台
+                        </Link>
+                        <UserStatusActions initialUser={currentUser} />
+                    </div>
                 </div>
             </div>
             <TenantAdminShell initialContext={{ ...context, member: context.member }} />

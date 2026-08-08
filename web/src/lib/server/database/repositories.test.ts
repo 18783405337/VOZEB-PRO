@@ -676,6 +676,8 @@ describe("split Postgres repositories", () => {
         const paymentRow = {
             id: "payment-one",
             order_id: "order-one",
+            tenant_id: "tenant-a",
+            merchant_account_id: "merchant-a",
             user_id: "user-one",
             provider: "stripe",
             channel: "webhook",
@@ -693,6 +695,8 @@ describe("split Postgres repositories", () => {
         const payment = await billing.upsertPayment({
             id: "payment-one",
             orderId: "order-two",
+            tenantId: "tenant-b",
+            merchantAccountId: "merchant-b",
             userId: "user-two",
             provider: "stripe",
             channel: "webhook",
@@ -715,7 +719,7 @@ describe("split Postgres repositories", () => {
             updatedAt: timestamp,
         });
 
-        expect(payment).toMatchObject({ orderId: "order-one", userId: "user-one" });
+        expect(payment).toMatchObject({ orderId: "order-one", tenantId: "tenant-a", merchantAccountId: "merchant-a", userId: "user-one" });
         expect(event).toMatchObject({ event: { id: "event-one", orderId: "order-one" }, conflict: true });
         expect(queryArgs(query, 0)[0]).toContain("ON CONFLICT (id) DO NOTHING");
         expect(queryArgs(query, 1)[0]).toContain("SELECT * FROM payment_transactions WHERE id = $1");

@@ -155,6 +155,22 @@ export function resolveWebhookAdapter(provider: string) {
     return customWebhookAdapter;
 }
 
+export function identifyWebhookMerchant(input: { provider: string; rawBody: string; headers: Headers; webhookIdentity?: string }): {
+    provider: string;
+    environment: "test" | "production";
+    webhookIdentity: string;
+} {
+    const webhookIdentity = normalizeOptionalId(input.webhookIdentity || input.headers.get("x-vozeb-pro-webhook-identity"));
+    if (!webhookIdentity) throw new BillingInputError("Merchant webhook identity is required.", 400, "MERCHANT_WEBHOOK_IDENTITY_REQUIRED");
+
+    const configuredEnvironment = normalizeText(input.headers.get("x-vozeb-pro-payment-environment"), "", 20).toLowerCase();
+    return {
+        provider: normalizeProvider(input.provider),
+        environment: configuredEnvironment === "test" ? "test" : "production",
+        webhookIdentity,
+    };
+}
+
 export function verifyCustomSignature(provider: string, rawBody: string, headers: Headers, paymentConfig: PaymentRuntimeConfig) {
     const secret = webhookSecret(provider, paymentConfig);
     if (!secret) throw new BillingInputError("支付回调密钥未配置", 500);

@@ -37,6 +37,7 @@ export function mapBillingOrder(row: Record<string, unknown>): BillingOrderRecor
     return {
         id: stringValue(row.id),
         orderNo: stringValue(row.order_no),
+        tenantId: optionalString(row.tenant_id),
         productId: optionalString(row.product_id),
         userId: optionalString(row.user_id),
         userAccountId: row.user_account_id === undefined || row.user_account_id === null ? undefined : formatAccountId(row.user_account_id),
@@ -63,8 +64,12 @@ export function mapBillingOrder(row: Record<string, unknown>): BillingOrderRecor
         expiresAt: optionalIso(row.expires_at),
         paidAt: optionalIso(row.paid_at),
         closedAt: optionalIso(row.closed_at),
+        collectionMode: row.collection_mode === "tenant" ? "tenant" : row.collection_mode === "platform" ? "platform" : undefined,
+        merchantAccountId: optionalString(row.merchant_account_id),
+        beneficiaryType: row.beneficiary_type === "tenant" ? "tenant" : row.beneficiary_type === "platform" ? "platform" : undefined,
         pricingSnapshot: optionalJson(row.pricing_snapshot),
         metadata: optionalJson(row.metadata),
+        commercialSnapshot: optionalJson(row.commercial_snapshot_json),
         createdAt: isoValue(row.created_at),
         updatedAt: isoValue(row.updated_at),
     };
@@ -182,6 +187,8 @@ export function mapPaymentTransaction(row: Record<string, unknown>): PaymentTran
     return {
         id: stringValue(row.id),
         orderId: stringValue(row.order_id),
+        tenantId: optionalString(row.tenant_id),
+        merchantAccountId: optionalString(row.merchant_account_id),
         userId: optionalString(row.user_id),
         provider: stringValue(row.provider),
         channel: stringValue(row.channel),
@@ -202,6 +209,7 @@ export function mapPaymentTransaction(row: Record<string, unknown>): PaymentTran
 export function mapBillingReconciliationRun(row: Record<string, unknown>): BillingReconciliationRunRecord {
     return {
         id: stringValue(row.id),
+        tenantId: optionalString(row.tenant_id),
         provider: stringValue(row.provider),
         source: billingReconciliationSourceValue(row.source),
         status: billingReconciliationRunStatusValue(row.status),
@@ -242,6 +250,9 @@ export function mapBillingReconciliationRow(row: Record<string, unknown>): Billi
         localOrderStatus: optionalString(row.local_order_status),
         localAmountCents: optionalNumber(row.local_amount_cents),
         localCurrency: optionalString(row.local_currency),
+        tenantId: optionalString(row.tenant_id),
+        merchantAccountId: optionalString(row.merchant_account_id),
+        collectionMode: row.collection_mode === "tenant" ? "tenant" : row.collection_mode === "platform" ? "platform" : undefined,
         issueCodes: jsonValue(row.issue_codes),
         issues: jsonValue(row.issues),
         createdAt: isoValue(row.created_at),

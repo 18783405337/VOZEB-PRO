@@ -167,6 +167,15 @@ ALTER TABLE billing_orders ADD COLUMN IF NOT EXISTS commercial_snapshot_json jso
 ALTER TABLE payment_transactions ADD COLUMN IF NOT EXISTS tenant_id text REFERENCES tenants(id);
 ALTER TABLE payment_transactions ADD COLUMN IF NOT EXISTS merchant_account_id text REFERENCES merchant_accounts(id);
 
+DROP INDEX IF EXISTS payment_transactions_provider_trade_idx;
+DROP INDEX IF EXISTS payment_transactions_provider_payment_idx;
+CREATE UNIQUE INDEX IF NOT EXISTS payment_transactions_provider_trade_idx
+ON payment_transactions (provider, coalesce(merchant_account_id, ''), provider_trade_id)
+WHERE provider_trade_id IS NOT NULL AND provider_trade_id <> '';
+CREATE UNIQUE INDEX IF NOT EXISTS payment_transactions_provider_payment_idx
+ON payment_transactions (provider, coalesce(merchant_account_id, ''), provider_payment_id)
+WHERE provider_payment_id IS NOT NULL AND provider_payment_id <> '';
+
 ALTER TABLE billing_refund_jobs ADD COLUMN IF NOT EXISTS tenant_id text REFERENCES tenants(id);
 ALTER TABLE billing_refund_jobs ADD COLUMN IF NOT EXISTS merchant_account_id text REFERENCES merchant_accounts(id);
 `;

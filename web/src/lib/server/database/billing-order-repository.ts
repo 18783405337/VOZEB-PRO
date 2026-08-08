@@ -9,17 +9,19 @@ export class BillingOrderRepository {
         const result = await this.db.query(
             `
             INSERT INTO billing_orders (
-                id, order_no, product_id, user_id, product_kind, plan_id, status, subject, list_amount_cents,
+                id, order_no, tenant_id, product_id, user_id, product_kind, plan_id, status, subject, list_amount_cents,
                 promotion_discount_cents, coupon_discount_cents, amount_cents, currency, points_amount, daily_points,
                 period_days, quantity, provider, provider_order_id, provider_payment_id, promotion_campaign_id,
-                user_coupon_id, expires_at, paid_at, closed_at, pricing_snapshot, metadata, created_at, updated_at
+                user_coupon_id, expires_at, paid_at, closed_at, collection_mode, merchant_account_id, beneficiary_type,
+                pricing_snapshot, metadata, commercial_snapshot_json, created_at, updated_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34)
             RETURNING *
             `,
             [
                 order.id,
                 order.orderNo,
+                order.tenantId || "default",
                 order.productId || null,
                 order.userId || null,
                 order.productKind,
@@ -43,8 +45,12 @@ export class BillingOrderRepository {
                 order.expiresAt || null,
                 order.paidAt || null,
                 order.closedAt || null,
+                order.collectionMode || null,
+                order.merchantAccountId || null,
+                order.beneficiaryType || null,
                 jsonParam(order.pricingSnapshot ?? {}),
                 jsonParam(order.metadata ?? {}),
+                jsonParam(order.commercialSnapshot ?? null),
                 order.createdAt,
                 order.updatedAt,
             ],
@@ -62,7 +68,7 @@ export class BillingOrderRepository {
         return result.rows[0] ? mapBillingOrder(result.rows[0]) : null;
     }
 
-    async listOrders(input: PageInput & { userId?: string; status?: BillingOrderStatus; planId?: string; productId?: string; keyword?: string } = {}): Promise<PageResult<BillingOrderRecord>> {
+    async listOrders(input: PageInput & { userId?: string; tenantId?: string; status?: BillingOrderStatus; planId?: string; productId?: string; keyword?: string } = {}): Promise<PageResult<BillingOrderRecord>> {
         const page = normalizePage(input.page);
         const pageSize = normalizePageSize(input.pageSize);
         const keyword = input.keyword?.trim().toLowerCase() || "";
@@ -76,13 +82,14 @@ export class BillingOrderRepository {
               AND ($2::text IS NULL OR orders.status = $2)
               AND ($3::text IS NULL OR orders.plan_id = $3)
               AND ($4::text IS NULL OR orders.product_id = $4)
+              AND ($9::text IS NULL OR orders.tenant_id = $9)
               AND ($5 = '' OR lower(orders.order_no) LIKE $6 OR lower(orders.subject) LIKE $6
                    OR lower(coalesce(orders.provider_order_id, '')) LIKE $6 OR lower(coalesce(orders.provider_payment_id, '')) LIKE $6
                    OR lpad(users.account_id::text, 4, '0') LIKE $6 OR lower(coalesce(users.username, '')) LIKE $6 OR lower(coalesce(users.display_name, '')) LIKE $6)
             ORDER BY orders.created_at DESC
             LIMIT $7 OFFSET $8
             `,
-            [input.userId || null, input.status || null, input.planId || null, input.productId || null, keyword, `%${keyword}%`, pageSize, (page - 1) * pageSize],
+            [input.userId || null, input.status || null, input.planId || null, input.productId || null, keyword, `%${keyword}%`, pageSize, (page - 1) * pageSize, input.tenantId || null],
         );
         return pageResult(result.rows.map(mapBillingOrder), Number(result.rows[0]?.total_count || 0), page, pageSize);
     }
@@ -321,7 +328,11 @@ export class BillingOrderRepository {
                 paid_at = COALESCE($26, paid_at),
                 closed_at = CASE WHEN $27 THEN $28 ELSE closed_at END,
                 pricing_snapshot = COALESCE($29::jsonb, pricing_snapshot),
-                metadata = COALESCE($30::jsonb, metadata)
+                metadata = COALESCE($30::jsonb, metadata),
+                collection_mode = COALESCE($31, collection_mode),
+                merchant_account_id = COALESCE($32, merchant_account_id),
+                beneficiary_type = COALESCE($33, beneficiary_type),
+                commercial_snapshot_json = COALESCE($34::jsonb, commercial_snapshot_json)
             WHERE id = $1
             RETURNING *
             `,
@@ -356,6 +367,10 @@ export class BillingOrderRepository {
                 patch.closedAt || null,
                 jsonParam(patch.pricingSnapshot),
                 jsonParam(patch.metadata),
+                patch.collectionMode,
+                patch.merchantAccountId,
+                patch.beneficiaryType,
+                jsonParam(patch.commercialSnapshot),
             ],
         );
         return result.rows[0] ? mapBillingOrder(result.rows[0]) : null;

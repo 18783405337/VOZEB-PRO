@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import type { BillingReconciliationIssue, BillingReconciliationIssueCode, BillingReconciliationResult, BillingReconciliationRow, BillingStatementStatus } from "@/lib/admin-billing-types";
+import type { BillingReconciliationGroup, BillingReconciliationIssue, BillingReconciliationIssueCode, BillingReconciliationResult, BillingReconciliationRow, BillingStatementStatus } from "@/lib/admin-billing-types";
 import { normalizePaymentProvider } from "@/lib/payment-provider";
 import { BillingInputError } from "@/lib/server/billing-errors";
 import type { BillingOrderRecord, BillingReconciliationRowRecord, BillingReconciliationRunRecord, JsonValue, PaymentTransactionRecord } from "@/lib/server/database";
@@ -8,6 +8,10 @@ import type { BillingOrderRecord, BillingReconciliationRowRecord, BillingReconci
 export type BillingReconciliationActor = {
     userId?: string;
     username?: string;
+};
+
+export type BillingReconciliationScope = {
+    tenantId?: string;
 };
 
 export type PaymentStatementRow = {
@@ -41,13 +45,17 @@ const HEADER_ALIASES = {
 
 export { MAX_STATEMENT_ROWS };
 
-export function createBillingReconciliationPersistenceRecords(result: BillingReconciliationResult, input: { actor?: BillingReconciliationActor; fileName?: unknown; fileHash?: string; note?: unknown } = {}) {
+export function createBillingReconciliationPersistenceRecords(
+    result: BillingReconciliationResult,
+    input: { actor?: BillingReconciliationActor; fileName?: unknown; fileHash?: string; note?: unknown; scope?: BillingReconciliationScope } = {},
+) {
     const runId = randomUUID();
     const nowIso = new Date().toISOString();
     const fileName = normalizeText(input.fileName, "", 180);
     const note = normalizeText(input.note, "", 300);
     const run: BillingReconciliationRunRecord = {
         id: runId,
+        tenantId: normalizeText(input.scope?.tenantId, "", 120) || undefined,
         provider: result.provider,
         source: "csv",
         status: "completed",
@@ -73,7 +81,7 @@ export function createBillingReconciliationPersistenceRecords(result: BillingRec
     };
     return {
         run,
-        rows: result.rows.map((row) => toReconciliationRowRecord(runId, row, nowIso)),
+        rows: result.rows.map((row) => toReconciliationRowRecord(runId, row, nowIso, run.tenantId)),
     };
 }
 
@@ -107,6 +115,7 @@ export function reconcilePaymentStatementRows(provider: string, rows: PaymentSta
         return sum;
     }, 0);
     const statementNetAmountCents = statementPaidAmountCents - statementRefundedAmountCents;
+    const reconciliationRows = resultRows;
     return {
         provider: normalizeProvider(provider),
         totalRows: rows.length,
@@ -119,7 +128,8 @@ export function reconcilePaymentStatementRows(provider: string, rows: PaymentSta
             localMatchedAmountCents,
             differenceAmountCents: statementNetAmountCents - localMatchedAmountCents,
         },
-        rows: resultRows,
+        groups: buildReconciliationGroups(reconciliationRows),
+        rows: reconciliationRows,
         generatedAt: new Date().toISOString(),
     };
 }
@@ -179,12 +189,15 @@ function buildResultRow(row: PaymentStatementRow, local: LocalBillingReconciliat
         localOrderStatus: local?.order.status,
         localAmountCents: local?.order.amountCents,
         localCurrency: local?.order.currency,
+        tenantId: local?.order.tenantId,
+        merchantAccountId: local?.order.merchantAccountId,
+        collectionMode: local?.order.collectionMode,
         issueCodes: issues.map((item) => item.code),
         issues,
     };
 }
 
-function toReconciliationRowRecord(runId: string, row: BillingReconciliationRow, nowIso: string): BillingReconciliationRowRecord {
+function toReconciliationRowRecord(runId: string, row: BillingReconciliationRow, nowIso: string, scopeTenantId?: string): BillingReconciliationRowRecord {
     return {
         id: randomUUID(),
         runId,
@@ -202,6 +215,9 @@ function toReconciliationRowRecord(runId: string, row: BillingReconciliationRow,
         localOrderStatus: row.localOrderStatus,
         localAmountCents: row.localAmountCents,
         localCurrency: row.localCurrency,
+        tenantId: row.tenantId || scopeTenantId,
+        merchantAccountId: row.merchantAccountId,
+        collectionMode: row.collectionMode,
         issueCodes: row.issueCodes,
         issues: row.issues.map((item) => ({
             code: item.code,
@@ -232,6 +248,7 @@ export function buildStoredReconciliationResult(run: BillingReconciliationRunRec
             localMatchedAmountCents: run.localMatchedAmountCents,
             differenceAmountCents: run.differenceAmountCents,
         },
+        groups: buildReconciliationGroups(rows.map(fromReconciliationRowRecord)),
         rows: rows.map(fromReconciliationRowRecord),
         generatedAt: run.createdAt,
     };
@@ -254,9 +271,45 @@ function fromReconciliationRowRecord(row: BillingReconciliationRowRecord): Billi
         localOrderStatus: row.localOrderStatus,
         localAmountCents: row.localAmountCents,
         localCurrency: row.localCurrency,
+        tenantId: row.tenantId,
+        merchantAccountId: row.merchantAccountId,
+        collectionMode: row.collectionMode,
         issueCodes: normalizeStoredIssueCodes(row.issueCodes, issues),
         issues,
     };
+}
+
+function buildReconciliationGroups(rows: BillingReconciliationRow[]): BillingReconciliationGroup[] {
+    const groups = new Map<string, BillingReconciliationGroup>();
+    for (const row of rows) {
+        const currency = normalizeCurrency(row.currency || row.localCurrency) || "UNKNOWN";
+        const key = [row.tenantId || "platform", row.merchantAccountId || "platform", row.collectionMode || "platform", currency].join(":");
+        const group = groups.get(key) || {
+            tenantId: row.tenantId,
+            merchantAccountId: row.merchantAccountId,
+            collectionMode: row.collectionMode,
+            currency,
+            rowCount: 0,
+            matchedRows: 0,
+            issueRows: 0,
+            statementPaidAmountCents: 0,
+            statementRefundedAmountCents: 0,
+            localMatchedAmountCents: 0,
+            differenceAmountCents: 0,
+        };
+        group.rowCount += 1;
+        if (row.localOrderId) group.matchedRows += 1;
+        if (row.issueCodes.length) group.issueRows += 1;
+        if (row.statementStatus === "paid") group.statementPaidAmountCents += row.amountCents || 0;
+        if (row.statementStatus === "refunded") group.statementRefundedAmountCents += row.amountCents || 0;
+        if (row.localOrderId) {
+            group.localMatchedAmountCents += row.statementStatus === "refunded" ? -(row.localAmountCents || 0) : row.statementStatus === "paid" ? row.localAmountCents || 0 : 0;
+        }
+        group.differenceAmountCents =
+            group.statementPaidAmountCents - group.statementRefundedAmountCents - group.localMatchedAmountCents;
+        groups.set(key, group);
+    }
+    return [...groups.values()];
 }
 
 function normalizeStoredIssueCodes(value: JsonValue, issues: BillingReconciliationIssue[]) {

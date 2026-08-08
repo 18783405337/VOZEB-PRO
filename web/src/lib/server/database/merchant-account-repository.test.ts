@@ -58,4 +58,90 @@ describe("MerchantAccountRepository", () => {
             ["merchant-one", "tenant", "tenant-a", expect.any(Number)],
         );
     });
+
+    it("loads the enabled account for an exact owner, provider, and environment", async () => {
+        const query = vi.fn().mockResolvedValue({
+            rows: [
+                {
+                    id: "merchant-tenant",
+                    owner_type: "tenant",
+                    owner_id: "tenant-a",
+                    tenant_id: "tenant-a",
+                    provider: "stripe",
+                    environment: "production",
+                    status: "enabled",
+                    encrypted_config: "ciphertext",
+                    configured_fields_json: ["secretKey"],
+                    webhook_identity: "acct_tenant_a",
+                    created_at: 1,
+                    updated_at: 2,
+                },
+            ],
+        });
+        const repository = new MerchantAccountRepository({ query });
+
+        const account = await repository.getEnabled(
+            { ownerType: "tenant", ownerId: "tenant-a", tenantId: "tenant-a" },
+            "stripe",
+            "production",
+        );
+
+        expect(account?.id).toBe("merchant-tenant");
+        expect(query).toHaveBeenCalledWith(
+            expect.stringContaining("owner_type = $1"),
+            ["tenant", "tenant-a", "tenant-a", "stripe", "production"],
+        );
+    });
+
+    it("loads a merchant by id for checkout-time lineage validation", async () => {
+        const query = vi.fn().mockResolvedValue({
+            rows: [
+                {
+                    id: "merchant-one",
+                    owner_type: "platform",
+                    owner_id: "platform",
+                    provider: "manual",
+                    environment: "production",
+                    status: "enabled",
+                    encrypted_config: "{}",
+                    webhook_identity: "manual",
+                    created_at: 1,
+                    updated_at: 1,
+                },
+            ],
+        });
+        const repository = new MerchantAccountRepository({ query });
+
+        await repository.getById("merchant-one");
+
+        expect(query).toHaveBeenCalledWith("SELECT * FROM merchant_accounts WHERE id = $1", ["merchant-one"]);
+    });
+
+    it("loads an enabled merchant by provider-controlled webhook identity", async () => {
+        const query = vi.fn().mockResolvedValue({
+            rows: [
+                {
+                    id: "merchant-one",
+                    owner_type: "tenant",
+                    owner_id: "tenant-a",
+                    tenant_id: "tenant-a",
+                    provider: "stripe",
+                    environment: "production",
+                    status: "enabled",
+                    encrypted_config: "ciphertext",
+                    webhook_identity: "acct_tenant_a",
+                    created_at: 1,
+                    updated_at: 1,
+                },
+            ],
+        });
+        const repository = new MerchantAccountRepository({ query });
+
+        await repository.getEnabledByWebhookIdentity("stripe", "production", "acct_tenant_a");
+
+        expect(query).toHaveBeenCalledWith(
+            expect.stringContaining("webhook_identity = $3"),
+            ["stripe", "production", "acct_tenant_a"],
+        );
+    });
 });

@@ -72,6 +72,8 @@ async function claimBillingRefund(orderId: string, input: BillingRefundInput, wo
             id: existing?.id || randomUUID(),
             orderId: order.id,
             paymentId: payment?.id || existing?.paymentId,
+            tenantId: order.tenantId,
+            merchantAccountId: order.merchantAccountId,
             provider: payment?.provider || order.provider,
             status,
             providerRefundId: currentRefund?.providerRefundId || existing?.providerRefundId,

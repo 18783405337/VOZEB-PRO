@@ -1,7 +1,7 @@
 import { createSign, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 
-import { DEFAULT_ALIPAY_PAYMENT_MODE, isAlipayPaymentMode } from "@/lib/payment-config-types";
+import { DEFAULT_ALIPAY_PAYMENT_MODE, isAlipayPaymentMode, PAYMENT_PROVIDER_DEFINITIONS } from "@/lib/payment-config-types";
 import { normalizePaymentProvider } from "@/lib/payment-provider";
 import { BillingInputError } from "@/lib/server/billing-errors";
 import { getPaymentRuntimeEnv, getPaymentRuntimeValue, type PaymentRuntimeConfig } from "@/lib/server/payment-config-store";
@@ -9,15 +9,33 @@ import type { BillingOrderRecord, JsonValue } from "@/lib/server/database";
 import { loadPaymentPublicKey, verifyRsaSha256 } from "@/lib/server/payment-signature-utils";
 import { fetchSafeOutbound } from "@/lib/server/safe-outbound-fetch";
 import type { CreatePaymentCheckoutOptions, PaymentCheckoutKind, PaymentCheckoutResult } from "./payment-checkout-types";
+import type { ResolvedMerchantAccount } from "./payment/merchant-account-service";
 import { normalizePaymentForm, type PaymentForm } from "./payment-form";
 
-export async function createProviderCheckout(provider: string, order: BillingOrderRecord, options: CreatePaymentCheckoutOptions, paymentConfig: PaymentRuntimeConfig): Promise<PaymentCheckoutResult> {
-    if (provider === "stripe") return createStripeCheckout(order, options, paymentConfig);
-    if (provider === "alipay") return createAlipayCheckout(order, options, paymentConfig);
-    if (provider === "wechat") return createWechatNativeCheckout(order, options, paymentConfig);
-    if (provider === "payply") return createPayplyCheckout(order, options, paymentConfig);
+export async function createProviderCheckout(provider: string, order: BillingOrderRecord, options: CreatePaymentCheckoutOptions, paymentConfig: PaymentRuntimeConfig | ResolvedMerchantAccount): Promise<PaymentCheckoutResult> {
+    const resolvedConfig = "credentials" in paymentConfig ? merchantRuntimeConfig(paymentConfig) : paymentConfig;
+    if (provider === "stripe") return createStripeCheckout(order, options, resolvedConfig);
+    if (provider === "alipay") return createAlipayCheckout(order, options, resolvedConfig);
+    if (provider === "wechat") return createWechatNativeCheckout(order, options, resolvedConfig);
+    if (provider === "payply") return createPayplyCheckout(order, options, resolvedConfig);
     if (provider === "manual" || provider === "custom") return createManualCheckout(provider, order);
     throw new BillingInputError("暂不支持该支付渠道", 400);
+}
+
+function merchantRuntimeConfig(merchant: ResolvedMerchantAccount) {
+    const definition = PAYMENT_PROVIDER_DEFINITIONS.find((item) => item.id === merchant.provider);
+    if (!definition) throw new BillingInputError(`Unsupported payment provider: ${merchant.provider}`);
+    const valuesByEnvName: Record<string, string> = {};
+    for (const field of definition.fields) {
+        const value = merchant.credentials[field.key]?.trim();
+        if (!value) continue;
+        for (const envName of field.envNames) valuesByEnvName[envName] = value;
+    }
+    return {
+        saved: { providers: { [definition.id]: { enabled: true, values: { ...merchant.credentials } } } },
+        valuesByEnvName,
+        providers: { [definition.id]: { enabled: true, saved: true } },
+    } satisfies PaymentRuntimeConfig;
 }
 
 function createManualCheckout(provider: string, order: BillingOrderRecord): PaymentCheckoutResult {
