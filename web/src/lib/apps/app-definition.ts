@@ -1,6 +1,7 @@
 export type AppField =
     | { key: string; kind: "text"; label: string; required: boolean; maxLength?: number }
     | { key: string; kind: "image"; label: string; required: boolean; maxItems?: number }
+    | { key: string; kind: "images"; label: string; required: boolean; maxItems: number }
     | { key: string; kind: "audio"; label: string; required: boolean; maxItems?: number }
     | { key: string; kind: "video"; label: string; required: boolean; maxItems?: number }
     | { key: string; kind: "select"; label: string; required: boolean; options: readonly string[] }

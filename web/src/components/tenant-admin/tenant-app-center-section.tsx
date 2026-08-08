@@ -6,7 +6,7 @@ import type { TableColumnsType } from "antd";
 import { Check, CircleDollarSign, Download, RefreshCw, Route, Settings2, Trash2 } from "lucide-react";
 
 import type { AppField } from "@/lib/apps/app-definition";
-import { SPECIALIZED_PROVIDER_APP_KEYS } from "@/lib/auth/store";
+import { SPECIALIZED_PROVIDER_APP_KEYS } from "@/lib/auth/store-types";
 import type { TenantApplication, TenantApplicationCatalog, TenantApplicationProviderBindingState } from "@/services/api/app-center";
 import {
     clearTenantApplicationProviderBinding,

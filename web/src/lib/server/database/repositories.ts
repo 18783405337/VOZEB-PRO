@@ -20,6 +20,10 @@ import { TenantSettlementRepository } from "./tenant-settlement-repository";
 import { TenantWalletRepository } from "./tenant-wallet-repository";
 import { TaskBillingRepository } from "./task-billing-repository";
 import { MerchantAccountRepository } from "./merchant-account-repository";
+import { ActionTransferRepository } from "./action-transfer-repository";
+import { DigitalHumanRepository } from "./digital-human-repository";
+import { ImageHumanRepository } from "./image-human-repository";
+import { SmartClipRepository } from "./smart-clip-repository";
 import type { AppSettingsRecord, EntitlementPlanRecord, JsonValue, SystemModelChannelRecord } from "./repository-shared";
 import { isoValue, jsonParam, jsonValue, numberValue, optionalIso, optionalJson, optionalString, stringValue } from "./repository-shared";
 
@@ -90,6 +94,10 @@ export function createPostgresRepositories(executor?: QueryExecutor) {
         settings: new SettingsRepository(database),
         tenants: new TenantRepository(database, executor ? undefined : withPostgresTransaction),
         appCenter: new AppCenterPostgresRepository(database, executor ? undefined : withPostgresTransaction),
+        actionTransfer: new ActionTransferRepository(database),
+        digitalHuman: new DigitalHumanRepository(database),
+        imageHuman: new ImageHumanRepository(database),
+        smartClip: new SmartClipRepository(database),
         tenantWallet: new TenantWalletRepository(database, executor ? undefined : withPostgresTransaction),
         tenantPower: new TenantPowerRepository(database, executor ? undefined : withPostgresTransaction),
         tenantSettlement: new TenantSettlementRepository(database, executor ? undefined : withPostgresTransaction),

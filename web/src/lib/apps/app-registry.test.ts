@@ -71,4 +71,15 @@ describe("application registry", () => {
         expect(definition?.inputSchema.map((field) => field.key)).toEqual(expect.arrayContaining(requiredFields));
         expect(Object.isFrozen(definition)).toBe(true);
     });
+
+    it("keeps the action transfer limits compatible with the original application", () => {
+        const definition = appRegistry.get("action-transfer", "1.0.0");
+        const referenceImages = definition?.inputSchema.find((field) => field.key === "referenceImages");
+        const mode = definition?.inputSchema.find((field) => field.key === "mode");
+        const faceCount = definition?.inputSchema.find((field) => field.key === "faceCount");
+
+        expect(referenceImages).toMatchObject({ kind: "images", maxItems: 3 });
+        expect(mode).toMatchObject({ kind: "select", options: ["fast", "standard", "max"] });
+        expect(faceCount).toMatchObject({ kind: "number", max: 7 });
+    });
 });

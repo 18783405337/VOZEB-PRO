@@ -9,8 +9,14 @@ const mocks = vi.hoisted(() => ({
     resolveSpecializedProviderContext: vi.fn(),
     createStoredGenerationTask: vi.fn(),
     scheduleGenerationTask: vi.fn(),
+    reserveSpecializedTaskBilling: vi.fn(),
+    releaseSpecializedTaskBilling: vi.fn(),
 }));
 
+vi.mock("node:crypto", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("node:crypto")>();
+    return { ...actual, randomUUID: () => "task-1" };
+});
 vi.mock("@/lib/server/image-human/image-human-access", () => ({
     requireImageHumanContext: mocks.requireImageHumanContext,
     imageHumanApiError: (error: unknown) => {
@@ -29,6 +35,10 @@ vi.mock("@/lib/server/specialized-provider/provider-context", () => ({
 }));
 vi.mock("@/lib/server/generation-task-store", () => ({ createStoredGenerationTask: mocks.createStoredGenerationTask }));
 vi.mock("@/lib/server/generation-task-scheduler", () => ({ scheduleGenerationTask: mocks.scheduleGenerationTask }));
+vi.mock("@/lib/server/apps/specialized-task-billing", () => ({
+    reserveSpecializedTaskBilling: mocks.reserveSpecializedTaskBilling,
+    releaseSpecializedTaskBilling: mocks.releaseSpecializedTaskBilling,
+}));
 
 import { GET, POST } from "./route";
 
@@ -66,7 +76,11 @@ describe("image human task API", () => {
         });
         mocks.listTasks.mockResolvedValue([createdTask]);
         mocks.createTask.mockResolvedValue(createdTask);
-        mocks.requireTenantAppRuntime.mockResolvedValue({});
+        mocks.requireTenantAppRuntime.mockResolvedValue({
+            appKey: "image-human",
+            version: "1.0.0",
+            definition: { workflowKey: "image-human.v1" },
+        });
         mocks.resolveTenantAppProviderCandidates.mockResolvedValue([
             {
                 logicalModelId: "image-human",
@@ -76,6 +90,12 @@ describe("image human task API", () => {
             },
         ]);
         mocks.resolveSpecializedProviderContext.mockReturnValue({ protocol: "xhadmin-image-human-v1" });
+        mocks.reserveSpecializedTaskBilling.mockResolvedValue({
+            saleAmount: 144,
+            costAmount: 60,
+            snapshot: { billingMetric: "video-second", quantity: 12 },
+        });
+        mocks.releaseSpecializedTaskBilling.mockResolvedValue({});
     });
 
     it("lists only the authenticated tenant user's tasks", async () => {
@@ -108,6 +128,7 @@ describe("image human task API", () => {
         expect(mocks.requireTenantAppRuntime).toHaveBeenCalledWith("tenant-1", "image-human", "video");
         expect(mocks.createTask).toHaveBeenCalledWith(
             expect.objectContaining({
+                id: "task-1",
                 tenantId: "tenant-1",
                 userId: "user-1",
                 sourceImageUri: "https://cdn.example/avatar.png",
@@ -118,9 +139,29 @@ describe("image human task API", () => {
         );
         expect(mocks.createStoredGenerationTask).toHaveBeenCalledWith(
             "image-human",
-            expect.objectContaining({ id: "task-1", tenantId: "tenant-1", type: "image-human" }),
+            expect.objectContaining({
+                id: "task-1",
+                tenantId: "tenant-1",
+                type: "image-human",
+                appKey: "image-human",
+                appVersion: "1.0.0",
+                workflowKey: "image-human.v1",
+                taskBillingUsage: { saleAmount: 144, costAmount: 60 },
+                payload: expect.objectContaining({
+                    billingSnapshot: { billingMetric: "video-second", quantity: 12 },
+                }),
+            }),
             expect.any(Number),
         );
+        expect(mocks.reserveSpecializedTaskBilling).toHaveBeenCalledWith(
+            expect.objectContaining({
+                tenantId: "tenant-1",
+                userId: "user-1",
+                generationTaskId: "task-1",
+                quantity: 12,
+            }),
+        );
+        expect(mocks.reserveSpecializedTaskBilling.mock.invocationCallOrder[0]).toBeLessThan(mocks.createTask.mock.invocationCallOrder[0]!);
         expect(mocks.scheduleGenerationTask).toHaveBeenCalledWith(
             "image-human",
             "task-1",
@@ -128,5 +169,28 @@ describe("image human task API", () => {
             { tenantId: "tenant-1" },
         );
         expect(payload.data.task.id).toBe("task-1");
+    });
+
+    it("releases the billing reservation when task creation fails", async () => {
+        mocks.createTask.mockRejectedValueOnce(new Error("insert failed"));
+
+        await expect(
+            POST(
+                new Request("http://localhost/api/image-human/tasks", {
+                    method: "POST",
+                    headers: { "content-type": "application/json" },
+                    body: JSON.stringify({
+                        imageUrl: "https://cdn.example/avatar.png",
+                        audioUrl: "https://cdn.example/voice.mp3",
+                        duration: 12,
+                    }),
+                }),
+            ),
+        ).rejects.toThrow("insert failed");
+
+        expect(mocks.releaseSpecializedTaskBilling).toHaveBeenCalledWith({
+            tenantId: "tenant-1",
+            generationTaskId: "task-1",
+        });
     });
 });

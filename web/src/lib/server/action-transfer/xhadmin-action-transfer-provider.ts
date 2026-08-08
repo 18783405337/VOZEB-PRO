@@ -4,7 +4,13 @@ import type { SpecializedProviderContext } from "@/lib/server/specialized-provid
 
 export type ActionTransferProviderRequest = Readonly<{
     localTaskId: string;
-    payload: Record<string, unknown>;
+    referenceImageUrls: string[];
+    sourceVideoUrl: string;
+    prompt: string;
+    mode: string;
+    faceCount: number;
+    duration: number;
+    providerParams?: Record<string, unknown>;
 }>;
 
 export type ActionTransferProviderResult = Readonly<{
@@ -26,21 +32,27 @@ export class XhadminActionTransferProvider {
     constructor(private readonly fetcher?: ProviderFetcher) {}
 
     async submit(request: ActionTransferProviderRequest, context: SpecializedProviderContext): Promise<ActionTransferProviderResult> {
-        const params = record(request.payload);
-        const providerPayload = record(params.provider_payload);
-        const bodyParams = { ...params };
-        delete bodyParams.provider_payload;
-        delete bodyParams.submit_path;
+        const params = record(request.providerParams);
         const response = await requestSpecializedProvider(
             {
                 baseUrl: context.baseUrl,
                 apiKey: context.apiKey,
                 method: "POST",
-                path: SUBMIT_PATH,
+                path: text(params.submit_path) || SUBMIT_PATH,
                 body: compact({
                     type: "action_transfer",
-                    ...providerPayload,
-                    ...bodyParams,
+                    ...record(params.channel_extra_payload),
+                    ...record(params.payload),
+                    file_url: request.referenceImageUrls.slice(0, 3).map((url) => httpsFileUrl(url, "referenceImageUrls")),
+                    video_url: httpsFileUrl(request.sourceVideoUrl, "sourceVideoUrl"),
+                    prompt: request.prompt,
+                    mode: request.mode,
+                    face_count: request.faceCount > 0 ? Math.floor(request.faceCount) : undefined,
+                    duration: request.duration > 0 ? request.duration : undefined,
+                    client_task_id: text(params.client_task_id),
+                    idempotency_key: text(params.idempotency_key),
+                    local_task_id: text(params.local_task_id),
+                    local_task_sn: text(params.local_task_sn),
                 }),
                 timeoutMs: context.timeoutMs,
             },
@@ -84,6 +96,12 @@ function record(value: unknown): Record<string, unknown> {
 
 function text(value: unknown) {
     return typeof value === "string" ? value.trim() : "";
+}
+
+function httpsFileUrl(value: string, field: string) {
+    const url = text(value);
+    if (!/^https:\/\//i.test(url)) throw new Error(`${field} must be an HTTPS URL`);
+    return url;
 }
 
 function compact(value: Record<string, unknown>) {

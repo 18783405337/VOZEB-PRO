@@ -59,6 +59,7 @@ function setup(initial: DigitalHumanRuntimeTask, provider: DigitalHumanProvider,
         saveTask: vi.fn(async (_tenantId, _taskId, patch) => {
             current = { ...current, ...patch };
         }),
+        persistResult: vi.fn(async (_task, videoUrl) => videoUrl),
         completeTask: vi.fn(async (_tenantId, _taskId, videoUrl, payload) => {
             current = { ...current, providerStage: "succeeded", providerPayload: payload };
             expect(videoUrl).toBeTruthy();
@@ -84,6 +85,7 @@ describe("digital human runtime", () => {
             queryAvatar: vi.fn(async () => ({ state: "succeeded" as const, mediaUrl: "https://cdn.example/result.mp4", error: "", payload: { status: "completed" } })),
         };
         const setupResult = setup(task(), provider);
+        vi.mocked(setupResult.dependencies.persistResult).mockResolvedValue("/api/generation-log-assets/local-result.mp4");
 
         await expect(runDigitalHumanTaskStepWithDependencies(lease, setupResult.dependencies)).resolves.toMatchObject({
             state: "pending",
@@ -94,12 +96,29 @@ describe("digital human runtime", () => {
         await runDigitalHumanTaskStepWithDependencies(lease, setupResult.dependencies);
         await expect(runDigitalHumanTaskStepWithDependencies(lease, setupResult.dependencies)).resolves.toMatchObject({
             state: "completed",
-            patch: { executionPhase: "completed", lastUpstreamStatus: "succeeded" },
+            patch: {
+                executionPhase: "completed",
+                lastUpstreamStatus: "succeeded",
+                resultPayload: { videoUrl: "/api/generation-log-assets/local-result.mp4" },
+            },
         });
 
         expect(provider.submitTts).toHaveBeenCalledTimes(1);
         expect(provider.submitAvatar).toHaveBeenCalledWith(expect.anything(), "https://cdn.example/generated.mp3", context);
-        expect(setupResult.dependencies.completeTask).toHaveBeenCalledWith("tenant-1", "task-1", "https://cdn.example/result.mp4", expect.objectContaining({ videoUrl: "https://cdn.example/result.mp4" }));
+        expect(setupResult.dependencies.persistResult).toHaveBeenCalledWith(
+            expect.objectContaining({ id: "task-1", tenantId: "tenant-1", userId: "user-1" }),
+            "https://cdn.example/result.mp4",
+            context,
+        );
+        expect(setupResult.dependencies.completeTask).toHaveBeenCalledWith(
+            "tenant-1",
+            "task-1",
+            "/api/generation-log-assets/local-result.mp4",
+            expect.objectContaining({
+                providerVideoUrl: "https://cdn.example/result.mp4",
+                videoUrl: "/api/generation-log-assets/local-result.mp4",
+            }),
+        );
     });
 
     it("uses the source voice directly for the Kling avatar-only flow", async () => {

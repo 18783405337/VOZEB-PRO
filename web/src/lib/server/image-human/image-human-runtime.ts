@@ -8,6 +8,7 @@ import {
     SpecializedProviderError,
     type SpecializedProviderContext,
 } from "@/lib/server/specialized-provider/provider-types";
+import { persistSpecializedVideoResult } from "@/lib/server/specialized-provider/specialized-media-persistence";
 
 import {
     XhadminImageHumanProvider,
@@ -45,6 +46,7 @@ export type ImageHumanRuntimeProvider = Readonly<{
 export type ImageHumanRuntimeDependencies = Readonly<{
     loadTask(tenantId: string, userId: string, taskId: string): Promise<ImageHumanRuntimeTask | null>;
     saveTask(tenantId: string, userId: string, taskId: string, patch: ImageHumanRuntimeTaskPatch): Promise<void>;
+    persistResult(task: ImageHumanRuntimeTask, videoUrl: string, context: SpecializedProviderContext): Promise<string>;
     completeTask(tenantId: string, userId: string, taskId: string, videoUrl: string, payload: Record<string, unknown>): Promise<void>;
     failTask(tenantId: string, userId: string, taskId: string, message: string, payload: Record<string, unknown>): Promise<void>;
     resolveContext(lease: GenerationTaskLease, task: ImageHumanRuntimeTask): Promise<SpecializedProviderContext>;
@@ -54,9 +56,9 @@ export type ImageHumanRuntimeDependencies = Readonly<{
 
 export async function runImageHumanTaskStep(
     lease: GenerationTaskLease,
-    _context: SpecializedTaskRuntimeContext,
+    runtimeContext: SpecializedTaskRuntimeContext,
 ): Promise<SpecializedTaskRuntimeStep> {
-    return runImageHumanTaskStepWithDependencies(lease, createDefaultDependencies());
+    return runImageHumanTaskStepWithDependencies(lease, createDefaultDependencies(runtimeContext));
 }
 
 export async function runImageHumanTaskStepWithDependencies(
@@ -100,7 +102,12 @@ export async function runImageHumanTaskStepWithDependencies(
         if (task.providerStage === "persisting_result") {
             const videoUrl = text(task.providerPayload.videoUrl);
             if (!videoUrl) return failTask(task, "Generated image human video is missing", task.providerPayload, dependencies, context, now, "result_missing");
-            await dependencies.completeTask(task.tenantId, task.userId, task.id, videoUrl, task.providerPayload);
+            const persistedVideoUrl = await dependencies.persistResult(task, videoUrl, context);
+            const payload = mergePayload(task.providerPayload, {
+                providerVideoUrl: videoUrl,
+                videoUrl: persistedVideoUrl,
+            });
+            await dependencies.completeTask(task.tenantId, task.userId, task.id, persistedVideoUrl, payload);
             return {
                 state: "completed",
                 patch: {
@@ -109,7 +116,7 @@ export async function runImageHumanTaskStepWithDependencies(
                     provider: context.protocol,
                     nextPollAt: undefined,
                     lastUpstreamStatus: "succeeded",
-                    resultPayload: { videoUrl },
+                    resultPayload: { videoUrl: persistedVideoUrl },
                 },
             };
         }
@@ -296,7 +303,7 @@ function text(value: unknown) {
     return typeof value === "string" ? value.trim() : "";
 }
 
-function createDefaultDependencies(): ImageHumanRuntimeDependencies {
+function createDefaultDependencies(runtimeContext: SpecializedTaskRuntimeContext): ImageHumanRuntimeDependencies {
     return {
         async loadTask(tenantId, userId, taskId) {
             await ensurePostgresSchema();
@@ -305,6 +312,21 @@ function createDefaultDependencies(): ImageHumanRuntimeDependencies {
         async saveTask(tenantId, userId, taskId, patch) {
             await ensurePostgresSchema();
             await createPostgresRepositories().imageHuman.updateRuntimeTask(tenantId, userId, taskId, patch);
+        },
+        async persistResult(task, videoUrl, providerContext) {
+            const asset = await persistSpecializedVideoResult({
+                tenantId: task.tenantId,
+                userId: task.userId,
+                taskId: task.id,
+                taskType: "image-human",
+                sourceUrl: videoUrl,
+                origin: runtimeContext.origin,
+                cookie: runtimeContext.cookie,
+                title: "Image human",
+                model: providerContext.upstreamModel,
+                provider: providerContext.protocol,
+            });
+            return asset.url;
         },
         async completeTask(tenantId, userId, taskId, videoUrl, payload) {
             await ensurePostgresSchema();

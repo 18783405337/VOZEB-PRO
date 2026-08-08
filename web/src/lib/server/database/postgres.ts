@@ -9,6 +9,8 @@ export type QueryExecutor = {
 };
 
 const POSTGRES_TABLE_PREFIX = "vozeb_pro_";
+const POSTGRES_SCHEMA_ADVISORY_LOCK_ID = "8649073620260808";
+const POSTGRES_SCHEMA_VERSION = "20260808_specialized_apps_complete";
 const POSTGRES_TABLES = [
     "schema_migrations",
     "app_settings",
@@ -27,6 +29,26 @@ const POSTGRES_TABLES = [
     "tenant_app_provider_bindings",
     "tenant_app_settings",
     "tenant_app_pricing",
+    "digital_human_configs",
+    "digital_human_avatars",
+    "digital_human_voices",
+    "digital_human_tasks",
+    "digital_human_results",
+    "digital_human_quotas",
+    "digital_human_sensitive_words",
+    "image_human_configs",
+    "image_human_tasks",
+    "image_human_results",
+    "action_transfer_configs",
+    "action_transfer_tasks",
+    "action_transfer_results",
+    "smart_clip_configs",
+    "smart_clip_tasks",
+    "smart_clip_results",
+    "smart_clip_channels",
+    "smart_clip_channel_specs",
+    "smart_clip_billings",
+    "smart_clip_sensitive_words",
     "tenant_user_wallets",
     "tenant_user_wallet_ledger_entries",
     "tenant_power_accounts",
@@ -107,6 +129,27 @@ const POSTGRES_SCHEMA_OBJECTS = [
     "app_versions_app_id_idx",
     "tenant_apps_tenant_status_idx",
     "tenant_app_provider_bindings_logical_idx",
+    "digital_human_avatars_owner_idx",
+    "digital_human_voices_owner_idx",
+    "digital_human_tasks_owner_status_idx",
+    "digital_human_tasks_provider_idx",
+    "digital_human_results_owner_idx",
+    "digital_human_quotas_tenant_idx",
+    "digital_human_sensitive_words_tenant_idx",
+    "image_human_tasks_owner_status_idx",
+    "image_human_tasks_provider_idx",
+    "image_human_results_owner_idx",
+    "action_transfer_tasks_owner_status_idx",
+    "action_transfer_tasks_provider_idx",
+    "action_transfer_results_owner_idx",
+    "smart_clip_tasks_owner_status_idx",
+    "smart_clip_tasks_provider_idx",
+    "smart_clip_results_owner_idx",
+    "smart_clip_billings_task_idx",
+    "smart_clip_sensitive_words_tenant_idx",
+    "smart_clip_channels_tenant_code_key",
+    "smart_clip_channel_specs_key",
+    "smart_clip_sensitive_words_tenant_word_key",
     "tenant_user_wallet_ledger_reference_idx",
     "tenant_power_ledger_reference_idx",
     "tenant_settlement_ledger_reference_idx",
@@ -425,8 +468,7 @@ export async function ensurePostgresSchema() {
 
 export async function initializePostgresSchema() {
     if (!globalForPostgres.__vozebProPostgresSchemaReady) {
-        globalForPostgres.__vozebProPostgresSchemaReady = getPostgresPool()
-            .query(prefixPostgresSql(POSTGRESQL_SCHEMA_SQL))
+        globalForPostgres.__vozebProPostgresSchemaReady = runPostgresSchemaInitialization()
             .then(() => undefined)
             .catch((error) => {
                 globalForPostgres.__vozebProPostgresSchemaReady = undefined;
@@ -434,6 +476,34 @@ export async function initializePostgresSchema() {
             });
     }
     return globalForPostgres.__vozebProPostgresSchemaReady;
+}
+
+async function runPostgresSchemaInitialization() {
+    const client = await getPostgresPool().connect();
+    let lockAcquired = false;
+    let unlockError: unknown;
+    try {
+        await client.query("SELECT pg_advisory_lock($1::bigint)", [POSTGRES_SCHEMA_ADVISORY_LOCK_ID]);
+        lockAcquired = true;
+        try {
+            const migrationTable = await client.query<{ table_name: string | null }>("SELECT to_regclass('public.vozeb_pro_schema_migrations')::text AS table_name");
+            const currentMigration = migrationTable.rows[0]?.table_name
+                ? await client.query<{ version: string }>(prefixPostgresSql("SELECT version FROM schema_migrations WHERE version = $1"), [POSTGRES_SCHEMA_VERSION])
+                : undefined;
+            if (!currentMigration?.rows[0]) await client.query(prefixPostgresSql(POSTGRESQL_SCHEMA_SQL));
+        } finally {
+            if (lockAcquired) {
+                try {
+                    await client.query("SELECT pg_advisory_unlock($1::bigint)", [POSTGRES_SCHEMA_ADVISORY_LOCK_ID]);
+                } catch (error) {
+                    unlockError = error;
+                }
+            }
+        }
+        if (unlockError) throw unlockError;
+    } finally {
+        client.release(unlockError instanceof Error ? unlockError : undefined);
+    }
 }
 
 function prefixPostgresSql(sql: string) {

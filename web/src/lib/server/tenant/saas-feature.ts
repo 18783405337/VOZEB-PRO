@@ -11,3 +11,11 @@ export function isSaasBillingEnabled() {
 export function isAppCenterEnabled() {
     return ENABLED_VALUES.has(process.env.VOZEB_PRO_APP_CENTER_ENABLED?.trim().toLowerCase() ?? "");
 }
+
+export function isDigitalHumanEnabled() {
+    return ENABLED_VALUES.has(process.env.VOZEB_PRO_DIGITAL_HUMAN_ENABLED?.trim().toLowerCase() ?? "");
+}
+
+export function isSmartClipEnabled() {
+    return ENABLED_VALUES.has(process.env.VOZEB_PRO_SMART_CLIP_ENABLED?.trim().toLowerCase() ?? "");
+}

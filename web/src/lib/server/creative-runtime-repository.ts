@@ -164,8 +164,9 @@ export async function resolvePostgresConversation<T extends AgentRunBase>(client
         updatedAt: now,
         lastMessageAt: now,
     };
-    await client.query("INSERT INTO creative_conversations (id, user_id, surface, source, project_id, title, status, created_at, updated_at, last_message_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $8)", [
+    await client.query("INSERT INTO creative_conversations (id, tenant_id, user_id, surface, source, project_id, title, status, created_at, updated_at, last_message_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, $9)", [
         conversation.id,
+        input.run.tenantId || "default",
         userId,
         conversation.surface,
         conversation.source,

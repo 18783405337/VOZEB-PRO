@@ -59,6 +59,7 @@ function setup(initial: ImageHumanRuntimeTask, provider: ImageHumanRuntimeProvid
         saveTask: vi.fn(async (_tenantId, _userId, _taskId, patch) => {
             current = { ...current, ...patch };
         }),
+        persistResult: vi.fn(async (_task, videoUrl) => videoUrl),
         completeTask: vi.fn(async (_tenantId, _userId, _taskId, videoUrl, payload) => {
             current = { ...current, providerStage: "succeeded", providerPayload: payload };
             expect(videoUrl).toBeTruthy();
@@ -157,6 +158,7 @@ describe("image human runtime", () => {
             })),
         };
         const result = setup(task({ providerStage: "waiting_provider", providerTaskId: "provider-task-1" }), provider);
+        vi.mocked(result.dependencies.persistResult).mockResolvedValue("/api/generation-log-assets/local-result.mp4");
 
         await expect(runImageHumanTaskStepWithDependencies(lease, result.dependencies)).resolves.toMatchObject({
             state: "result_ready",
@@ -164,14 +166,26 @@ describe("image human runtime", () => {
         });
         await expect(runImageHumanTaskStepWithDependencies(lease, result.dependencies)).resolves.toMatchObject({
             state: "completed",
-            patch: { executionPhase: "completed", lastUpstreamStatus: "succeeded" },
+            patch: {
+                executionPhase: "completed",
+                lastUpstreamStatus: "succeeded",
+                resultPayload: { videoUrl: "/api/generation-log-assets/local-result.mp4" },
+            },
         });
+        expect(result.dependencies.persistResult).toHaveBeenCalledWith(
+            expect.objectContaining({ id: "task-1", tenantId: "tenant-1", userId: "user-1" }),
+            "https://cdn.example/result.mp4",
+            context,
+        );
         expect(result.dependencies.completeTask).toHaveBeenCalledWith(
             "tenant-1",
             "user-1",
             "task-1",
-            "https://cdn.example/result.mp4",
-            expect.objectContaining({ videoUrl: "https://cdn.example/result.mp4" }),
+            "/api/generation-log-assets/local-result.mp4",
+            expect.objectContaining({
+                providerVideoUrl: "https://cdn.example/result.mp4",
+                videoUrl: "/api/generation-log-assets/local-result.mp4",
+            }),
         );
     });
 

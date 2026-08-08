@@ -36,6 +36,7 @@ import {
     mutateCreativeRun,
     registerCreativeAssets,
 } from "./creative-runtime-store";
+import { resolvePostgresConversation } from "./creative-runtime-repository";
 
 describe("creative runtime file provider", () => {
     beforeEach(() => {
@@ -194,6 +195,30 @@ describe("creative runtime file provider", () => {
 
         expect(String(query.mock.calls[1]?.[0])).toContain("sequence > $3");
         expect(query.mock.calls[1]?.[1]).toEqual(["conversation", "current-run", 120]);
+    });
+
+    it("writes the run tenant when creating a PostgreSQL conversation", async () => {
+        const query = vi.fn().mockResolvedValue({ rows: [] });
+
+        await resolvePostgresConversation({ query }, "user", {
+            run: run({ tenantId: "tenant-a" }),
+            title: "测试会话",
+            prompt: "生成一张图",
+            assetIds: [],
+            ttlMs: 60_000,
+        });
+
+        expect(query).toHaveBeenCalledWith(expect.stringContaining("id, tenant_id, user_id"), [
+            "conversation",
+            "tenant-a",
+            "user",
+            "chat",
+            "agent",
+            null,
+            "新对话",
+            "active",
+            expect.any(Date),
+        ]);
     });
 
     it("appends a workbench exchange atomically and advances the sequence", async () => {

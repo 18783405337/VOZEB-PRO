@@ -20,6 +20,11 @@ describe("normalizeVideoResult", () => {
     it("stores the upstream result unchanged and records the duration sent to the provider", async () => {
         const result = await normalizeVideoResult({ url: "/api/ai/system/video/_media?url=result", origin: "http://localhost", cookie: "session=test", requestedDurationSeconds: 5, ownerUserId: "user" });
 
+        expect(mocks.downloadMediaToFile).toHaveBeenCalledWith(
+            "/api/ai/system/video/_media?url=result",
+            expect.any(String),
+            expect.objectContaining({ expectedType: "video" }),
+        );
         expect(mocks.writeReferenceMediaFile.mock.calls[0][0]).toMatch(/source-video$/);
         expect(result).toEqual({ url: "/api/reference-assets/permanent/2026/07/19/videos/result.mp4", mimeType: "video/mp4", durationMs: 5000 });
     });

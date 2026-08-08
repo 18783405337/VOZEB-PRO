@@ -10,5 +10,6 @@ export default defineConfig({
     },
     test: {
         include: ["src/**/*.test.{ts,tsx}", "scripts/**/*.test.mjs"],
+        maxWorkers: 4,
     },
 });

@@ -18,4 +18,15 @@ describe("user navigation order", () => {
         expect(navigationTools.filter((tool) => tool.group === "community").map((tool) => tool.label)).toEqual(["作品广场", "个人主页"]);
         expect(navigationTools.find((tool) => tool.group === "community")?.slug).toBe("community");
     });
+
+    it("exposes action transfer as a professional tool", () => {
+        expect(navigationTools).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    slug: "action-transfer",
+                    group: "professional",
+                }),
+            ]),
+        );
+    });
 });

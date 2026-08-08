@@ -20,13 +20,21 @@ function response(payload: Record<string, unknown>) {
 }
 
 describe("XhadminActionTransferProvider", () => {
-    it("adds the original action_transfer type and submits JSON", async () => {
+    it("submits the original action transfer payload shape", async () => {
         const fetcher = vi.fn().mockResolvedValue(response({ code: 0, data: { task_id: "action-task-1" } }));
         const provider = new XhadminActionTransferProvider(fetcher);
 
         await expect(
             provider.submit(
-                { localTaskId: "local-1", payload: { image_url: "https://cdn.example/input.png", video_url: "https://cdn.example/motion.mp4" } },
+                {
+                    localTaskId: "local-1",
+                    referenceImageUrls: ["https://cdn.example/person-1.png", "https://cdn.example/person-2.png"],
+                    sourceVideoUrl: "https://cdn.example/motion.mp4",
+                    prompt: "Keep the original camera movement",
+                    mode: "standard",
+                    faceCount: 2,
+                    duration: 12,
+                },
                 context,
             ),
         ).resolves.toMatchObject({ taskId: "action-task-1" });
@@ -35,8 +43,12 @@ describe("XhadminActionTransferProvider", () => {
         expect(url).toBe("https://provider.example.com/api/v1/apps/action_transfer/submit");
         expect(JSON.parse(String(init.body))).toEqual({
             type: "action_transfer",
-            image_url: "https://cdn.example/input.png",
+            file_url: ["https://cdn.example/person-1.png", "https://cdn.example/person-2.png"],
             video_url: "https://cdn.example/motion.mp4",
+            prompt: "Keep the original camera movement",
+            mode: "standard",
+            face_count: 2,
+            duration: 12,
         });
     });
 

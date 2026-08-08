@@ -1,5 +1,9 @@
 import { POSTGRESQL_COMMERCIAL_FEATURES_SCHEMA_SQL } from "./schema-commercial-features";
 import { POSTGRESQL_APPLICATION_CENTER_SCHEMA_SQL } from "./schema-application-center";
+import { POSTGRESQL_ACTION_TRANSFER_SCHEMA_SQL } from "./schema-action-transfer";
+import { POSTGRESQL_DIGITAL_HUMAN_SCHEMA_SQL } from "./schema-digital-human";
+import { POSTGRESQL_IMAGE_HUMAN_SCHEMA_SQL } from "./schema-image-human";
+import { POSTGRESQL_SMART_CLIP_SCHEMA_SQL } from "./schema-smart-clip";
 import { POSTGRESQL_SAAS_BILLING_SCHEMA_SQL } from "./schema-saas-billing";
 import { POSTGRESQL_SAAS_CORE_SCHEMA_SQL, POSTGRESQL_SAAS_RESOURCE_SCHEMA_SQL } from "./schema-saas-core";
 import { POSTGRESQL_TRIGGER_SCHEMA_SQL } from "./schema-triggers";
@@ -191,6 +195,14 @@ CREATE INDEX IF NOT EXISTS sessions_expires_at_idx ON sessions (expires_at);
 ${POSTGRESQL_SAAS_CORE_SCHEMA_SQL}
 
 ${POSTGRESQL_APPLICATION_CENTER_SCHEMA_SQL}
+
+${POSTGRESQL_DIGITAL_HUMAN_SCHEMA_SQL}
+
+${POSTGRESQL_IMAGE_HUMAN_SCHEMA_SQL}
+
+${POSTGRESQL_ACTION_TRANSFER_SCHEMA_SQL}
+
+${POSTGRESQL_SMART_CLIP_SCHEMA_SQL}
 
 CREATE TABLE IF NOT EXISTS account_deletion_requests (
     id text PRIMARY KEY,
@@ -941,6 +953,6 @@ CREATE INDEX IF NOT EXISTS audit_logs_target_idx ON audit_logs (target_type, tar
 ${POSTGRESQL_TRIGGER_SCHEMA_SQL}
 
 INSERT INTO schema_migrations (version)
-VALUES ('20260709_postgresql_commercial_base'), ('20260709_billing_foundation'), ('20260709_billing_checkout'), ('20260709_commercial_seed_products'), ('20260709_vozeb_pro_table_prefix'), ('20260711_generation_tasks'), ('20260716_billing_reconciliation'), ('20260725_account_deletion_requests'), ('20260726_promotion_coupon_commerce'), ('20260727_referral_growth_rewards'), ('20260727_work_publications'), ('20260727_work_community'), ('20260728_user_blocks'), ('20260808_saas_billing_hub')
+VALUES ('20260709_postgresql_commercial_base'), ('20260709_billing_foundation'), ('20260709_billing_checkout'), ('20260709_commercial_seed_products'), ('20260709_vozeb_pro_table_prefix'), ('20260711_generation_tasks'), ('20260716_billing_reconciliation'), ('20260725_account_deletion_requests'), ('20260726_promotion_coupon_commerce'), ('20260727_referral_growth_rewards'), ('20260727_work_publications'), ('20260727_work_community'), ('20260728_user_blocks'), ('20260808_saas_billing_hub'), ('20260808_smart_clip'), ('20260808_image_human'), ('20260808_action_transfer'), ('20260808_specialized_apps_complete')
 ON CONFLICT (version) DO NOTHING;
 `;

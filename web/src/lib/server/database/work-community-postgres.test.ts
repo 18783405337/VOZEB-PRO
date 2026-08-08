@@ -90,8 +90,8 @@ async function insertPublicCreator(client: QueryExecutor) {
         [creator.id, creator.username],
     );
     await client.query(
-        `INSERT INTO published_works (id, owner_user_id, slug, source_type, source_id, lifecycle_status)
-         VALUES ($1, $2, $3, 'media', $4, 'active')`,
+        `INSERT INTO published_works (id, tenant_id, owner_user_id, slug, source_type, source_id, lifecycle_status)
+         VALUES ($1, 'default', $2, $3, 'media', $4, 'active')`,
         [creator.workId, creator.id, creator.slug, `integration-${suffix}`],
     );
     await client.query(
@@ -102,8 +102,8 @@ async function insertPublicCreator(client: QueryExecutor) {
     );
     await client.query(
         `INSERT INTO local_media_assets (
-            storage_key, scope, storage_class, type, owner_user_id, source, mime_type, bytes
-         ) VALUES ($1, 'generation', 'permanent', 'image', $2, 'community-integration-test', 'image/png', 1)`,
+            storage_key, tenant_id, scope, storage_class, type, owner_user_id, source, mime_type, bytes
+         ) VALUES ($1, 'default', 'generation', 'permanent', 'image', $2, 'community-integration-test', 'image/png', 1)`,
         [creator.storageKey, creator.id],
     );
     await client.query(

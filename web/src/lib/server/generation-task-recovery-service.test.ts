@@ -29,6 +29,7 @@ const mocks = vi.hoisted(() => ({
     runDigitalHumanTaskStep: vi.fn(),
     runImageHumanTaskStep: vi.fn(),
     runActionTransferTaskStep: vi.fn(),
+    transitionStoredGenerationTask: vi.fn(),
 }));
 
 vi.mock("@/lib/server/generation-task-scheduler", () => ({
@@ -64,6 +65,7 @@ vi.mock("@/lib/server/text-task-refund", () => ({ refundTextTask: mocks.refundTe
 vi.mock("@/lib/server/digital-human/digital-human-runtime", () => ({ runDigitalHumanTaskStep: mocks.runDigitalHumanTaskStep }));
 vi.mock("@/lib/server/image-human/image-human-runtime", () => ({ runImageHumanTaskStep: mocks.runImageHumanTaskStep }));
 vi.mock("@/lib/server/action-transfer/action-transfer-runtime", () => ({ runActionTransferTaskStep: mocks.runActionTransferTaskStep }));
+vi.mock("@/lib/server/generation-task-store", () => ({ transitionStoredGenerationTask: mocks.transitionStoredGenerationTask }));
 vi.mock("@/lib/server/generation-task-cancellation-service", () => ({
     hasCancellableUpstreamTaskId: vi.fn((value: string) => Boolean(value)),
     isCancellationExecutionPhase: vi.fn((value: string) => value === "cancel_requested" || value === "cancel_polling"),
@@ -77,6 +79,7 @@ describe("generation task recovery service", () => {
         vi.clearAllMocks();
         mocks.release.mockResolvedValue({});
         mocks.renew.mockResolvedValue(1);
+        mocks.transitionStoredGenerationTask.mockResolvedValue({});
     });
 
     it("returns without starting a heartbeat when no task is due", async () => {
@@ -188,6 +191,35 @@ describe("generation task recovery service", () => {
             { tenantId: "tenant-one" },
         );
         expect(result).toMatchObject({ claimed: 1, pending: 1, needsReview: 0 });
+    });
+
+    it.each([
+        ["completed", "success"],
+        ["failed", "error"],
+    ] as const)("persists specialized %s steps as terminal generation tasks", async (state, status) => {
+        const specializedLease = { ...lease(), id: "image-human-one", type: "image-human", status: "running", executionPhase: "polling" };
+        const patch = {
+            executionPhase: "completed",
+            nextPollAt: undefined,
+            lastUpstreamStatus: status,
+        };
+        mocks.claim.mockResolvedValue([specializedLease]);
+        mocks.runImageHumanTaskStep.mockResolvedValue({ state, patch });
+
+        const result = await runGenerationTaskRecoveryBatch({ origin: "http://internal", workerId: "worker-one" });
+
+        expect(mocks.transitionStoredGenerationTask).toHaveBeenCalledWith(
+            "image-human",
+            specializedLease.id,
+            specializedLease.userId,
+            ["pending", "running"],
+            expect.objectContaining({ status }),
+            expect.any(Number),
+            patch,
+            specializedLease.tenantId,
+        );
+        expect(mocks.release).not.toHaveBeenCalled();
+        expect(result).toMatchObject({ [state]: 1 });
     });
 
     it("moves an image with an invalid OpenAI query contract to manual review", async () => {

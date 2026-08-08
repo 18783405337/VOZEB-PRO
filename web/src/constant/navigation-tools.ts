@@ -1,4 +1,4 @@
-import { BookMarked, Clapperboard, Compass, FileText, GalleryVerticalEnd, ImagePlus, Images, Maximize2, Sparkles, UserRound, Video } from "lucide-react";
+import { BookMarked, Clapperboard, Compass, FileText, GalleryVerticalEnd, ImagePlus, Images, Maximize2, ScanFace, Scissors, Sparkles, UserRound, Video } from "lucide-react";
 
 export const navigationGroups = [
     { id: "create", label: "创作" },
@@ -51,6 +51,34 @@ export const navigationTools = [
         description: "视频生成与精调",
         group: "professional",
         icon: Video,
+    },
+    {
+        slug: "digital-human",
+        label: "数字人",
+        description: "形象、音色与视频任务",
+        group: "professional",
+        icon: ScanFace,
+    },
+    {
+        slug: "image-human",
+        label: "图片数字人",
+        description: "图片与音频驱动视频",
+        group: "professional",
+        icon: ImagePlus,
+    },
+    {
+        slug: "action-transfer",
+        label: "动作迁移",
+        description: "人物参考图与动作视频生成",
+        group: "professional",
+        icon: Video,
+    },
+    {
+        slug: "smart-clip",
+        label: "智能混剪",
+        description: "真人口播、素材混剪与新闻体视频",
+        group: "professional",
+        icon: Scissors,
     },
     {
         slug: "works",

@@ -19,6 +19,8 @@ import { refundAudioTask } from "@/lib/server/audio-task-refund";
 import { refundImageTask } from "@/lib/server/image-task-refund";
 import { refundTextTask } from "@/lib/server/text-task-refund";
 import { refundVideoTask } from "@/lib/server/video-task-refund";
+import { GENERATION_TASK_RETENTION_MS } from "@/lib/server/generation-task-retention";
+import { transitionStoredGenerationTask } from "@/lib/server/generation-task-store";
 
 type RecoveryResult = "pending" | "result_ready" | "completed" | "failed" | "needs_review" | "deferred";
 
@@ -79,6 +81,19 @@ async function processSpecializedLease(lease: GenerationTaskLease, workerId: str
                 : lease.type === "image-human"
                   ? await (await import("@/lib/server/image-human/image-human-runtime")).runImageHumanTaskStep(lease, context)
                   : await (await import("@/lib/server/action-transfer/action-transfer-runtime")).runActionTransferTaskStep(lease, context);
+        if (step.state === "completed" || step.state === "failed") {
+            const transitioned = await transitionStoredGenerationTask(
+                lease.type,
+                lease.id,
+                lease.userId,
+                ["pending", "running"],
+                { status: step.state === "completed" ? "success" : "error" },
+                GENERATION_TASK_RETENTION_MS,
+                step.patch,
+                lease.tenantId,
+            );
+            if (transitioned) return step.state;
+        }
         await releaseLease(lease, workerId, step.patch);
         return step.state;
     } catch (error) {

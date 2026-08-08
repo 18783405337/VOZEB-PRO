@@ -58,12 +58,24 @@ describe("PostgreSQL schema lifecycle", () => {
     });
 
     it("executes schema DDL only through explicit initialization", async () => {
-        mocks.query.mockResolvedValueOnce({ rows: [] });
+        const release = vi.fn();
+        const clientQuery = vi
+            .fn()
+            .mockResolvedValueOnce({ rows: [] })
+            .mockResolvedValueOnce({ rows: [{ table_name: null }] })
+            .mockResolvedValueOnce({ rows: [] })
+            .mockResolvedValueOnce({ rows: [{ pg_advisory_unlock: true }] });
+        mocks.connect.mockResolvedValue({ query: clientQuery, release });
 
         await initializePostgresSchema();
 
-        expect(mocks.query).toHaveBeenCalledTimes(1);
-        const ddl = String(mocks.query.mock.calls[0]?.[0]);
+        expect(clientQuery).toHaveBeenCalledTimes(4);
+        expect(clientQuery.mock.calls[0]?.[0]).toBe("SELECT pg_advisory_lock($1::bigint)");
+        expect(clientQuery.mock.calls[1]?.[0]).toContain("to_regclass");
+        const ddl = String(clientQuery.mock.calls[2]?.[0]);
+        expect(clientQuery.mock.calls[3]?.[0]).toBe("SELECT pg_advisory_unlock($1::bigint)");
+        expect(clientQuery.mock.calls[0]?.[1]).toEqual(clientQuery.mock.calls[3]?.[1]);
+        expect(release).toHaveBeenCalledOnce();
         expect(ddl).toContain("CREATE TABLE IF NOT EXISTS vozeb_pro_schema_migrations");
         expect(ddl).toContain("CREATE TABLE IF NOT EXISTS vozeb_pro_generation_worker_heartbeats");
         expect(ddl).toContain("CREATE SEQUENCE IF NOT EXISTS vozeb_pro_user_account_id_seq");
@@ -77,18 +89,7 @@ describe("PostgreSQL schema lifecycle", () => {
         expect(ddl).toContain("ALTER TABLE vozeb_pro_generation_tasks ALTER COLUMN tenant_id SET NOT NULL");
         expect(ddl).toMatch(/UPDATE\s+vozeb_pro_(generation_tasks|generation_logs|creative_conversations|creative_assets|local_media_assets|canvas_projects|library_assets|drama_projects|published_works|billing_orders)\s+SET\s+tenant_id/i);
         expect(ddl).toContain("ALTER TABLE vozeb_pro_billing_orders ADD COLUMN IF NOT EXISTS tenant_id text REFERENCES vozeb_pro_tenants(id)");
-        for (const table of [
-            "generation_tasks",
-            "generation_logs",
-            "creative_conversations",
-            "creative_assets",
-            "local_media_assets",
-            "canvas_projects",
-            "library_assets",
-            "drama_projects",
-            "published_works",
-            "billing_orders",
-        ]) {
+        for (const table of ["generation_tasks", "generation_logs", "creative_conversations", "creative_assets", "local_media_assets", "canvas_projects", "library_assets", "drama_projects", "published_works", "billing_orders"]) {
             expect(ddl).toContain(`ALTER TABLE vozeb_pro_${table} ADD COLUMN IF NOT EXISTS tenant_id text REFERENCES vozeb_pro_tenants(id)`);
             expect(ddl).toMatch(new RegExp(`ALTER TABLE vozeb_pro_${table} ALTER COLUMN tenant_id SET NOT NULL`, "i"));
         }
@@ -108,8 +109,9 @@ describe("PostgreSQL schema lifecycle", () => {
         expect(ddl).toContain("conrelid = 'vozeb_pro_tenant_members'::regclass");
         expect(ddl).toContain("CREATE TRIGGER vozeb_pro_tenants_set_updated_at BEFORE UPDATE ON vozeb_pro_tenants FOR EACH ROW EXECUTE FUNCTION vozeb_pro_set_updated_at()");
         expect(ddl).toContain("'review_pending', 'reviewing', 'review_unavailable'");
-        expect(ddl).toContain("'digital-human', 'image-human', 'action-transfer'");
         expect(ddl).toContain("task_type = 'agent' AND status = 'success' AND execution_phase IN ('review_pending', 'reviewing')");
+        expect(ddl).toContain("'digital-human', 'image-human', 'action-transfer'");
+        expect(ddl).toContain("'20260808_specialized_apps_complete'");
 
         const tableNames = [...ddl.matchAll(/CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+([a-z][a-z0-9_]*)/gi)].map((match) => match[1]).sort();
         const applicationTables = ["apps", "app_versions", "tenant_apps", "tenant_app_settings", "tenant_app_pricing", "tenant_app_provider_bindings"];
@@ -123,7 +125,7 @@ describe("PostgreSQL schema lifecycle", () => {
             "merchant_accounts",
             "task_billing_reservations",
         ];
-        expect(tableNames).toHaveLength(78);
+        expect(tableNames).toHaveLength(98);
         expect(tableNames.every((name) => name.startsWith("vozeb_pro_"))).toBe(true);
         expect(tableNames).not.toContain("vozeb_pro_check_ins");
         for (const table of [...applicationTables, ...saasBillingTables]) {
@@ -132,6 +134,18 @@ describe("PostgreSQL schema lifecycle", () => {
         expect(ddl).toContain("CREATE INDEX IF NOT EXISTS vozeb_pro_tenant_app_provider_bindings_logical_idx ON vozeb_pro_tenant_app_provider_bindings");
         expect(ddl).toContain("tenant_app_id text NOT NULL REFERENCES vozeb_pro_tenant_apps(id) ON DELETE CASCADE");
         expect(ddl).toContain("UNIQUE (tenant_app_id)");
+        for (const table of ["digital_human_configs", "digital_human_avatars", "digital_human_voices", "digital_human_tasks", "digital_human_results", "digital_human_quotas", "digital_human_sensitive_words"]) {
+            expect(tableNames).toContain(`vozeb_pro_${table}`);
+        }
+        for (const table of ["image_human_configs", "image_human_tasks", "image_human_results"]) {
+            expect(tableNames).toContain(`vozeb_pro_${table}`);
+        }
+        for (const table of ["action_transfer_configs", "action_transfer_tasks", "action_transfer_results"]) {
+            expect(tableNames).toContain(`vozeb_pro_${table}`);
+        }
+        for (const table of ["smart_clip_configs", "smart_clip_tasks", "smart_clip_results", "smart_clip_channels", "smart_clip_channel_specs", "smart_clip_billings", "smart_clip_sensitive_words"]) {
+            expect(tableNames).toContain(`vozeb_pro_${table}`);
+        }
         expect(ddl).toContain("ALTER TABLE vozeb_pro_billing_orders ADD COLUMN IF NOT EXISTS collection_mode text");
         expect(ddl).toContain("ALTER TABLE vozeb_pro_billing_orders ADD COLUMN IF NOT EXISTS merchant_account_id text REFERENCES vozeb_pro_merchant_accounts(id)");
         expect(ddl).toContain("ALTER TABLE vozeb_pro_merchant_accounts ADD COLUMN IF NOT EXISTS configured_fields_json jsonb NOT NULL DEFAULT '[]'::jsonb");
@@ -155,12 +169,57 @@ describe("PostgreSQL schema lifecycle", () => {
     });
 
     it("continues applying additive schema updates after the sentinel table exists", async () => {
-        mocks.query.mockResolvedValueOnce({ rows: [{ table_name: "vozeb_pro_users" }] }).mockResolvedValueOnce({ rows: [] });
+        const release = vi.fn();
+        const clientQuery = vi
+            .fn()
+            .mockResolvedValueOnce({ rows: [] })
+            .mockResolvedValueOnce({ rows: [{ table_name: "vozeb_pro_schema_migrations" }] })
+            .mockResolvedValueOnce({ rows: [] })
+            .mockResolvedValueOnce({ rows: [] })
+            .mockResolvedValueOnce({ rows: [{ pg_advisory_unlock: true }] });
+        mocks.query.mockResolvedValueOnce({ rows: [{ table_name: "vozeb_pro_users" }] });
+        mocks.connect.mockResolvedValue({ query: clientQuery, release });
 
         await ensurePostgresSchema();
 
-        expect(mocks.query).toHaveBeenCalledTimes(2);
+        expect(mocks.query).toHaveBeenCalledTimes(1);
         expect(mocks.query.mock.calls[0]?.[0]).toContain("to_regclass");
-        expect(mocks.query.mock.calls[1]?.[0]).toContain("CREATE TABLE IF NOT EXISTS vozeb_pro_schema_migrations");
+        expect(clientQuery.mock.calls[2]?.[0]).toContain("SELECT version FROM vozeb_pro_schema_migrations");
+        expect(clientQuery.mock.calls[3]?.[0]).toContain("CREATE TABLE IF NOT EXISTS vozeb_pro_schema_migrations");
+        expect(release).toHaveBeenCalledOnce();
+    });
+
+    it("releases the schema lock and connection when schema initialization fails", async () => {
+        const release = vi.fn();
+        const clientQuery = vi
+            .fn()
+            .mockResolvedValueOnce({ rows: [] })
+            .mockResolvedValueOnce({ rows: [{ table_name: null }] })
+            .mockRejectedValueOnce(new Error("schema failed"))
+            .mockResolvedValueOnce({ rows: [{ pg_advisory_unlock: true }] });
+        mocks.connect.mockResolvedValue({ query: clientQuery, release });
+
+        await expect(initializePostgresSchema()).rejects.toThrow("schema failed");
+
+        expect(clientQuery.mock.calls[3]?.[0]).toBe("SELECT pg_advisory_unlock($1::bigint)");
+        expect(release).toHaveBeenCalledOnce();
+    });
+
+    it("skips repeated schema DDL after the current migration marker exists", async () => {
+        const release = vi.fn();
+        const clientQuery = vi
+            .fn()
+            .mockResolvedValueOnce({ rows: [] })
+            .mockResolvedValueOnce({ rows: [{ table_name: "vozeb_pro_schema_migrations" }] })
+            .mockResolvedValueOnce({ rows: [{ version: "20260808_specialized_apps_complete" }] })
+            .mockResolvedValueOnce({ rows: [{ pg_advisory_unlock: true }] });
+        mocks.connect.mockResolvedValue({ query: clientQuery, release });
+
+        await initializePostgresSchema();
+
+        expect(clientQuery).toHaveBeenCalledTimes(4);
+        expect(clientQuery.mock.calls[2]?.[0]).toContain("SELECT version FROM vozeb_pro_schema_migrations");
+        expect(clientQuery.mock.calls.some(([sql]) => String(sql).includes("CREATE TABLE IF NOT EXISTS vozeb_pro_users"))).toBe(false);
+        expect(release).toHaveBeenCalledOnce();
     });
 });
