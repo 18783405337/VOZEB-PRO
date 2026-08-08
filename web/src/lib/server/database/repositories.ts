@@ -15,6 +15,9 @@ import { AnnouncementsRepository, GenerationLogsRepository, PromptsRepository } 
 import { CdkRepository, EmailCodesRepository, PointsRepository, SessionsRepository, UsersRepository } from "./user-repository";
 import { TenantRepository } from "./tenant-repository";
 import { AppCenterPostgresRepository } from "./app-center-repository";
+import { TenantPowerRepository } from "./tenant-power-repository";
+import { TenantSettlementRepository } from "./tenant-settlement-repository";
+import { TenantWalletRepository } from "./tenant-wallet-repository";
 import type { AppSettingsRecord, EntitlementPlanRecord, JsonValue, SystemModelChannelRecord } from "./repository-shared";
 import { isoValue, jsonParam, jsonValue, numberValue, optionalIso, optionalJson, optionalString, stringValue } from "./repository-shared";
 
@@ -85,6 +88,9 @@ export function createPostgresRepositories(executor?: QueryExecutor) {
         settings: new SettingsRepository(database),
         tenants: new TenantRepository(database, executor ? undefined : withPostgresTransaction),
         appCenter: new AppCenterPostgresRepository(database, executor ? undefined : withPostgresTransaction),
+        tenantWallet: new TenantWalletRepository(database, executor ? undefined : withPostgresTransaction),
+        tenantPower: new TenantPowerRepository(database, executor ? undefined : withPostgresTransaction),
+        tenantSettlement: new TenantSettlementRepository(database, executor ? undefined : withPostgresTransaction),
         users: new UsersRepository(database),
         sessions: new SessionsRepository(database),
         emailCodes: new EmailCodesRepository(database),
