@@ -1,7 +1,7 @@
 import { safeProtocolDocumentationUrl } from "@/lib/channel-protocol-security";
 import { isGlobalAiOpcPreset } from "@/lib/globalaiopc-catalog";
 
-import type { LogicalModelCapability, SystemChannelAdvancedConfig, SystemChannelProtocol } from "./store-types";
+import { SPECIALIZED_PROVIDER_PROTOCOLS, type LogicalModelCapability, type SystemChannelAdvancedConfig, type SystemChannelProtocol } from "./store-types";
 
 const CHANNEL_PROTOCOLS: SystemChannelProtocol[] = ["auto", "openai", "sub2api", "newapi", "vozeb-recommended", "globalaiopc", "seedance", "stable-diffusion", "volcengine-video", "seedance-special", "custom", "compatible"];
 
@@ -14,8 +14,12 @@ export function normalizeSystemChannelAdvancedConfig(config: Partial<SystemChann
     const modelConfigs = normalizeChannelModelConfigs(config.modelConfigs);
     const operationConfigs = normalizeChannelOperationConfigs(config.operationConfigs);
     const modelCatalogPaths = Array.from(new Set((Array.isArray(config.modelCatalogPaths) ? config.modelCatalogPaths : []).map(normalizeApiPath).filter(Boolean))).slice(0, 12);
+    const specializedProtocol = SPECIALIZED_PROVIDER_PROTOCOLS.includes(config.specializedProtocol as (typeof SPECIALIZED_PROVIDER_PROTOCOLS)[number]) ? config.specializedProtocol : undefined;
+    const specializedTimeoutMs = normalizeSpecializedTimeout(config.specializedTimeoutMs);
     return {
         protocol,
+        ...(specializedProtocol ? { specializedProtocol } : {}),
+        ...(specializedTimeoutMs ? { specializedTimeoutMs } : {}),
         ...(config.authMode === "none" || config.authMode === "bearer" || config.authMode === "x-api-key" || config.authMode === "custom-header" ? { authMode: config.authMode } : {}),
         ...(textOrEmpty(config.authHeader, 120) ? { authHeader: textOrEmpty(config.authHeader, 120) } : {}),
         ...(textOrEmpty(config.authPrefix, 120) ? { authPrefix: textOrEmpty(config.authPrefix, 120) } : {}),
@@ -114,6 +118,11 @@ function normalizeChannelOperationConfigs(value: unknown) {
 
 function normalizeDocumentationUrl(value: unknown) {
     return safeProtocolDocumentationUrl(textOrEmpty(value, 2_000));
+}
+
+function normalizeSpecializedTimeout(value: unknown) {
+    const timeout = Number(value);
+    return Number.isFinite(timeout) ? Math.max(5_000, Math.min(300_000, Math.floor(timeout))) : undefined;
 }
 
 function normalizeChannelModelKey(value: string) {
