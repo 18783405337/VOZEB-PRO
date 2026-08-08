@@ -78,7 +78,7 @@ export function normalizeProviderTaskState(payload: unknown): SpecializedProvide
 
 export function extractProviderMediaUrls(payload: unknown, kind: "audio" | "video") {
     const urls = MEDIA_PATHS[kind].flatMap((path) => mediaValues(readPath(payload, path), kind));
-    for (const path of ["results", "data.results", "data.result.results", "data.result.data.results", "data.task_result.videos"]) {
+    for (const path of ["results", "data.results", "data.result.videos", "data.result.results", "data.result.data.results", "data.task_result.videos"]) {
         urls.push(...mediaValues(readPath(payload, path), kind));
     }
     return Array.from(new Set(urls.filter((url) => isSupportedMediaUrl(url) && isCompatibleMediaUrl(url, kind))));
