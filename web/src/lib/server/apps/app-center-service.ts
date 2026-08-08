@@ -70,6 +70,12 @@ export class AppCenterService {
         await this.repository.savePricing(tenantId, tenantApp.id, input);
     }
 
+    async setTenantAppStatus(tenantId: string, appKey: string, status: "enabled" | "disabled") {
+        const tenantApp = await this.repository.getTenantApp(tenantId, appKey);
+        if (!tenantApp) throw new AppCenterServiceError("Application is not installed for this tenant", "APP_NOT_INSTALLED");
+        return this.repository.setStatus(tenantId, tenantApp.id, status);
+    }
+
     private getReviewedDefinition(appKey: string, version: string) {
         const definition = this.registry.get(appKey, version);
         if (!definition) throw new AppCenterServiceError("Reviewed application version was not found", "APP_NOT_FOUND");
