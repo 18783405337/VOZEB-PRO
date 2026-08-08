@@ -5,8 +5,8 @@ import { AlertTriangle, GitBranch, Pencil, RefreshCw, Route, Search } from "luci
 import { useDeferredValue, useMemo, useState } from "react";
 
 import { LabeledControl, SectionTitle } from "@/components/admin/admin-settings-controls";
-import type { LogicalModel, LogicalModelBinding, LogicalModelCapability, LogicalModelCapabilityProfile, SystemDefaultModels, SystemModelChannel } from "@/lib/auth/store";
-import { capabilityLabel, isLogicalModelResolvable, normalizeDefaultModelsConfig, resolveLogicalModelConfig, synchronizeLogicalModelsWithChannels } from "@/lib/model-routing-config";
+import type { LogicalModel, LogicalModelBinding, LogicalModelCapability, LogicalModelCapabilityProfile, SpecializedProviderAppKey, SystemDefaultModels, SystemModelChannel } from "@/lib/auth/store";
+import { capabilityLabel, isGenericLogicalModel, isGenericLogicalModelResolvable, normalizeDefaultModelsConfig, resolveLogicalModelConfig, synchronizeLogicalModelsWithChannels } from "@/lib/model-routing-config";
 
 type Props = {
     channels: SystemModelChannel[];
@@ -29,6 +29,14 @@ const defaultFields: Array<{ capability: LogicalModelCapability; key: keyof Syst
     { capability: "audio", key: "audioModel", label: "默认音频模型" },
 ];
 
+const specializedAppOptions: Array<{ label: string; value: SpecializedProviderAppKey }> = [
+    { label: "数字人", value: "aigc-digital-human" },
+    { label: "图片数字人", value: "image-human" },
+    { label: "动作迁移", value: "action-transfer" },
+];
+
+const specializedAppLabels = new Map<SpecializedProviderAppKey, string>(specializedAppOptions.map((option) => [option.value, option.label]));
+
 export function AdminLogicalModelManager({ channels, logicalModels, defaultModels, onChange }: Props) {
     const { message } = App.useApp();
     const [drawerOpen, setDrawerOpen] = useState(false);
@@ -41,9 +49,9 @@ export function AdminLogicalModelManager({ channels, logicalModels, defaultModel
         () => logicalModels.filter((model) => (capabilityFilter === "all" || model.capability === capabilityFilter) && (!deferredQuery || `${model.id} ${model.name}`.toLowerCase().includes(deferredQuery))),
         [capabilityFilter, deferredQuery, logicalModels],
     );
-    const availableDefaultFields = defaultFields.filter(({ capability }) => logicalModels.some((model) => model.capability === capability && isLogicalModelResolvable(logicalModels, channels, capability, model.id)));
+    const availableDefaultFields = defaultFields.filter(({ capability }) => logicalModels.some((model) => model.capability === capability && isGenericLogicalModelResolvable(logicalModels, channels, capability, model.id)));
     const availableCapabilityOptions = capabilityOptions.filter(({ value }) => availableDefaultFields.some(({ capability }) => capability === value));
-    const readyCount = availableDefaultFields.filter(({ capability, key }) => isLogicalModelResolvable(logicalModels, channels, capability, defaultModels[key])).length;
+    const readyCount = availableDefaultFields.filter(({ capability, key }) => isGenericLogicalModelResolvable(logicalModels, channels, capability, defaultModels[key])).length;
 
     const openEdit = (model: LogicalModel) => {
         setEditingId(model.id);
@@ -104,6 +112,11 @@ export function AdminLogicalModelManager({ channels, logicalModels, defaultModel
                                         <div className="flex flex-wrap items-center gap-2">
                                             <span className="truncate text-sm font-semibold text-stone-950 dark:text-stone-100">{model.name}</span>
                                             <Tag className="m-0">{capabilityLabel(model.capability)}</Tag>
+                                            {model.appKeys?.map((appKey) => (
+                                                <Tag key={appKey} color="cyan" className="m-0">
+                                                    {specializedAppLabels.get(appKey) || appKey}
+                                                </Tag>
+                                            ))}
                                             <Tag color={model.enabled ? "green" : "default"} className="m-0">
                                                 {model.enabled ? "启用" : "停用"}
                                             </Tag>
@@ -133,9 +146,9 @@ export function AdminLogicalModelManager({ channels, logicalModels, defaultModel
                     <SectionTitle icon={<GitBranch className="size-4" />} title="默认模型" />
                     <div className="mt-4 space-y-4">
                         {availableDefaultFields.map(({ capability, key, label }) => {
-                            const options = logicalModels.filter((model) => model.capability === capability && isLogicalModelResolvable(logicalModels, channels, capability, model.id)).map((model) => ({ label: model.name, value: model.id }));
+                            const options = logicalModels.filter((model) => model.capability === capability && isGenericLogicalModelResolvable(logicalModels, channels, capability, model.id)).map((model) => ({ label: model.name, value: model.id }));
                             const selected = logicalModels.find((model) => model.id === defaultModels[key]);
-                            const resolved = selected ? resolveLogicalModelConfig(logicalModels, channels, capability, selected.id) : null;
+                            const resolved = selected && isGenericLogicalModel(selected) ? resolveLogicalModelConfig(logicalModels, channels, capability, selected.id) : null;
                             return (
                                 <LabeledControl key={key} label={label}>
                                     <Select
@@ -182,13 +195,32 @@ export function AdminLogicalModelManager({ channels, logicalModels, defaultModel
                             <div className="mt-1 truncate text-xs text-stone-500 dark:text-stone-400">逻辑 ID：{draft.id}（由上游模型自动建立）</div>
                             <div className="mt-3 grid gap-3 sm:grid-cols-2">
                                 <LabeledControl label="能力类型">
-                                    <Select className="w-full" value={draft.capability} options={capabilityOptions} onChange={(capability) => setDraft((current) => (current ? { ...current, capability } : current))} />
+                                    <Select
+                                        className="w-full"
+                                        value={draft.capability}
+                                        options={capabilityOptions}
+                                        onChange={(capability) => setDraft((current) => (current ? { ...current, capability, ...(capability === "video" ? {} : { appKeys: undefined }) } : current))}
+                                    />
                                 </LabeledControl>
                                 <LabeledControl label="模型状态">
                                     <div className="flex h-8 items-center">
                                         <Switch checkedChildren="启用" unCheckedChildren="停用" checked={draft.enabled} onChange={(enabled) => setDraft((current) => (current ? { ...current, enabled } : current))} />
                                     </div>
                                 </LabeledControl>
+                                <div className="sm:col-span-2">
+                                    <LabeledControl label="专项应用">
+                                        <Select
+                                            className="w-full"
+                                            mode="multiple"
+                                            allowClear
+                                            disabled={draft.capability !== "video"}
+                                            value={draft.appKeys || []}
+                                            options={specializedAppOptions}
+                                            placeholder={draft.capability === "video" ? "不选择时作为通用视频模型" : "专项应用当前仅支持视频能力"}
+                                            onChange={(appKeys: SpecializedProviderAppKey[]) => setDraft((current) => (current ? { ...current, appKeys: appKeys.length ? appKeys : undefined } : current))}
+                                        />
+                                    </LabeledControl>
+                                </div>
                             </div>
                         </div>
                         <div className="mt-5">
@@ -317,5 +349,9 @@ function BindingEditor({ binding, capability, channels, onChange }: { binding: L
 }
 
 function cloneLogicalModel(model: LogicalModel): LogicalModel {
-    return { ...model, bindings: model.bindings.map((binding) => ({ ...binding, capabilityProfile: binding.capabilityProfile ? { ...binding.capabilityProfile } : undefined })) };
+    return {
+        ...model,
+        appKeys: model.appKeys ? [...model.appKeys] : undefined,
+        bindings: model.bindings.map((binding) => ({ ...binding, capabilityProfile: binding.capabilityProfile ? { ...binding.capabilityProfile } : undefined })),
+    };
 }

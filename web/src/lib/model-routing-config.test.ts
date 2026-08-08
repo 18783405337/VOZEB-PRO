@@ -213,6 +213,31 @@ describe("model routing config", () => {
         expect(normalizeDefaultModelsConfig({ textModel: "", imageModel: "gpt-image-2", videoModel: "", audioModel: "" }, models, channels).imageModel).toBe("flux-pro");
     });
 
+    it("keeps specialized application models out of generic defaults", () => {
+        const channels = [channel("one", ["digital-human-v1", "video-v1"])];
+        const models: LogicalModel[] = [
+            {
+                id: "digital-human",
+                name: "Digital Human",
+                capability: "video",
+                enabled: true,
+                appKeys: ["aigc-digital-human"],
+                bindings: [{ id: "specialized", channelId: "one", upstreamModel: "digital-human-v1", enabled: true, priority: 1 }],
+            },
+            {
+                id: "video",
+                name: "Video",
+                capability: "video",
+                enabled: true,
+                bindings: [{ id: "generic", channelId: "one", upstreamModel: "video-v1", enabled: true, priority: 1 }],
+            },
+        ];
+        const defaults = { textModel: "", imageModel: "", videoModel: "digital-human", audioModel: "" };
+
+        expect(normalizeDefaultModelsConfig(defaults, models, channels).videoModel).toBe("video");
+        expect(modelRoutingValidationErrors(models, channels, defaults)).toContain("默认视频模型不能使用专项应用模型：digital-human");
+    });
+
     it("uses binding priority and falls back from a disabled channel", () => {
         const channels = [channel("primary", ["writer-v1"], false), channel("backup", ["writer-v2"])];
         const models: LogicalModel[] = [

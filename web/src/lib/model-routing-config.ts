@@ -88,8 +88,8 @@ export function normalizeDefaultModelsConfig(defaults: Partial<SystemDefaultMode
     return Object.fromEntries(
         (Object.entries(CAPABILITY_DEFAULT_KEYS) as Array<[LogicalModelCapability, keyof SystemDefaultModels]>).map(([capability, key]) => {
             const modelId = text(defaults?.[key], 120);
-            if (!modelId || isLogicalModelResolvable(logicalModels, channels, capability, modelId)) return [key, modelId];
-            const fallback = logicalModels.find((model) => model.capability === capability && isLogicalModelResolvable(logicalModels, channels, capability, model.id));
+            if (!modelId || isGenericLogicalModelResolvable(logicalModels, channels, capability, modelId)) return [key, modelId];
+            const fallback = logicalModels.find((model) => model.capability === capability && isGenericLogicalModel(model) && isLogicalModelResolvable(logicalModels, channels, capability, model.id));
             return [key, fallback?.id || ""];
         }),
     ) as SystemDefaultModels;
@@ -97,6 +97,15 @@ export function normalizeDefaultModelsConfig(defaults: Partial<SystemDefaultMode
 
 export function isLogicalModelResolvable(logicalModels: LogicalModel[], channels: SystemModelChannel[], capability: LogicalModelCapability, modelId: string) {
     return Boolean(resolveLogicalModelConfig(logicalModels, channels, capability, modelId));
+}
+
+export function isGenericLogicalModel(model: Pick<LogicalModel, "appKeys">) {
+    return normalizeSpecializedProviderAppKeys(model.appKeys).length === 0;
+}
+
+export function isGenericLogicalModelResolvable(logicalModels: LogicalModel[], channels: SystemModelChannel[], capability: LogicalModelCapability, modelId: string) {
+    const model = logicalModels.find((item) => item.capability === capability && item.id.toLowerCase() === rawModelName(modelId).toLowerCase());
+    return Boolean(model && isGenericLogicalModel(model) && isLogicalModelResolvable(logicalModels, channels, capability, model.id));
 }
 
 export function resolveLogicalModelConfig(logicalModels: LogicalModel[], channels: SystemModelChannel[], capability: LogicalModelCapability, modelId: string) {
@@ -132,7 +141,10 @@ export function modelRoutingValidationErrors(logicalModels: LogicalModel[], chan
     }
     for (const [capability, key] of Object.entries(CAPABILITY_DEFAULT_KEYS) as Array<[LogicalModelCapability, keyof SystemDefaultModels]>) {
         const modelId = defaults[key];
-        if (modelId && !isLogicalModelResolvable(logicalModels, channels, capability, modelId)) errors.push(`默认${capabilityLabel(capability)}模型不可解析：${modelId}`);
+        if (!modelId) continue;
+        const defaultModel = logicalModels.find((model) => model.id.toLowerCase() === rawModelName(modelId).toLowerCase());
+        if (defaultModel && !isGenericLogicalModel(defaultModel)) errors.push(`默认${capabilityLabel(capability)}模型不能使用专项应用模型：${modelId}`);
+        else if (!isLogicalModelResolvable(logicalModels, channels, capability, modelId)) errors.push(`默认${capabilityLabel(capability)}模型不可解析：${modelId}`);
     }
     return Array.from(new Set(errors));
 }

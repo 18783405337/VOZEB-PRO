@@ -1,17 +1,21 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { App, Button, Form, Input, InputNumber, Select, Switch, Table, Tag } from "antd";
+import { Alert, App, Button, Form, Input, InputNumber, Select, Switch, Table, Tag } from "antd";
 import type { TableColumnsType } from "antd";
-import { Check, CircleDollarSign, Download, RefreshCw, Settings2 } from "lucide-react";
+import { Check, CircleDollarSign, Download, RefreshCw, Route, Settings2, Trash2 } from "lucide-react";
 
 import type { AppField } from "@/lib/apps/app-definition";
-import type { TenantApplication, TenantApplicationCatalog } from "@/services/api/app-center";
+import { SPECIALIZED_PROVIDER_APP_KEYS } from "@/lib/auth/store";
+import type { TenantApplication, TenantApplicationCatalog, TenantApplicationProviderBindingState } from "@/services/api/app-center";
 import {
+    clearTenantApplicationProviderBinding,
     getTenantApplication,
+    getTenantApplicationProviderBinding,
     installTenantApp,
     listTenantApplications,
     saveTenantApplicationPricing,
+    saveTenantApplicationProviderBinding,
     saveTenantApplicationSettings,
     setTenantApplicationStatus,
 } from "@/services/api/app-center";
@@ -30,6 +34,10 @@ export function TenantAppCenterSection({ canConfigure }: { canConfigure: boolean
     const [selectedKey, setSelectedKey] = useState<string>();
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
+    const [providerLoading, setProviderLoading] = useState(false);
+    const [providerSaving, setProviderSaving] = useState(false);
+    const [providerBindingState, setProviderBindingState] = useState<TenantApplicationProviderBindingState | null>(null);
+    const [providerSelection, setProviderSelection] = useState<string>();
     const [settingsForm] = Form.useForm<SettingsFormValue>();
     const [pricingForm] = Form.useForm<PricingFormValue>();
     const selected = catalog.installed.find((item) => item.appKey === selectedKey);
@@ -57,6 +65,34 @@ export function TenantAppCenterSection({ canConfigure }: { canConfigure: boolean
         settingsForm.setFieldsValue(selected.settings);
         pricingForm.setFieldsValue(selected.pricing || { currency: "POINT", saleUnit: "task", saleAmount: 0, collectionMode: "platform" });
     }, [pricingForm, selected, settingsForm]);
+
+    useEffect(() => {
+        if (!selectedKey || !isSpecializedProviderApp(selectedKey)) {
+            setProviderBindingState(null);
+            setProviderSelection(undefined);
+            return;
+        }
+        let cancelled = false;
+        setProviderLoading(true);
+        void getTenantApplicationProviderBinding(selectedKey)
+            .then((next) => {
+                if (cancelled) return;
+                setProviderBindingState(next);
+                setProviderSelection(next.binding?.logicalModelKey);
+            })
+            .catch((error) => {
+                if (cancelled) return;
+                setProviderBindingState(null);
+                setProviderSelection(undefined);
+                message.error(error instanceof Error ? error.message : "模型 API 订阅加载失败");
+            })
+            .finally(() => {
+                if (!cancelled) setProviderLoading(false);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [message, selectedKey]);
 
     async function install(appKey: string, version: string) {
         setSaving(true);
@@ -117,6 +153,36 @@ export function TenantAppCenterSection({ canConfigure }: { canConfigure: boolean
         setCatalog((current) => ({ ...current, installed: current.installed.map((item) => item.appKey === appKey ? next : item) }));
     }
 
+    async function saveProviderBinding() {
+        if (!selected || !providerSelection) return;
+        setProviderSaving(true);
+        try {
+            const next = await saveTenantApplicationProviderBinding(selected.appKey, providerSelection);
+            setProviderBindingState(next);
+            setProviderSelection(next.binding?.logicalModelKey);
+            message.success("模型 API 订阅已保存");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "模型 API 订阅保存失败");
+        } finally {
+            setProviderSaving(false);
+        }
+    }
+
+    async function clearProviderBinding() {
+        if (!selected) return;
+        setProviderSaving(true);
+        try {
+            const next = await clearTenantApplicationProviderBinding(selected.appKey);
+            setProviderBindingState(next);
+            setProviderSelection(undefined);
+            message.success("模型 API 订阅已清除");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "模型 API 订阅清除失败");
+        } finally {
+            setProviderSaving(false);
+        }
+    }
+
     const availableColumns: TableColumnsType<TenantApplicationCatalog["available"][number]> = [
         {
             title: "应用",
@@ -170,6 +236,50 @@ export function TenantAppCenterSection({ canConfigure }: { canConfigure: boolean
                 <div className="min-w-0 border-l border-zinc-200 pl-0 xl:pl-6 dark:border-zinc-800">
                     {selected && selectedDefinition ? <div className="space-y-6">
                         <div><div className="flex items-center gap-2"><h3 className="text-base font-semibold">{selectedDefinition.name}</h3><Tag color={selected.status === "enabled" ? "green" : "default"}>{selected.status === "enabled" ? "启用" : "停用"}</Tag></div><p className="mt-1 font-mono text-xs text-zinc-500">{selected.appKey}@{selected.version}</p></div>
+                        {isSpecializedProviderApp(selected.appKey) ? (
+                            <div>
+                                <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
+                                    <Route className="size-4" />
+                                    模型 API 订阅
+                                </div>
+                                {!providerLoading && !providerBindingState?.binding ? (
+                                    <Alert
+                                        className="mb-3"
+                                        type="warning"
+                                        showIcon
+                                        message="尚未订阅模型 API"
+                                        description={providerBindingState?.available.length ? "请选择一个可用逻辑 API 后保存。" : "超级管理员尚未为该应用配置可用逻辑 API。"}
+                                    />
+                                ) : null}
+                                <Select
+                                    className="w-full"
+                                    allowClear
+                                    showSearch
+                                    optionFilterProp="label"
+                                    loading={providerLoading}
+                                    disabled={!canConfigure || providerLoading || providerSaving}
+                                    value={providerSelection}
+                                    placeholder="选择逻辑 API"
+                                    notFoundContent={providerLoading ? "正在加载" : "暂无可用逻辑 API"}
+                                    options={(providerBindingState?.available || []).map((item) => ({ label: item.name, value: item.logicalModelKey }))}
+                                    onChange={(value) => setProviderSelection(value)}
+                                />
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                    <Button type="primary" icon={<Check className="size-4" />} loading={providerSaving} disabled={!canConfigure || !providerSelection || providerLoading} onClick={() => void saveProviderBinding()}>
+                                        保存订阅
+                                    </Button>
+                                    <Button
+                                        danger
+                                        icon={<Trash2 className="size-4" />}
+                                        loading={providerSaving}
+                                        disabled={!canConfigure || !providerBindingState?.binding || providerLoading}
+                                        onClick={() => void clearProviderBinding()}
+                                    >
+                                        清除订阅
+                                    </Button>
+                                </div>
+                            </div>
+                        ) : null}
                         <Form form={settingsForm} layout="vertical" onFinish={saveSettings} disabled={!canConfigure}><div className="mb-2 flex items-center gap-2 text-sm font-semibold"><Settings2 className="size-4" />运行设置</div>{selectedDefinition.inputSchema.map((field) => <AppFieldControl key={field.key} field={field} />)}<Button type="primary" htmlType="submit" loading={saving} icon={<Check className="size-4" />}>保存设置</Button></Form>
                         <Form form={pricingForm} layout="vertical" onFinish={savePricing} disabled={!canConfigure}><div className="mb-2 flex items-center gap-2 text-sm font-semibold"><CircleDollarSign className="size-4" />计费设置</div><div className="grid gap-3 sm:grid-cols-2"><Form.Item name="currency" label="币种" rules={[{ required: true }]}><Input /></Form.Item><Form.Item name="saleUnit" label="计费单位" rules={[{ required: true }]}><Input /></Form.Item><Form.Item name="saleAmount" label="单价" rules={[{ required: true }]}><InputNumber className="w-full" min={0} precision={0} /></Form.Item><Form.Item name="collectionMode" label="收款归属" rules={[{ required: true }]}><Select options={[{ label: "平台", value: "platform" }, { label: "租户", value: "tenant" }]} /></Form.Item></div><Button type="primary" htmlType="submit" loading={saving} icon={<Check className="size-4" />}>保存计费</Button></Form>
                     </div> : <div className="flex min-h-56 items-center justify-center text-sm text-zinc-500">选择一个已安装应用进行配置</div>}
@@ -183,4 +293,8 @@ function AppFieldControl({ field }: { field: AppField }) {
     if (field.kind === "select") return <Form.Item name={field.key} label={field.label} rules={[{ required: field.required }]}><Select options={field.options.map((option) => ({ label: option, value: option }))} /></Form.Item>;
     if (field.kind === "number") return <Form.Item name={field.key} label={field.label} rules={[{ required: field.required }]}><InputNumber className="w-full" min={field.min} max={field.max} /></Form.Item>;
     return <Form.Item name={field.key} label={field.label} rules={[{ required: field.required, max: field.kind === "text" ? field.maxLength : undefined }]}><Input placeholder={field.kind === "image" ? "输入图片地址" : undefined} /></Form.Item>;
+}
+
+function isSpecializedProviderApp(appKey: string) {
+    return SPECIALIZED_PROVIDER_APP_KEYS.some((item) => item === appKey);
 }

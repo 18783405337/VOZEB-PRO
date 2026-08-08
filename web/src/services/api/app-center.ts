@@ -28,6 +28,20 @@ export type TenantApplicationCatalog = {
     installed: TenantApplication[];
 };
 
+export type TenantLogicalApi = {
+    logicalModelKey: string;
+    name: string;
+};
+
+export type TenantApplicationProviderBinding = TenantLogicalApi & {
+    status: "enabled";
+};
+
+export type TenantApplicationProviderBindingState = {
+    binding: TenantApplicationProviderBinding | null;
+    available: TenantLogicalApi[];
+};
+
 export type AdminApplication = {
     appKey: string;
     version: string;
@@ -80,6 +94,23 @@ export function saveTenantApplicationPricing(
     });
 }
 
+export function getTenantApplicationProviderBinding(appKey: string) {
+    return requestApiData<TenantApplicationProviderBindingState>(providerBindingPath(appKey), { cache: "no-store" });
+}
+
+export function saveTenantApplicationProviderBinding(appKey: string, logicalModelKey: string) {
+    return requestApiData<TenantApplicationProviderBindingState>(providerBindingPath(appKey), {
+        method: "PUT",
+        body: JSON.stringify({ logicalModelKey }),
+    });
+}
+
+export function clearTenantApplicationProviderBinding(appKey: string) {
+    return requestApiData<TenantApplicationProviderBindingState>(providerBindingPath(appKey), {
+        method: "DELETE",
+    });
+}
+
 export async function listAdminApplications() {
     return (await requestApiData<{ apps: AdminApplication[] }>("/api/admin/apps", { cache: "no-store" })).apps;
 }
@@ -89,4 +120,8 @@ export async function publishApplicationVersion(appKey: string, version: string)
         method: "POST",
         body: JSON.stringify({ version }),
     })).app;
+}
+
+function providerBindingPath(appKey: string) {
+    return `/api/tenant/apps/${encodeURIComponent(appKey)}/provider-binding`;
 }

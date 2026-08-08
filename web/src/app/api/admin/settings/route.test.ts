@@ -17,7 +17,7 @@ import { PATCH } from "./route";
 
 const savedSettings = {
     systemChannels: [{ id: "one", name: "主渠道", baseUrl: "https://api.example.com/v1", apiKey: "saved-secret", webhookSecret: "0123456789abcdef0123456789abcdef", apiFormat: "openai", models: ["vendor/writer"], enabled: true }],
-    logicalModels: [{ id: "writer", name: "Writer", capability: "text", enabled: true, appKeys: ["aigc-digital-human"], bindings: [{ id: "binding", channelId: "one", upstreamModel: "vendor/writer", enabled: true, priority: 1 }] }],
+    logicalModels: [{ id: "writer", name: "Writer", capability: "text", enabled: true, bindings: [{ id: "binding", channelId: "one", upstreamModel: "vendor/writer", enabled: true, priority: 1 }] }],
     defaultModels: { textModel: "writer", imageModel: "", videoModel: "", audioModel: "" },
 };
 
@@ -40,11 +40,36 @@ describe("admin settings model routing", () => {
         expect(mocks.setAuthSettings).toHaveBeenCalledWith(
             expect.objectContaining({
                 systemChannels: [expect.objectContaining({ id: "one", apiKey: "saved-secret", webhookSecret: savedSettings.systemChannels[0].webhookSecret })],
-                logicalModels: [expect.objectContaining({ id: "writer", name: "vendor/writer", appKeys: ["aigc-digital-human"], bindings: savedSettings.logicalModels[0].bindings })],
+                logicalModels: [expect.objectContaining({ id: "writer", name: "vendor/writer", bindings: savedSettings.logicalModels[0].bindings })],
                 defaultModels: savedSettings.defaultModels,
             }),
         );
         expect(mocks.safeRecordAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "admin.settings.update", metadata: { fields: expect.arrayContaining(["systemChannels", "logicalModels", "defaultModels"]) } }));
+    });
+
+    it("preserves a specialized video model application scope", async () => {
+        const systemChannels = [{ ...savedSettings.systemChannels[0], models: ["vendor/writer", "digital-human-v1"], apiKey: "", webhookSecret: "", hasApiKey: true, hasWebhookSecret: true }];
+        const logicalModels = [
+            savedSettings.logicalModels[0],
+            {
+                id: "digital-human",
+                name: "Digital Human",
+                capability: "video",
+                enabled: true,
+                appKeys: ["aigc-digital-human"],
+                bindings: [{ id: "digital-human-binding", channelId: "one", upstreamModel: "digital-human-v1", enabled: true, priority: 1 }],
+            },
+        ];
+
+        const response = await PATCH(request({ systemChannels, logicalModels, defaultModels: savedSettings.defaultModels }));
+
+        expect(response.status).toBe(200);
+        expect(mocks.setAuthSettings).toHaveBeenCalledWith(
+            expect.objectContaining({
+                logicalModels: expect.arrayContaining([expect.objectContaining({ id: "digital-human", capability: "video", appKeys: ["aigc-digital-human"] })]),
+                defaultModels: savedSettings.defaultModels,
+            }),
+        );
     });
 
     it("deletes a channel together with stale logical bindings and defaults", async () => {

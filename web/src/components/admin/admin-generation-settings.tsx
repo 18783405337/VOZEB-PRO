@@ -4,7 +4,7 @@ import { Input, InputNumber, Select } from "antd";
 import { SlidersHorizontal, Sparkles } from "lucide-react";
 
 import type { AuthSettings } from "@/lib/auth/store";
-import { resolveLogicalModelConfig } from "@/lib/model-routing-config";
+import { isGenericLogicalModel, resolveLogicalModelConfig } from "@/lib/model-routing-config";
 import { LabeledControl, SectionTitle, SettingToggle } from "@/components/admin/admin-settings-controls";
 
 const settingsPanelSurfaceClass = "rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950";
@@ -48,8 +48,11 @@ export function localAgentReadiness(settings: AuthSettings): AgentReadiness {
     const models = { text: settings.defaultModels.textModel, image: settings.defaultModels.imageModel, video: settings.defaultModels.videoModel, audio: settings.defaultModels.audioModel } as const;
     const capabilities = Object.entries(models).map(([type, model]) => {
         const capability = type as keyof typeof models;
-        const resolved = resolveLogicalModelConfig(settings.logicalModels, settings.systemChannels, capability, model);
-        return { type: capability, model, ready: Boolean(model && resolved), message: !model ? "未设置默认模型" : !resolved ? "默认模型没有可用渠道绑定" : "使用渠道：" + resolved.channel.name };
+        const selected = settings.logicalModels.find((item) => item.capability === capability && item.id.toLowerCase() === model.trim().toLowerCase());
+        const specialized = Boolean(selected && !isGenericLogicalModel(selected));
+        const resolved = specialized ? null : resolveLogicalModelConfig(settings.logicalModels, settings.systemChannels, capability, model);
+        const message = !model ? "未设置默认模型" : specialized ? "默认模型不能使用专项应用模型" : !resolved ? "默认模型没有可用渠道绑定" : "使用渠道：" + resolved.channel.name;
+        return { type: capability, model, ready: Boolean(model && resolved), message };
     });
     const skills = { image: 0, video: 0, canvas: 0, drama: 0 };
     for (const skill of settings.agentSkills) if (skill.enabled) for (const workspace of skill.workspaces || ["image"]) skills[workspace] += 1;
