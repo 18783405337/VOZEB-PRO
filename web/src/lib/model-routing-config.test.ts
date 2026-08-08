@@ -36,6 +36,38 @@ describe("model routing config", () => {
         expect(normalizeLogicalModelsConfig(models, channels)[0].bindings).toEqual([{ id: "one", channelId: "one", upstreamModel: "models/GPT-TEST", enabled: true, priority: 2 }]);
     });
 
+    it("normalizes reviewed specialized application scopes and preserves them during channel synchronization", () => {
+        const channels = [channel("one", ["digital-human-v1"])];
+        const models: LogicalModel[] = [
+            {
+                id: "digital-human",
+                name: "Digital Human",
+                capability: "video",
+                enabled: true,
+                appKeys: [" aigc-digital-human", "aigc-digital-human", "image-human", "unknown-app", ""] as never,
+                bindings: [{ id: "one", channelId: "one", upstreamModel: "digital-human-v1", enabled: true, priority: 1 }],
+            },
+        ];
+
+        expect(normalizeLogicalModelsConfig(models, channels)[0]?.appKeys).toEqual(["aigc-digital-human", "image-human"]);
+    });
+
+    it("requires an enabled binding for specialized application scopes", () => {
+        const channels = [channel("one", ["digital-human-v1"])];
+        const models: LogicalModel[] = [
+            {
+                id: "digital-human",
+                name: "Digital Human",
+                capability: "video",
+                enabled: true,
+                appKeys: ["aigc-digital-human"],
+                bindings: [{ id: "one", channelId: "one", upstreamModel: "digital-human-v1", enabled: false, priority: 1 }],
+            },
+        ];
+
+        expect(modelRoutingValidationErrors(models, channels, { textModel: "", imageModel: "", videoModel: "", audioModel: "" })).toContain("专项逻辑模型 digital-human 至少需要一个启用的渠道绑定");
+    });
+
     it("rebuilds an explicitly empty logical model catalog from channel models", () => {
         const channels = [channel("one", ["writer"])];
 

@@ -87,6 +87,9 @@ export type SystemModelChannel = {
 
 export type LogicalModelCapability = "text" | "image" | "video" | "audio";
 
+export const SPECIALIZED_PROVIDER_APP_KEYS = ["aigc-digital-human", "image-human", "action-transfer"] as const;
+export type SpecializedProviderAppKey = (typeof SPECIALIZED_PROVIDER_APP_KEYS)[number];
+
 export type LogicalModelCapabilityProfile = {
     supportsReferenceImage?: boolean;
     supportsReferenceVideo?: boolean;
@@ -121,6 +124,7 @@ export type LogicalModel = {
     capability: LogicalModelCapability;
     enabled: boolean;
     bindings: LogicalModelBinding[];
+    appKeys?: SpecializedProviderAppKey[];
 };
 
 export type SystemDefaultModels = {

@@ -1,3 +1,4 @@
+import { SPECIALIZED_PROVIDER_APP_KEYS, type SpecializedProviderAppKey } from "@/lib/auth/store-types";
 import type { LogicalModel, LogicalModelBinding, LogicalModelCapability, LogicalModelCapabilityProfile, SystemDefaultModels, SystemModelChannel } from "@/lib/auth/store";
 import { resolveGlobalAiOpcPreset } from "@/lib/globalaiopc-catalog";
 import { inferModelCapability, normalizeModelId } from "@/lib/model-capability";
@@ -67,12 +68,14 @@ export function synchronizeLogicalModelsWithChannels(existingModels: LogicalMode
                 };
             })
             .sort((left, right) => left.priority - right.priority || left.id.localeCompare(right.id));
+        const appKeys = normalizeSpecializedProviderAppKeys(existing?.appKeys);
         return {
             id,
             name: catalogModel.upstreamModel,
             capability: catalogModel.authoritative || !existing ? catalogModel.capability : normalizeCapability(existing.capability),
             enabled: existing?.enabled !== false,
             bindings,
+            ...(appKeys.length ? { appKeys } : {}),
         };
     });
 }
@@ -116,6 +119,7 @@ export function modelRoutingValidationErrors(logicalModels: LogicalModel[], chan
         else if (modelIds.has(key)) errors.push(`逻辑模型 ID 重复：${model.id}`);
         modelIds.add(key);
         if (!model.bindings.length) errors.push(`逻辑模型 ${model.name || model.id} 至少需要一个渠道绑定`);
+        if (normalizeSpecializedProviderAppKeys(model.appKeys).length && !model.bindings.some((binding) => binding.enabled)) errors.push(`专项逻辑模型 ${model.id} 至少需要一个启用的渠道绑定`);
         const bindingKeys = new Set<string>();
         for (const binding of model.bindings) {
             const channel = channels.find((item) => item.id === binding.channelId);
@@ -156,6 +160,19 @@ function resolveChannelModelCapability(channel: Pick<SystemModelChannel, "advanc
 
 export function channelDetectedCapabilities(channel: Pick<SystemModelChannel, "advancedConfig" | "models">) {
     return new Set(channel.models.map((model) => channelModelCapability(channel, model)));
+}
+
+export function normalizeSpecializedProviderAppKeys(value: unknown): SpecializedProviderAppKey[] {
+    const allowed = new Set<string>(SPECIALIZED_PROVIDER_APP_KEYS);
+    if (!Array.isArray(value)) return [];
+    return Array.from(
+        new Set(
+            value
+                .filter((item): item is string => typeof item === "string")
+                .map((item) => item.trim())
+                .filter((item) => allowed.has(item)),
+        ),
+    ) as SpecializedProviderAppKey[];
 }
 
 export function resolveLogicalModelCapabilityProfile(binding: Pick<LogicalModelBinding, "capabilityProfile">, capability: LogicalModelCapability, channel?: Pick<SystemModelChannel, "advancedConfig">, upstreamModel = "") {
