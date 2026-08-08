@@ -21,6 +21,7 @@ import {
     Globe2,
     HardDrive,
     KeyRound,
+    LayoutGrid,
     Megaphone,
     Menu,
     PanelLeftClose,
@@ -165,6 +166,7 @@ export function AdminSectionNav({
 }
 
 export const adminSections: AdminSection[] = [
+    { key: "apps", label: "应用中心", description: "审核、发布和管理租户可安装的工作流应用。", shortDescription: "应用发布", icon: <LayoutGrid className="size-4" /> },
     { key: "overview", label: "经营看板", description: "查看用户增长、调用趋势、收入概览和模型请求分布。", shortDescription: "数据总览", icon: <Database className="size-4" /> },
     { key: "users", label: "用户运营", description: "管理用户角色、账号状态、套餐归属和积分余额。", shortDescription: "账户与权益", icon: <UsersRound className="size-4" /> },
     { key: "logs", label: "调用记录", description: "追踪用户生成任务、模型调用、入口来源和失败原因。", shortDescription: "生成与模型", icon: <Film className="size-4" /> },
@@ -195,6 +197,7 @@ export const adminSections: AdminSection[] = [
 ];
 
 export const adminSectionGroups: AdminSectionGroup[] = [
+    { title: "应用管理", items: sectionsFor(["apps"]) },
     { title: "经营分析", items: sectionsFor(["overview", "users", "logs", "generationOperations"]) },
     { title: "商品运营", items: sectionsFor(["products", "orders"]) },
     { title: "营销推广", items: sectionsFor(["promotions", "coupons", "referrals"]) },

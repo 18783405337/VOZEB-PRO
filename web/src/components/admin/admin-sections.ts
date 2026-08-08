@@ -5,6 +5,7 @@ export const ADMIN_SECTION_KEYS = [
     "skills",
     "settings",
     "tenants",
+    "apps",
     "accountDeletion",
     "mediaStorage",
     "externalStorage",

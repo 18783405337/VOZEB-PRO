@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Segmented, Tag } from "antd";
-import { ShieldCheck, UsersRound } from "lucide-react";
+import { LayoutGrid, ShieldCheck, UsersRound } from "lucide-react";
 
 import type { TenantContext } from "@/lib/server/tenant/tenant-context";
 import type { TenantMemberRecord, TenantRoleRecord } from "@/lib/server/tenant/tenant-types";
@@ -10,9 +10,10 @@ import { listTenantMembers, listTenantRoles } from "@/services/api/tenant-admin"
 
 import { TenantMembersSection } from "./tenant-members-section";
 import { TenantRolesSection } from "./tenant-roles-section";
+import { TenantAppCenterSection } from "./tenant-app-center-section";
 
 type TenantAdminContext = TenantContext & { member: TenantMemberRecord };
-type TenantAdminView = "members" | "roles";
+type TenantAdminView = "members" | "roles" | "apps";
 
 export function TenantAdminShell({ initialContext }: { initialContext: TenantAdminContext }) {
     const [view, setView] = useState<TenantAdminView>("members");
@@ -25,6 +26,7 @@ export function TenantAdminShell({ initialContext }: { initialContext: TenantAdm
     const permissions = new Set(initialContext.member.permissions);
     const canManageMembers = permissions.has("tenant.members.manage");
     const canManageRoles = permissions.has("tenant.roles.manage");
+    const canConfigureApps = permissions.has("tenant.apps.configure");
 
     const refreshMembers = useCallback(async () => {
         setMembersLoading(true);
@@ -71,6 +73,7 @@ export function TenantAdminShell({ initialContext }: { initialContext: TenantAdm
                     value={view}
                     onChange={setView}
                     options={[
+                        { value: "apps", label: <span className="inline-flex items-center gap-2"><LayoutGrid className="size-4" />应用</span> },
                         { value: "members", label: <span className="inline-flex items-center gap-2"><UsersRound className="size-4" />成员</span> },
                         { value: "roles", label: <span className="inline-flex items-center gap-2"><ShieldCheck className="size-4" />角色</span> },
                     ]}
@@ -79,6 +82,7 @@ export function TenantAdminShell({ initialContext }: { initialContext: TenantAdm
             <div className="min-w-0 flex-1 py-6">
                 {view === "members" ? <TenantMembersSection members={members} roles={roles} loading={membersLoading} canManage={canManageMembers} error={membersError} onRefresh={refreshMembers} /> : null}
                 {view === "roles" ? <TenantRolesSection roles={roles} loading={rolesLoading} canManage={canManageRoles} error={rolesError} onRefresh={refreshRoles} /> : null}
+                {view === "apps" ? <TenantAppCenterSection canConfigure={canConfigureApps} /> : null}
             </div>
         </div>
     );

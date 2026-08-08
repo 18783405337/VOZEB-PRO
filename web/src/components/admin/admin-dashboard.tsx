@@ -171,6 +171,7 @@ const AdminLogsSection = dynamic(() => import("./admin-operations-sections").the
 const AdminGenerationOperationsSection = dynamic(() => import("./admin-operations-sections").then((module) => module.AdminGenerationOperationsSection), { loading: AdminSectionLoading });
 const AdminAccountDeletionSection = dynamic(() => import("./admin-account-deletion-section").then((module) => module.AdminAccountDeletionSection), { loading: AdminSectionLoading });
 const AdminTenantsSection = dynamic(() => import("./admin-tenants-section").then((module) => module.AdminTenantsSection), { loading: AdminSectionLoading });
+const AdminAppCenterSection = dynamic(() => import("./admin-app-center-section").then((module) => module.AdminAppCenterSection), { loading: AdminSectionLoading });
 
 function AdminSectionLoading() {
     return <div className="flex min-h-36 items-center justify-center text-sm text-zinc-500 dark:text-zinc-400">正在加载分区...</div>;
@@ -487,6 +488,7 @@ export function AdminDashboard(props: AdminDashboardProps) {
                     {activeSection === "site" ? <AdminSiteSection controller={controller} /> : null}
                     {activeSection === "settings" ? <AdminSettingsSection controller={controller} /> : null}
                     {activeSection === "tenants" ? <AdminTenantsSection /> : null}
+                    {activeSection === "apps" ? <AdminAppCenterSection /> : null}
                     {activeSection === "accountDeletion" ? <AdminAccountDeletionSection active /> : null}
                     {activeSection === "mediaStorage" ? <AdminMediaStorageSection controller={controller} /> : null}
                     {activeSection === "externalStorage" ? <AdminExternalStorageSection controller={controller} /> : null}
