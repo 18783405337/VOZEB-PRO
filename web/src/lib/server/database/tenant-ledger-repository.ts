@@ -72,6 +72,7 @@ export interface ReservableAccountRepository {
     settle(input: AccountMutation & { actualAmount: number }): Promise<LedgerMutationResult>;
     release(input: AccountMutation): Promise<LedgerMutationResult>;
     reverse(input: AccountMutation & { originalEntryId: string }): Promise<LedgerMutationResult>;
+    getEntryByIdempotencyKey(tenantId: string, accountId: string, idempotencyKey: string): Promise<TenantLedgerEntryRecord | null>;
 }
 
 export type TenantLedgerTransactionRunner = <T>(handler: (executor: QueryExecutor) => Promise<T>) => Promise<T>;
@@ -165,7 +166,7 @@ export class TenantLedgerRepository implements ReservableAccountRepository {
             if (!accountRow) throw new TenantLedgerError("Tenant account was not found", "ACCOUNT_NOT_FOUND");
             const account = mapAccount(accountRow);
 
-            const existing = await this.getEntryByIdempotencyKey(executor, input.accountId, input.idempotencyKey);
+            const existing = await this.getEntryByIdempotencyKeyWithExecutor(executor, input.accountId, input.idempotencyKey);
             if (existing) return { account, entry: existing, applied: false };
 
             let availableAmount = account.availableAmount;
@@ -239,7 +240,7 @@ export class TenantLedgerRepository implements ReservableAccountRepository {
                 [entryId, input.tenantId, input.accountId, kind, entryAmount, direction, input.referenceType, input.referenceId, input.idempotencyKey, reversalOfId || null, JSON.stringify(metadata), now],
             );
             if (!insertResult.rows[0]) {
-                const replay = await this.getEntryByIdempotencyKey(executor, input.accountId, input.idempotencyKey);
+                const replay = await this.getEntryByIdempotencyKeyWithExecutor(executor, input.accountId, input.idempotencyKey);
                 if (replay) return { account, entry: replay, applied: false };
                 throw new TenantLedgerError("Ledger mutation conflicted without an idempotent result", "INVALID_MUTATION");
             }
@@ -260,11 +261,15 @@ export class TenantLedgerRepository implements ReservableAccountRepository {
         });
     }
 
-    private async getEntryByIdempotencyKey(executor: QueryExecutor, accountId: string, idempotencyKey: string) {
+    async getEntryByIdempotencyKey(tenantId: string, accountId: string, idempotencyKey: string) {
+        return this.transaction((executor) => this.getEntryByIdempotencyKeyWithExecutor(executor, accountId, idempotencyKey, tenantId));
+    }
+
+    private async getEntryByIdempotencyKeyWithExecutor(executor: QueryExecutor, accountId: string, idempotencyKey: string, tenantId?: string) {
         const result = await executor.query(
             `SELECT * FROM ${this.config.ledgerTable}
-             WHERE account_id = $1 AND idempotency_key = $2`,
-            [accountId, idempotencyKey],
+             WHERE account_id = $1 AND idempotency_key = $2${tenantId ? " AND tenant_id = $3" : ""}`,
+            tenantId ? [accountId, idempotencyKey, tenantId] : [accountId, idempotencyKey],
         );
         return result.rows[0] ? mapEntry(result.rows[0]) : null;
     }

@@ -694,6 +694,9 @@ function normalizeGenerationTaskContext(context: GenerationTaskContext): Generat
     const attempt = Number(context.attemptNo);
     return {
         tenantId: cleanTenantId(context.tenantId),
+        appKey: cleanContextText(context.appKey),
+        appVersion: cleanContextText(context.appVersion),
+        workflowKey: cleanContextText(context.workflowKey),
         conversationId: cleanContextText(context.conversationId),
         runId: cleanContextText(context.runId),
         surface: context.surface === "chat" || context.surface === "canvas" || context.surface === "drama" ? context.surface : undefined,
@@ -712,6 +715,9 @@ function normalizeGenerationTaskContext(context: GenerationTaskContext): Generat
 function preserveTaskContext(previous: StoredGenerationTaskRecord | undefined, next: GenerationTaskContext): GenerationTaskContext {
     return {
         tenantId: next.tenantId || previous?.tenantId,
+        appKey: next.appKey || previous?.appKey,
+        appVersion: next.appVersion || previous?.appVersion,
+        workflowKey: next.workflowKey || previous?.workflowKey,
         conversationId: next.conversationId || previous?.conversationId,
         runId: next.runId || previous?.runId,
         surface: next.surface || previous?.surface,

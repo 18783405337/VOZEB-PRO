@@ -315,10 +315,10 @@ git commit -m "feat: add transactional tenant ledgers"
 - Create: `web/src/lib/server/billing/task-billing-service.test.ts`
 - Create: `web/src/lib/server/database/task-billing-repository.ts`
 - Create: `web/src/lib/server/database/task-billing-repository.test.ts`
-- Modify: `web/src/lib/server/apps/app-runtime-service.ts`
-- Modify: `web/src/lib/server/apps/app-runtime-service.test.ts`
+- Modify: `web/src/lib/server/apps/tenant-app-runtime.ts`
+- Create: `web/src/lib/server/apps/tenant-app-runtime.test.ts`
 
-- [ ] **Step 1: Write state-machine tests**
+- [x] **Step 1: Write state-machine tests**
 
 Test valid transitions:
 
@@ -330,7 +330,7 @@ reserved -> settled -> reversed
 
 Reject direct `settled -> released`, mismatched tenant/task IDs, negative values, and duplicate reservations.
 
-- [ ] **Step 2: Define the task billing service**
+- [x] **Step 2: Define the task billing service**
 
 ```ts
 export interface TaskBillingService {
@@ -349,15 +349,17 @@ export interface TaskBillingService {
 
 `reserve` must reserve the tenant-user sale amount and tenant power cost in one PostgreSQL transaction. If either side is insufficient, neither side changes.
 
-- [ ] **Step 3: Implement partial-workflow settlement**
+- [x] **Step 3: Implement partial-workflow settlement**
 
 `actualSaleAmount` and `actualCostAmount` may be lower than reserved amounts. Settle actual amounts and release the remainder in the same transaction. Persist the exact task snapshot used for calculation.
 
-- [ ] **Step 4: Replace the compatibility billing port**
+- [x] **Step 4: Replace the compatibility billing port**
 
-Adapt `TaskBillingService.reserve` to `AppTaskBillingPort` in `app-runtime-service.ts`. Do not silently fall back to the legacy global points wallet when SaaS app execution is enabled.
+The current VOZEB-PRO tree does not contain the planned `app-runtime-service.ts`. The compatibility boundary is implemented in `tenant-app-runtime.ts` through `AppTaskBillingPort` and `createTenantAppTaskBillingPort`; historical requests without `appKey` retain the existing points path until the terminal-event hook migrates them.
 
-- [ ] **Step 5: Run tests**
+Adapt `TaskBillingService.reserve` to `AppTaskBillingPort` in `tenant-app-runtime.ts`. Do not silently fall back to the legacy global points wallet when SaaS app execution is enabled.
+
+- [x] **Step 5: Run tests**
 
 ```powershell
 pnpm test -- src/lib/server/billing/task-billing-service.test.ts src/lib/server/database/task-billing-repository.test.ts src/lib/server/apps/app-runtime-service.test.ts
@@ -365,7 +367,7 @@ pnpm test -- src/lib/server/billing/task-billing-service.test.ts src/lib/server/
 
 Expected: pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add web/src/lib/server/billing web/src/lib/server/database/task-billing-repository.ts web/src/lib/server/database/task-billing-repository.test.ts web/src/lib/server/apps/app-runtime-service.ts web/src/lib/server/apps/app-runtime-service.test.ts

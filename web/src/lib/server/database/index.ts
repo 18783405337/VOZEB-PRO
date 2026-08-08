@@ -7,4 +7,6 @@ export type { BillingRefundJobRecord, BillingRefundJobStatus } from "./billing-r
 export type { QueryExecutor } from "./postgres";
 export type { TenantTransactionRunner } from "./tenant-repository";
 export type * from "./repositories";
+export type * from "./task-billing-repository";
+export { TaskBillingRepository } from "./task-billing-repository";
 export type * from "../tenant/tenant-types";
