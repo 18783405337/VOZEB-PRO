@@ -85,9 +85,14 @@ export class AppCenterService {
         return this.repository.setStatus(tenantId, tenantApp.id, status);
     }
 
-    async requireEnabledTenantApp(tenantId: string, appKey: string, workflowKey?: string) {
+    async requireTenantApp(tenantId: string, appKey: string) {
         const tenantApp = await this.repository.getTenantApp(tenantId, appKey);
         if (!tenantApp) throw new AppCenterServiceError("Application is not installed for this tenant", "APP_NOT_INSTALLED");
+        return tenantApp;
+    }
+
+    async requireEnabledTenantApp(tenantId: string, appKey: string, workflowKey?: string) {
+        const tenantApp = await this.requireTenantApp(tenantId, appKey);
         if (tenantApp.status !== "enabled") throw new AppCenterServiceError("Application is disabled for this tenant", "APP_DISABLED");
         if (workflowKey && tenantApp.definition.workflowKey !== workflowKey) {
             throw new AppCenterServiceError("Application workflow does not match the requested runtime", "APP_WORKFLOW_MISMATCH");

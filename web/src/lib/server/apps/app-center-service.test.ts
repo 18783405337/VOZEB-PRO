@@ -54,6 +54,19 @@ function tenantApp(): TenantAppDetails {
 }
 
 describe("AppCenterService", () => {
+    it("requires installation without forcing an enabled runtime state", async () => {
+        const installed = { ...tenantApp(), status: "disabled" as const };
+        const repository = createRepository({ getTenantApp: vi.fn().mockResolvedValue(installed) });
+        const service = new AppCenterService(repository, appRegistry);
+
+        await expect(service.requireTenantApp("tenant-a", "background-removal")).resolves.toEqual(installed);
+
+        repository.getTenantApp = vi.fn().mockResolvedValue(null);
+        await expect(service.requireTenantApp("tenant-a", "background-removal")).rejects.toMatchObject({
+            code: "APP_NOT_INSTALLED",
+        });
+    });
+
     it("requires an installed and enabled application for runtime execution", async () => {
         const installed = tenantApp();
         const repository = createRepository({ getTenantApp: vi.fn().mockResolvedValue(installed) });
