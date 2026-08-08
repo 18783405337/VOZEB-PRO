@@ -26,6 +26,9 @@ const mocks = vi.hoisted(() => ({
     refundVideoTask: vi.fn(),
     refundAudioTask: vi.fn(),
     refundTextTask: vi.fn(),
+    runDigitalHumanTaskStep: vi.fn(),
+    runImageHumanTaskStep: vi.fn(),
+    runActionTransferTaskStep: vi.fn(),
 }));
 
 vi.mock("@/lib/server/generation-task-scheduler", () => ({
@@ -58,6 +61,9 @@ vi.mock("@/lib/server/image-task-refund", () => ({ refundImageTask: mocks.refund
 vi.mock("@/lib/server/video-task-refund", () => ({ refundVideoTask: mocks.refundVideoTask }));
 vi.mock("@/lib/server/audio-task-refund", () => ({ refundAudioTask: mocks.refundAudioTask }));
 vi.mock("@/lib/server/text-task-refund", () => ({ refundTextTask: mocks.refundTextTask }));
+vi.mock("@/lib/server/digital-human/digital-human-runtime", () => ({ runDigitalHumanTaskStep: mocks.runDigitalHumanTaskStep }));
+vi.mock("@/lib/server/image-human/image-human-runtime", () => ({ runImageHumanTaskStep: mocks.runImageHumanTaskStep }));
+vi.mock("@/lib/server/action-transfer/action-transfer-runtime", () => ({ runActionTransferTaskStep: mocks.runActionTransferTaskStep }));
 vi.mock("@/lib/server/generation-task-cancellation-service", () => ({
     hasCancellableUpstreamTaskId: vi.fn((value: string) => Boolean(value)),
     isCancellationExecutionPhase: vi.fn((value: string) => value === "cancel_requested" || value === "cancel_polling"),
@@ -149,6 +155,39 @@ describe("generation task recovery service", () => {
         expect(mocks.queryVideoTaskUpstream).toHaveBeenCalledWith(task, "http://internal", "", task.userId);
         expect(mocks.release).toHaveBeenCalledWith("video", task.id, "worker-one", expect.objectContaining({ executionPhase: "polling", lastUpstreamStatus: "processing" }), { tenantId: "tenant-one" });
         expect(result).toMatchObject({ claimed: 1, pending: 1 });
+    });
+
+    it.each([
+        ["digital-human", "runDigitalHumanTaskStep"],
+        ["image-human", "runImageHumanTaskStep"],
+        ["action-transfer", "runActionTransferTaskStep"],
+    ] as const)("dispatches %s tasks only to their dedicated runtime", async (type, runnerName) => {
+        const specializedLease = { ...lease(), id: `${type}-one`, type, status: "running", executionPhase: "polling" };
+        mocks.claim.mockResolvedValue([specializedLease]);
+        mocks[runnerName].mockResolvedValue({
+            state: "pending",
+            patch: {
+                executionPhase: "polling",
+                nextPollAt: 20_000,
+                lastUpstreamStatus: "processing",
+            },
+        });
+
+        const result = await runGenerationTaskRecoveryBatch({ origin: "http://internal", publicOrigin: "http://public", workerId: "worker-one" });
+
+        expect(mocks[runnerName]).toHaveBeenCalledWith(
+            expect.objectContaining({ id: `${type}-one`, type, tenantId: "tenant-one" }),
+            expect.objectContaining({ origin: "http://internal", publicOrigin: "http://public", cookie: "" }),
+        );
+        expect(mocks.queryVideoTaskUpstream).not.toHaveBeenCalled();
+        expect(mocks.release).toHaveBeenCalledWith(
+            type,
+            `${type}-one`,
+            "worker-one",
+            expect.objectContaining({ executionPhase: "polling", lastUpstreamStatus: "processing" }),
+            { tenantId: "tenant-one" },
+        );
+        expect(result).toMatchObject({ claimed: 1, pending: 1, needsReview: 0 });
     });
 
     it("moves an image with an invalid OpenAI query contract to manual review", async () => {

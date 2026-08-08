@@ -861,7 +861,17 @@ function mapGenerationTaskCostAggregate(row: Record<string, unknown>): Generatio
 }
 
 function isTaskType(value: unknown): value is GenerationTaskType {
-    return value === "text" || value === "image" || value === "video" || value === "audio" || value === "agent" || value === "render";
+    return (
+        value === "text" ||
+        value === "image" ||
+        value === "video" ||
+        value === "audio" ||
+        value === "agent" ||
+        value === "render" ||
+        value === "digital-human" ||
+        value === "image-human" ||
+        value === "action-transfer"
+    );
 }
 
 function isTaskStatus(value: unknown): value is GenerationTaskStatus {

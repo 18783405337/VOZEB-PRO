@@ -193,6 +193,34 @@ describe("mutateStoredGenerationTask", () => {
         await expect(getStoredGenerationTaskByRequest<{ id: string }>("video", "default", "user", "request-one", 3)).resolves.toBeNull();
     });
 
+    it.each(["digital-human", "image-human", "action-transfer"] as const)("stores %s tasks and keeps the generation task id as the billing boundary", async (type) => {
+        mocks.records = [];
+        const now = Date.now();
+        const id = `${type}-one`;
+        const task = {
+            id,
+            tenantId: "tenant-one",
+            userId: "user",
+            appKey: type,
+            status: "pending",
+            events: [],
+            createdAt: now,
+            updatedAt: now,
+        };
+
+        await createStoredGenerationTask(type, task, 60_000);
+        await expect(getStoredGenerationTask<typeof task>(type, id, "tenant-one")).resolves.toMatchObject({ id, tenantId: "tenant-one" });
+        await transitionStoredGenerationTask(type, id, "user", ["pending"], { status: "success" }, 60_000, undefined, "tenant-one");
+
+        expect(mocks.applyBillingOutcome).toHaveBeenCalledWith(
+            expect.objectContaining({
+                tenantId: "tenant-one",
+                generationTaskId: id,
+                outcome: "success",
+            }),
+        );
+    });
+
     it("includes tenant id in request idempotency lookup", async () => {
         vi.mocked(getDatabaseProvider).mockReturnValue("postgres");
         vi.mocked(postgresQuery).mockResolvedValueOnce({ rows: [] } as never);

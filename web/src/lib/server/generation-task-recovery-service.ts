@@ -60,11 +60,36 @@ async function processGenerationTaskLease(lease: GenerationTaskLease, workerId: 
     if (lease.type === "image") return processImageLease(lease, workerId, origin, publicOrigin, cookie);
     if (lease.type === "audio") return processAudioLease(lease, workerId, origin, cookie);
     if (lease.type === "agent") return processAgentLease(lease, workerId, origin, cookie);
+    if (lease.type === "digital-human" || lease.type === "image-human" || lease.type === "action-transfer") {
+        return processSpecializedLease(lease, workerId, origin, publicOrigin, cookie);
+    }
     if (lease.type !== "video") {
         await releaseLease(lease, workerId, { executionPhase: "needs_review", nextPollAt: undefined, lastUpstreamStatus: "worker_handler_missing" });
         return "needs_review";
     }
     return processVideoLease(lease, workerId, origin, cookie);
+}
+
+async function processSpecializedLease(lease: GenerationTaskLease, workerId: string, origin: string, publicOrigin: string, cookie: string): Promise<RecoveryResult> {
+    const context = { origin, publicOrigin, cookie };
+    try {
+        const step =
+            lease.type === "digital-human"
+                ? await (await import("@/lib/server/digital-human/digital-human-runtime")).runDigitalHumanTaskStep(lease, context)
+                : lease.type === "image-human"
+                  ? await (await import("@/lib/server/image-human/image-human-runtime")).runImageHumanTaskStep(lease, context)
+                  : await (await import("@/lib/server/action-transfer/action-transfer-runtime")).runActionTransferTaskStep(lease, context);
+        await releaseLease(lease, workerId, step.patch);
+        return step.state;
+    } catch (error) {
+        await releaseLease(lease, workerId, {
+            executionPhase: "needs_review",
+            nextPollAt: undefined,
+            lastUpstreamStatus: "specialized_runtime_unavailable",
+        });
+        console.warn("Specialized generation task runtime unavailable", { taskId: lease.id, type: lease.type, error: safeError(error) });
+        return "needs_review";
+    }
 }
 
 async function processCancelledLease(lease: GenerationTaskLease, workerId: string, origin: string): Promise<RecoveryResult> {

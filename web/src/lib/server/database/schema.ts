@@ -231,13 +231,13 @@ CREATE TABLE IF NOT EXISTS generation_tasks (
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     expires_at timestamptz NOT NULL,
-    CONSTRAINT generation_tasks_type CHECK (task_type IN ('text', 'image', 'video', 'audio', 'agent', 'render')),
+    CONSTRAINT generation_tasks_type CHECK (task_type IN ('text', 'image', 'video', 'audio', 'agent', 'render', 'digital-human', 'image-human', 'action-transfer')),
     CONSTRAINT generation_tasks_status CHECK (status IN ('pending', 'running', 'success', 'error', 'paused', 'cancelled'))
 );
 
 CREATE INDEX IF NOT EXISTS generation_tasks_user_status_idx ON generation_tasks (user_id, task_type, status, updated_at DESC);
 ALTER TABLE generation_tasks DROP CONSTRAINT IF EXISTS generation_tasks_type;
-ALTER TABLE generation_tasks ADD CONSTRAINT generation_tasks_type CHECK (task_type IN ('text', 'image', 'video', 'audio', 'agent', 'render'));
+ALTER TABLE generation_tasks ADD CONSTRAINT generation_tasks_type CHECK (task_type IN ('text', 'image', 'video', 'audio', 'agent', 'render', 'digital-human', 'image-human', 'action-transfer'));
 ALTER TABLE generation_tasks DROP CONSTRAINT IF EXISTS generation_tasks_status;
 ALTER TABLE generation_tasks ADD CONSTRAINT generation_tasks_status CHECK (status IN ('pending', 'running', 'success', 'error', 'paused', 'cancelled'));
 CREATE INDEX IF NOT EXISTS generation_tasks_expires_idx ON generation_tasks (expires_at);

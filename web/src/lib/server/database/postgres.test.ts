@@ -108,6 +108,7 @@ describe("PostgreSQL schema lifecycle", () => {
         expect(ddl).toContain("conrelid = 'vozeb_pro_tenant_members'::regclass");
         expect(ddl).toContain("CREATE TRIGGER vozeb_pro_tenants_set_updated_at BEFORE UPDATE ON vozeb_pro_tenants FOR EACH ROW EXECUTE FUNCTION vozeb_pro_set_updated_at()");
         expect(ddl).toContain("'review_pending', 'reviewing', 'review_unavailable'");
+        expect(ddl).toContain("'digital-human', 'image-human', 'action-transfer'");
         expect(ddl).toContain("task_type = 'agent' AND status = 'success' AND execution_phase IN ('review_pending', 'reviewing')");
 
         const tableNames = [...ddl.matchAll(/CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+([a-z][a-z0-9_]*)/gi)].map((match) => match[1]).sort();

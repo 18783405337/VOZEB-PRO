@@ -83,6 +83,17 @@ describe("generation task scheduler", () => {
         ]);
     });
 
+    it.each(["digital-human", "image-human", "action-transfer"] as const)("claims due %s tasks with the existing tenant and worker isolation", async (type) => {
+        mocks.records = [
+            { ...record("specialized-one", 900), type, tenantId: "tenant-one" },
+            { ...record("specialized-two", 901), type, tenantId: "tenant-two" },
+        ];
+
+        await expect(claimDueGenerationTasks({ workerId: "specialized-worker", now: 1_000, tenantId: "tenant-two" })).resolves.toEqual([
+            expect.objectContaining({ id: "specialized-two", tenantId: "tenant-two", type, workerId: "specialized-worker" }),
+        ]);
+    });
+
     it("renews only leases in the requested tenant", async () => {
         mocks.records = [
             { ...record("tenant-one-task", 900), tenantId: "tenant-one", workerId: "tenant-worker", leaseUntil: 50_000 },
