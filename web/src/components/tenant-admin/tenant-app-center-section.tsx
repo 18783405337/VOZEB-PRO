@@ -292,7 +292,14 @@ export function TenantAppCenterSection({ canConfigure }: { canConfigure: boolean
 function AppFieldControl({ field }: { field: AppField }) {
     if (field.kind === "select") return <Form.Item name={field.key} label={field.label} rules={[{ required: field.required }]}><Select options={field.options.map((option) => ({ label: option, value: option }))} /></Form.Item>;
     if (field.kind === "number") return <Form.Item name={field.key} label={field.label} rules={[{ required: field.required }]}><InputNumber className="w-full" min={field.min} max={field.max} /></Form.Item>;
-    return <Form.Item name={field.key} label={field.label} rules={[{ required: field.required, max: field.kind === "text" ? field.maxLength : undefined }]}><Input placeholder={field.kind === "image" ? "输入图片地址" : undefined} /></Form.Item>;
+    const placeholder = field.kind === "image"
+        ? "输入图片地址"
+        : field.kind === "audio"
+          ? "输入音频地址"
+          : field.kind === "video"
+            ? "输入视频地址"
+            : undefined;
+    return <Form.Item name={field.key} label={field.label} rules={[{ required: field.required, max: field.kind === "text" ? field.maxLength : undefined }]}><Input placeholder={placeholder} /></Form.Item>;
 }
 
 function isSpecializedProviderApp(appKey: string) {

@@ -1,5 +1,8 @@
 import { PILOT_WORKFLOW_KEYS, type AppDefinition } from "./app-definition";
+import { actionTransfer } from "./definitions/action-transfer";
+import { aigcDigitalHuman } from "./definitions/aigc-digital-human";
 import { backgroundRemoval } from "./definitions/background-removal";
+import { imageHuman } from "./definitions/image-human";
 import { productImage } from "./definitions/product-image";
 import { productPromoVideo } from "./definitions/product-promo-video";
 
@@ -34,7 +37,14 @@ export function createAppRegistry(definitions: readonly AppDefinition[], workflo
     });
 }
 
-export const appRegistry = createAppRegistry([backgroundRemoval, productImage, productPromoVideo]);
+export const appRegistry = createAppRegistry([
+    backgroundRemoval,
+    productImage,
+    productPromoVideo,
+    aigcDigitalHuman,
+    imageHuman,
+    actionTransfer,
+]);
 
 function deepFreeze<T>(value: T): T {
     if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;

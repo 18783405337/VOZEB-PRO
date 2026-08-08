@@ -1,6 +1,8 @@
 export type AppField =
     | { key: string; kind: "text"; label: string; required: boolean; maxLength?: number }
     | { key: string; kind: "image"; label: string; required: boolean; maxItems?: number }
+    | { key: string; kind: "audio"; label: string; required: boolean; maxItems?: number }
+    | { key: string; kind: "video"; label: string; required: boolean; maxItems?: number }
     | { key: string; kind: "select"; label: string; required: boolean; options: readonly string[] }
     | { key: string; kind: "number"; label: string; required: boolean; min?: number; max?: number };
 
@@ -19,6 +21,13 @@ export type AppDefinition = Readonly<{
     renderer: Readonly<{ kind: "schema" } | { kind: "custom"; key: string }>;
 }>;
 
-export const PILOT_WORKFLOW_KEYS = ["background-removal.v1", "product-image.v1", "product-promo-video.v1"] as const;
+export const PILOT_WORKFLOW_KEYS = [
+    "background-removal.v1",
+    "product-image.v1",
+    "product-promo-video.v1",
+    "aigc-digital-human.v1",
+    "image-human.v1",
+    "action-transfer.v1",
+] as const;
 
 export type PilotWorkflowKey = (typeof PILOT_WORKFLOW_KEYS)[number];

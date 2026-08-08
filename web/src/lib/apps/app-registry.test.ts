@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { AppDefinition } from "./app-definition";
-import { createAppRegistry } from "./app-registry";
+import { appRegistry, createAppRegistry } from "./app-registry";
 
 const backgroundRemoval: AppDefinition = {
     key: "background-removal",
@@ -44,5 +44,31 @@ describe("application registry", () => {
         expect(() => {
             (definition as { name: string }).name = "Changed";
         }).toThrow();
+    });
+
+    it.each([
+        {
+            appKey: "aigc-digital-human",
+            workflowKey: "aigc-digital-human.v1",
+            requiredFields: ["avatar", "voice", "scriptText"],
+        },
+        {
+            appKey: "image-human",
+            workflowKey: "image-human.v1",
+            requiredFields: ["sourceImage", "referenceAudio", "scriptText"],
+        },
+        {
+            appKey: "action-transfer",
+            workflowKey: "action-transfer.v1",
+            requiredFields: ["referenceImages", "sourceVideo"],
+        },
+    ])("registers the reviewed $appKey application", ({ appKey, workflowKey, requiredFields }) => {
+        const definition = appRegistry.get(appKey, "1.0.0");
+
+        expect(definition).toBeDefined();
+        expect(definition?.workflowKey).toBe(workflowKey);
+        expect(definition?.outputSchema).toEqual({ kind: "video" });
+        expect(definition?.inputSchema.map((field) => field.key)).toEqual(expect.arrayContaining(requiredFields));
+        expect(Object.isFrozen(definition)).toBe(true);
     });
 });
