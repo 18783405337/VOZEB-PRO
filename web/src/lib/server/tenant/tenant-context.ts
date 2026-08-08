@@ -2,6 +2,7 @@ import { getCurrentUser } from "@/lib/auth/session";
 import { createPostgresRepositories, isPostgresDatabaseEnabled } from "@/lib/server/database";
 import type { TenantMemberRecord, TenantRecord } from "@/lib/server/tenant/tenant-types";
 
+import { isSaasEnabled } from "./saas-feature";
 import { resolveTenantLookup } from "./tenant-host";
 
 export type TenantContextSource = "domain" | "path" | "default";
@@ -23,7 +24,7 @@ export class TenantContextError extends Error {
     constructor(
         message: string,
         readonly status: number,
-        readonly code: "tenant.not_found" | "tenant.membership_required" | "tenant.postgres_required",
+        readonly code: "tenant.not_found" | "tenant.membership_required" | "tenant.postgres_required" | "tenant.saas_disabled",
     ) {
         super(message);
         this.name = "TenantContextError";
@@ -31,6 +32,10 @@ export class TenantContextError extends Error {
 }
 
 export async function getTenantContext(request: Request, options: TenantContextOptions = {}): Promise<TenantContext> {
+    if (!isSaasEnabled()) {
+        throw new TenantContextError("SaaS tenant administration is disabled", 501, "tenant.saas_disabled");
+    }
+
     if (!isPostgresDatabaseEnabled()) {
         throw new TenantContextError("Tenant isolation requires PostgreSQL", 501, "tenant.postgres_required");
     }
@@ -74,7 +79,7 @@ export async function getTenantContext(request: Request, options: TenantContextO
 }
 
 export async function getTrustedTenantId(request: Request, user?: { id: string } | null) {
-    if (!isPostgresDatabaseEnabled()) return "default";
+    if (!isSaasEnabled()) return "default";
     return (await getTenantContext(request, { user, requireMembership: true })).tenant.id;
 }
 

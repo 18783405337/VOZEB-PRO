@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
     audit: vi.fn(),
@@ -31,13 +31,31 @@ vi.mock("@/lib/server/audit-log-store", () => ({
 
 import { PATCH } from "./route";
 
+const originalSaasEnabled = process.env.VOZEB_PRO_SAAS_ENABLED;
+
 describe("platform tenant detail API", () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        process.env.VOZEB_PRO_SAAS_ENABLED = "1";
         mocks.requirePlatformPermission.mockResolvedValue({ user: { id: "admin-one", username: "admin", role: "admin" } });
         mocks.getById.mockResolvedValue({ id: "tenant-a", slug: "tenant-a", name: "Tenant A", status: "active" });
         mocks.updateName.mockResolvedValue({ id: "tenant-a", slug: "tenant-a", name: "Renamed", status: "active" });
         mocks.updateStatus.mockResolvedValue({ id: "tenant-a", slug: "tenant-a", name: "Tenant A", status: "disabled" });
+    });
+
+    afterEach(() => {
+        if (originalSaasEnabled === undefined) delete process.env.VOZEB_PRO_SAAS_ENABLED;
+        else process.env.VOZEB_PRO_SAAS_ENABLED = originalSaasEnabled;
+    });
+
+    it("returns 501 before authorization when SaaS administration is disabled", async () => {
+        process.env.VOZEB_PRO_SAAS_ENABLED = "0";
+
+        const response = await PATCH(request({ name: "Renamed" }), context());
+
+        expect(response.status).toBe(501);
+        expect(mocks.requirePlatformPermission).not.toHaveBeenCalled();
+        expect(mocks.getById).not.toHaveBeenCalled();
     });
 
     it("renames a tenant and records a profile audit event", async () => {

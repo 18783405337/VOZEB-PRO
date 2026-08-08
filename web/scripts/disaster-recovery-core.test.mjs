@@ -4,7 +4,18 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { copyDirectorySnapshot, createRecoveryPointId, ensureNewDirectory, hashFile, parseCliArguments, readRecoveryManifest, resolveWithin, verifyRecoveryPoint, writeJsonAtomic } from "./disaster-recovery-core.mjs";
+import {
+    copyDirectorySnapshot,
+    createRecoveryPointId,
+    DISASTER_REQUIRED_TABLES,
+    ensureNewDirectory,
+    hashFile,
+    parseCliArguments,
+    readRecoveryManifest,
+    resolveWithin,
+    verifyRecoveryPoint,
+    writeJsonAtomic,
+} from "./disaster-recovery-core.mjs";
 
 describe("disaster recovery core", () => {
     it("creates a bounded recovery point identity and parses explicit confirmations", () => {
@@ -28,7 +39,7 @@ describe("disaster recovery core", () => {
             app: "VOZEB PRO",
             formatVersion: 1,
             recoveryPointId: "point-one",
-            database: { ...(await hashFile(databasePath)), file: "database/vozeb-pro.dump" },
+            database: { ...(await hashFile(databasePath)), file: "database/vozeb-pro.dump", requiredTables: DISASTER_REQUIRED_TABLES },
             localMedia: {
                 roots: [
                     { name: "reference-assets", files: [file] },
@@ -45,6 +56,28 @@ describe("disaster recovery core", () => {
 
         await writeFile(path.join(recovery, file.file), "tampered");
         await expect(verifyRecoveryPoint(recovery, manifest)).rejects.toThrow("灾备文件校验失败");
+    });
+
+    it("rejects recovery manifests that omit tenant kernel tables", async () => {
+        const recovery = await temporaryDirectory();
+        const databasePath = path.join(recovery, "database", "vozeb-pro.dump");
+        await mkdir(path.dirname(databasePath), { recursive: true });
+        await writeFile(databasePath, "database");
+        await writeJsonAtomic(path.join(recovery, "recovery-point.json"), {
+            app: "VOZEB PRO",
+            formatVersion: 1,
+            recoveryPointId: "missing-tenant-tables",
+            database: { ...(await hashFile(databasePath)), file: "database/vozeb-pro.dump", requiredTables: ["users"] },
+            localMedia: {
+                roots: [
+                    { name: "reference-assets", present: false, files: [] },
+                    { name: "generation-assets", present: false, files: [] },
+                ],
+            },
+            objectStorage: { objects: [] },
+        });
+
+        await expect(readRecoveryManifest(recovery)).rejects.toThrow("tenant kernel tables");
     });
 
     it("never overwrites a non-empty recovery directory", async () => {

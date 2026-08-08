@@ -3,12 +3,15 @@ import { readJsonBodyResult } from "@/lib/auth/request";
 import { auditActorFromRequest, safeRecordAuditLog } from "@/lib/server/audit-log-store";
 import { requirePlatformPermission } from "@/lib/server/authorization/authorization-service";
 import { createPostgresRepositories } from "@/lib/server/database";
+import { isSaasEnabled } from "@/lib/server/tenant/saas-feature";
 import type { TenantRecord, TenantStatus } from "@/lib/server/tenant/tenant-types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
+    if (!isSaasEnabled()) return apiError(501, "SaaS tenant administration is disabled");
+
     let user: { id: string; username?: string; role?: "admin" | "user" } | undefined;
     let attemptedStatusChange = false;
     try {

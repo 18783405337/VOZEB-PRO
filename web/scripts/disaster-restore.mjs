@@ -53,6 +53,7 @@ try {
         startedAt,
         completedAt: new Date().toISOString(),
         safetyDirectory: safetyDir,
+        databaseTables: manifest.database.requiredTables,
         objectStorage,
         verificationRequired: true,
     });

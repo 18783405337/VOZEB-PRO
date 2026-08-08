@@ -133,3 +133,18 @@ export async function protocolFixtureState(request: APIRequestContext) {
         tasks: Array<{ id: string; status: string }>;
     };
 }
+
+export function requiredEnv(name: string) {
+    const value = process.env[name];
+    if (!value) throw new Error(`${name} is required`);
+    return value;
+}
+
+export async function createTenantImageTask(request: APIRequestContext, prompt: string) {
+    const response = await request.post("/api/image-tasks", {
+        headers: { "X-VOZEB-PRO-Client-Request-Id": `tenant-isolation:${crypto.randomUUID()}` },
+        data: { prompt },
+    });
+    if (!response.ok()) throw new Error(`Unable to create image task: ${response.status()} ${await response.text()}`);
+    return ((await response.json()) as { task: { id: string } }).task;
+}

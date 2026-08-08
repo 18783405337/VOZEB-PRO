@@ -9,6 +9,7 @@ import { Transform } from "node:stream";
 export const DISASTER_MANIFEST_FILE = "recovery-point.json";
 export const DISASTER_FORMAT_VERSION = 1;
 export const LOCAL_MEDIA_ROOTS = ["reference-assets", "generation-assets"];
+export const DISASTER_REQUIRED_TABLES = ["tenants", "tenant_domains", "tenant_roles", "tenant_role_permissions", "tenant_members"];
 
 export function createRecoveryPointId(now = new Date()) {
     return `${now.toISOString().replace(/[:.]/g, "-")}-${randomBytes(4).toString("hex")}`;
@@ -202,6 +203,8 @@ function toPortablePath(value) {
 function validateManifestShape(value) {
     if (!value || value.app !== "VOZEB PRO" || value.formatVersion !== DISASTER_FORMAT_VERSION || typeof value.recoveryPointId !== "string" || !value.recoveryPointId) throw new Error("灾备恢复点清单格式不正确");
     if (!value.database?.file?.startsWith("database/") || !value.database.sha256) throw new Error("灾备恢复点缺少 PostgreSQL 快照");
+    const requiredTables = Array.isArray(value.database.requiredTables) ? value.database.requiredTables : [];
+    if (!DISASTER_REQUIRED_TABLES.every((table) => requiredTables.includes(table))) throw new Error("Disaster recovery manifest is missing tenant kernel tables");
     const roots = Array.isArray(value.localMedia?.roots) ? value.localMedia.roots : [];
     if (roots.length !== LOCAL_MEDIA_ROOTS.length || !LOCAL_MEDIA_ROOTS.every((name) => roots.some((root) => root?.name === name))) throw new Error("灾备恢复点缺少完整本地媒体目录清单");
     for (const root of roots) {

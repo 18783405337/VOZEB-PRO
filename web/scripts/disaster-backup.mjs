@@ -7,6 +7,7 @@ import {
     createRecoveryPointId,
     DISASTER_FORMAT_VERSION,
     DISASTER_MANIFEST_FILE,
+    DISASTER_REQUIRED_TABLES,
     ensureNewDirectory,
     hashFile,
     LOCAL_MEDIA_ROOTS,
@@ -36,7 +37,7 @@ try {
     const databasePath = path.join(recoveryPointDir, databaseFile);
     await mkdir(path.dirname(databasePath), { recursive: true });
     await runPostgresTool(process.env.VOZEB_PRO_PG_DUMP_PATH || "pg_dump", ["--format=custom", "--compress=6", "--no-owner", "--no-privileges", "--file", databasePath], databaseUrl);
-    const database = { file: databaseFile, ...(await hashFile(databasePath)) };
+    const database = { file: databaseFile, ...(await hashFile(databasePath)), requiredTables: DISASTER_REQUIRED_TABLES };
 
     const dataDir = path.resolve(process.env.VOZEB_PRO_DATA_DIR || path.join(process.cwd(), ".data"));
     const localMediaRoots = [];

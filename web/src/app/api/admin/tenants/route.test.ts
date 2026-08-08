@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
     audit: vi.fn(),
@@ -29,12 +29,30 @@ vi.mock("@/lib/server/audit-log-store", () => ({
 
 import { GET, POST } from "./route";
 
+const originalSaasEnabled = process.env.VOZEB_PRO_SAAS_ENABLED;
+
 describe("platform tenant collection API", () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        process.env.VOZEB_PRO_SAAS_ENABLED = "1";
         mocks.requirePlatformPermission.mockResolvedValue({ user: { id: "admin-one", username: "admin", role: "admin" } });
         mocks.list.mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 20 });
         mocks.createWithOwner.mockResolvedValue({ id: "tenant-a", slug: "tenant-a", name: "Tenant A", status: "active" });
+    });
+
+    afterEach(() => {
+        if (originalSaasEnabled === undefined) delete process.env.VOZEB_PRO_SAAS_ENABLED;
+        else process.env.VOZEB_PRO_SAAS_ENABLED = originalSaasEnabled;
+    });
+
+    it("returns 501 before authorization when SaaS administration is disabled", async () => {
+        process.env.VOZEB_PRO_SAAS_ENABLED = "0";
+
+        const response = await GET(new Request("http://localhost/api/admin/tenants"));
+
+        expect(response.status).toBe(501);
+        expect(mocks.requirePlatformPermission).not.toHaveBeenCalled();
+        expect(mocks.list).not.toHaveBeenCalled();
     });
 
     it("lists tenants through the platform read permission", async () => {

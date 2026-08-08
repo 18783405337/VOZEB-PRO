@@ -3,12 +3,15 @@ import { readJsonBodyResult } from "@/lib/auth/request";
 import { auditActorFromRequest, safeRecordAuditLog } from "@/lib/server/audit-log-store";
 import { requirePlatformPermission } from "@/lib/server/authorization/authorization-service";
 import { createPostgresRepositories } from "@/lib/server/database";
+import { isSaasEnabled } from "@/lib/server/tenant/saas-feature";
 import type { TenantStatus } from "@/lib/server/tenant/tenant-types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
+    if (!isSaasEnabled()) return apiError(501, "SaaS tenant administration is disabled");
+
     try {
         await requirePlatformPermission(request, "platform.tenants.read");
         const params = new URL(request.url).searchParams;
@@ -26,6 +29,8 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+    if (!isSaasEnabled()) return apiError(501, "SaaS tenant administration is disabled");
+
     let user: { id: string; username?: string; role?: "admin" | "user" } | undefined;
     try {
         const authorization = await requirePlatformPermission(request, "platform.tenants.manage");

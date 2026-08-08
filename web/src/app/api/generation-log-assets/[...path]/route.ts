@@ -9,6 +9,7 @@ import { getLocalMediaRegistration } from "@/lib/server/local-media-registry";
 import { acquireMediaConcurrency, withMediaConcurrency } from "@/lib/server/media-concurrency";
 import { createExternalMediaReadUrl } from "@/lib/server/object-storage-service";
 import { checkLocalMediaRateLimit, rateLimitHeaders } from "@/lib/server/security";
+import { getTrustedTenantId } from "@/lib/server/tenant/tenant-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -28,6 +29,7 @@ export async function HEAD(request: Request, context: RouteContext) {
 async function serveGenerationAsset(request: Request, context: RouteContext) {
     const currentUser = await getCurrentUser();
     if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
+    const tenantId = await getTrustedTenantId(request, currentUser);
 
     const { path } = await context.params;
     const rate = await checkLocalMediaRateLimit(`user:${currentUser.id}`, request);
@@ -37,7 +39,7 @@ async function serveGenerationAsset(request: Request, context: RouteContext) {
     const downloadOriginal = new URL(request.url).searchParams.get("download") === "original";
     if (!isInsideRoot(filePath, root)) return NextResponse.json({ error: "资源不存在" }, { status: 404 });
     const assetUrl = `/api/generation-log-assets/${(path || []).join("/")}`;
-    if (!(await canAccessGenerationAsset(currentUser.id, currentUser.role, assetUrl))) return NextResponse.json({ error: "资源不存在" }, { status: 404 });
+    if (!(await canAccessGenerationAsset(currentUser.id, currentUser.role, assetUrl, tenantId))) return NextResponse.json({ error: "资源不存在" }, { status: 404 });
 
     const registration = await getLocalMediaRegistration((path || []).join("/"));
     if (request.method === "HEAD" && registration?.storageProvider === "object") {

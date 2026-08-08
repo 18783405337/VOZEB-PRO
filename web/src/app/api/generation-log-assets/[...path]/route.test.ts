@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
     wrap: vi.fn(),
     head: vi.fn(),
     release: vi.fn(),
+    getTenantId: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session", () => ({ getCurrentUser: mocks.getCurrentUser }));
@@ -27,6 +28,7 @@ vi.mock("@/lib/server/local-media-response", () => ({
 vi.mock("@/lib/server/media-concurrency", () => ({ acquireMediaConcurrency: mocks.acquire, withMediaConcurrency: mocks.wrap }));
 vi.mock("@/lib/server/security", () => ({ checkLocalMediaRateLimit: mocks.rate, rateLimitHeaders: vi.fn(() => ({ "Retry-After": "60" })) }));
 vi.mock("@/lib/server/object-storage-service", () => ({ createExternalMediaReadUrl: mocks.externalRead }));
+vi.mock("@/lib/server/tenant/tenant-context", () => ({ getTrustedTenantId: mocks.getTenantId }));
 
 import { GET, HEAD } from "./route";
 
@@ -36,6 +38,7 @@ describe("generation log asset access", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.getCurrentUser.mockResolvedValue({ id: "owner", role: "user" });
+        mocks.getTenantId.mockResolvedValue("tenant-one");
         mocks.getDataDir.mockReturnValue("C:/vozeb-data");
         mocks.canAccess.mockResolvedValue(true);
         mocks.registration.mockResolvedValue({ originalName: "uploaded-file.png", mimeType: "image/png" });
@@ -92,7 +95,7 @@ describe("generation log asset access", () => {
     it("checks ownership and streams an allowed asset", async () => {
         const response = await GET(new Request("http://localhost/api/generation-log-assets/permanent/2026/07/20/images/file.png"), context);
         expect(response.status).toBe(200);
-        expect(mocks.canAccess).toHaveBeenCalledWith("owner", "user", "/api/generation-log-assets/permanent/2026/07/20/images/file.png");
+        expect(mocks.canAccess).toHaveBeenCalledWith("owner", "user", "/api/generation-log-assets/permanent/2026/07/20/images/file.png", "tenant-one");
         expect(mocks.disposition).toHaveBeenCalledWith("inline", "uploaded-file.png", "image/png", "");
         expect(mocks.stream).toHaveBeenCalled();
     });

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
     getById: vi.fn(),
@@ -26,9 +26,10 @@ vi.mock("@/lib/auth/session", () => ({
 }));
 
 import type { TenantMemberRecord, TenantRecord } from "./tenant-types";
-import { getTenantContext, TenantContextError } from "./tenant-context";
+import { getTenantContext, getTrustedTenantId, TenantContextError } from "./tenant-context";
 
 const timestamp = "2026-08-07T00:00:00.000Z";
+const originalSaasEnabled = process.env.VOZEB_PRO_SAAS_ENABLED;
 
 function tenant(overrides: Partial<TenantRecord> = {}): TenantRecord {
     return {
@@ -60,12 +61,30 @@ function member(overrides: Partial<TenantMemberRecord> = {}): TenantMemberRecord
 describe("getTenantContext", () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        process.env.VOZEB_PRO_SAAS_ENABLED = "1";
         mocks.isPostgresDatabaseEnabled.mockReturnValue(true);
         mocks.getCurrentUser.mockResolvedValue(null);
         mocks.getByVerifiedHostname.mockResolvedValue(null);
         mocks.getBySlug.mockResolvedValue(null);
         mocks.getById.mockResolvedValue(null);
         mocks.getMember.mockResolvedValue(null);
+    });
+
+    it("keeps tenant administration disabled unless the SaaS flag is enabled", async () => {
+        process.env.VOZEB_PRO_SAAS_ENABLED = "0";
+
+        await expect(getTenantContext(new Request("https://tenant.example.com/api/apps"))).rejects.toMatchObject({
+            code: "tenant.saas_disabled",
+            status: 501,
+        });
+        expect(mocks.getByVerifiedHostname).not.toHaveBeenCalled();
+    });
+
+    it("keeps existing single-tenant generation routes on the default tenant while SaaS is disabled", async () => {
+        process.env.VOZEB_PRO_SAAS_ENABLED = "0";
+
+        await expect(getTrustedTenantId(new Request("https://public.example.com/api/image-tasks"), { id: "user-one" })).resolves.toBe("default");
+        expect(mocks.getByVerifiedHostname).not.toHaveBeenCalled();
     });
 
     it("prefers a verified domain over a tenant path", async () => {
@@ -158,6 +177,15 @@ describe("getTenantContext", () => {
             code: "tenant.postgres_required",
             status: 501,
         });
+        await expect(getTrustedTenantId(new Request("https://tenant.example.com/api/image-tasks"), { id: "user-one" })).rejects.toMatchObject({
+            code: "tenant.postgres_required",
+            status: 501,
+        });
         expect(mocks.getByVerifiedHostname).not.toHaveBeenCalled();
     });
+});
+
+afterEach(() => {
+    if (originalSaasEnabled === undefined) delete process.env.VOZEB_PRO_SAAS_ENABLED;
+    else process.env.VOZEB_PRO_SAAS_ENABLED = originalSaasEnabled;
 });

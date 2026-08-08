@@ -6,6 +6,7 @@ import { createPostgresRepositories, ensurePostgresSchema, isPostgresDatabaseEna
 import { collectLocalMediaStorageKeys, countLocalMediaReferences, localMediaStorageKeyFromValue } from "@/lib/server/local-media-references";
 import { deleteLocalMediaAssetsByStorageKeys, deleteUserLocalMediaAssets, GENERATION_MEDIA_ROOT } from "@/lib/server/local-media-storage";
 import { getLocalMediaRegistration } from "@/lib/server/local-media-registry";
+import { isSaasEnabled } from "@/lib/server/tenant/saas-feature";
 import {
     MAX_LOGS,
     defaultSummary,
@@ -236,16 +237,34 @@ export async function cleanupUnreferencedGenerationAssets() {
     };
 }
 
-export async function canAccessGenerationAsset(userId: string, role: UserRole, url: string) {
-    if (role === "admin") return true;
+export async function canAccessGenerationAsset(userId: string, role: UserRole, url: string, tenantId: string) {
     const storageKey = localMediaStorageKeyFromValue(url);
-    if (storageKey) {
-        const registration = await getLocalMediaRegistration(storageKey);
+    const registration = storageKey ? await getLocalMediaRegistration(storageKey) : null;
+
+    if (!isSaasEnabled()) {
+        if (role === "admin") return true;
         if (registration) return registration.ownerUserId === userId;
+        if (isPostgresDatabaseEnabled()) return false;
+        const db = await readGenerationLogDb();
+        return db.logs.some((log) => log.userId === userId && log.assets.some((asset) => localAssetUrls(asset).includes(url)));
     }
-    if (isPostgresDatabaseEnabled()) return false;
+
+    if (registration && role !== "admin" && registration.ownerUserId !== userId) return false;
+
+    if (isPostgresDatabaseEnabled()) {
+        if (!registration?.ownerUserId) return false;
+        await ensurePostgresSchema();
+        const logs = await createPostgresRepositories().generationLogs.listByUserAndAssetUrls(registration.ownerUserId, [url], tenantId);
+        return logs.length > 0;
+    }
+
     const db = await readGenerationLogDb();
-    return db.logs.some((log) => log.userId === userId && log.assets.some((asset) => localAssetUrls(asset).includes(url)));
+    return db.logs.some(
+        (log) =>
+            (log.tenantId || "default") === tenantId &&
+            (role === "admin" || log.userId === userId) &&
+            log.assets.some((asset) => localAssetUrls(asset).includes(url)),
+    );
 }
 
 function buildGenerationLog(

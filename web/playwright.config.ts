@@ -8,6 +8,9 @@ const protocolFixturePort = Number(process.env.VOZEB_PRO_PROTOCOL_FIXTURE_PORT |
 const paymentFixturePort = Number(process.env.VOZEB_PRO_PAYMENT_FIXTURE_PORT || 4020);
 const databaseUrl = process.env.VOZEB_PRO_E2E_DATABASE_URL?.trim() || "";
 const storageState = path.join(process.cwd(), ".e2e-data", "admin-state.json");
+const tenantIsolationRequested = ["E2E_TENANT_A_URL", "E2E_TENANT_A_STORAGE_STATE", "E2E_TENANT_B_URL", "E2E_TENANT_B_STORAGE_STATE"].some(
+    (name) => Boolean(process.env[name]?.trim()),
+);
 
 export default defineConfig({
     testDir: "./e2e",
@@ -27,6 +30,7 @@ export default defineConfig({
     projects: [
         { name: "setup", testMatch: /installation\.spec\.ts/ },
         { name: "chromium", testMatch: [/(?:core|responsive)\.spec\.ts/], dependencies: ["setup"], use: { ...devices["Desktop Chrome"], storageState } },
+        ...(tenantIsolationRequested ? [{ name: "tenant-isolation", testMatch: /tenant-isolation\.spec\.ts/, use: { ...devices["Desktop Chrome"] } }] : []),
         { name: "mobile-390", testMatch: /responsive\.spec\.ts/, dependencies: ["setup"], use: { ...devices["iPhone 13"], browserName: "chromium", viewport: { width: 390, height: 844 }, storageState } },
         { name: "mobile-430", testMatch: /responsive\.spec\.ts/, dependencies: ["setup"], use: { ...devices["iPhone 14 Pro Max"], browserName: "chromium", viewport: { width: 430, height: 932 }, storageState } },
     ],
