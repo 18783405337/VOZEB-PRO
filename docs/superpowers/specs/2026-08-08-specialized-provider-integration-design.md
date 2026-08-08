@@ -21,7 +21,7 @@
 4. 租户和最终用户不能获得供应商 Base URL、API Key 或渠道内部标识。
 5. VOZEB-PRO 负责统一鉴权、租户隔离、计费、任务状态、结果持久化和审计。
 6. VOZEB-PRO 直接调用供应商，不依赖参考工程在线运行。
-7. 数字人、`image_human` 和动作迁移的外部请求与查询逻辑尽量兼容参考工程。
+7. 数字人、`image_human` 和动作迁移的外部请求与查询逻辑尽量兼容参考工程；数字人同时支持按渠道接入 Kling Avatar 等原生协议。
 
 ## 3. 非目标
 
@@ -194,14 +194,29 @@ Adapter 不负责：
 
 ## 8. 数字人
 
-### 8.1 原协议
+### 8.1 渠道协议
+
+数字人业务层不固定供应商协议。物理渠道必须声明数字人协议标识，首批支持：
+
+- `xhadmin-digital-human-v1`：保持参考工程的 TTS + Lipsync 两阶段链路。
+- `kling-avatar-v1`：参考 Kling AI 官方 Avatar API，由 Kling Adapter 负责提交、查询、状态和结果转换。
+
+租户仍只选择逻辑 API，不感知渠道协议。逻辑路由选中物理渠道后，运行时按渠道协议创建对应 Adapter。
+
+Kling 官方参考：`https://klingai.com/document-api/api/video/avatar`
+
+Kling Avatar 与 TTS 在官方能力导航中是独立接口。实现时不得假设其请求字段、鉴权或任务状态与 Xhadmin 相同，必须由独立 Adapter 和官方协议测试固定契约。
+
+### 8.2 Xhadmin 参考协议
 
 - TTS 提交：`POST /api/v1/apps/voice_tts/tts_live`
 - 声音克隆：`POST /api/v1/apps/voice_tts/clone_voice`
 - 口型驱动提交：`POST /api/v1/apps/lipsync/submit`
 - 任务查询：`GET /api/v1/tasks/{task_id}`
 
-### 8.2 状态机
+### 8.3 状态机
+
+Xhadmin 两阶段协议：
 
 ```text
 queued
@@ -213,13 +228,27 @@ queued
   -> succeeded
 ```
 
+Kling Avatar 协议：
+
+```text
+queued
+  -> submitting_avatar
+  -> waiting_avatar
+  -> persisting_result
+  -> succeeded
+```
+
+如果 Kling 渠道配置为先调用官方 TTS 再提交 Avatar，则中间阶段保存在 `provider_state_json`，但业务任务仍使用统一数字人状态和最终结果结构。
+
 任一阶段都可以进入 `failed` 或 `cancelled`。
 
 任务需要保存：
 
 - 本地任务 ID
+- Provider 协议标识
 - TTS Provider Task ID
 - Lipsync Provider Task ID
+- Avatar Provider Task ID
 - 当前 Provider 阶段
 - 渠道快照
 - 请求快照
@@ -228,12 +257,14 @@ queued
 - 最终视频结果
 - 重试次数与下次查询时间
 
-### 8.3 兼容原则
+### 8.4 兼容原则
 
 - 保留参考工程对多种响应结构的任务 ID 提取。
 - 保留对状态字段和结果 URL 的兼容解析。
 - 保留 `client_task_id`、`idempotency_key`、`local_task_id` 和 `local_task_sn`。
-- Provider 返回音频后再提交口型驱动，不在一个请求中假设全部完成。
+- Xhadmin Provider 返回音频后再提交口型驱动，不在一个请求中假设全部完成。
+- Kling Adapter 按官方 Avatar API 独立映射输入、提交、查询和结果，不复用 Xhadmin 的字段拼装。
+- Adapter 输出统一的 `submitted`、`processing`、`succeeded`、`failed` 状态和标准媒体结果。
 - 供应商结果必须进入 VOZEB-PRO 媒体资产后才能标记最终成功。
 
 ## 9. Image Human
@@ -408,9 +439,11 @@ Provider 已返回任务 ID 后，即使当前渠道被管理员停用，也允�
 
 ### 阶段 2：数字人真实供应商
 
-- 增加数字人 Adapter。
+- 增加数字人 Adapter 接口和协议解析器。
+- 实现 `xhadmin-digital-human-v1` Adapter。
+- 实现 `kling-avatar-v1` Adapter。
 - 扩展数字人任务状态机。
-- 接入 TTS 和 Lipsync。
+- 接入 Xhadmin TTS/Lipsync 与 Kling Avatar。
 - 接入媒体持久化、计费和退款。
 
 ### 阶段 3：Image Human
@@ -438,7 +471,7 @@ Provider 已返回任务 ID 后，即使当前渠道被管理员停用，也允�
 3. 每个租户应用只能保存一个逻辑 API 订阅。
 4. 租户无法读取供应商密钥和物理地址。
 5. 未安装、未启用或未绑定应用不能创建真实任务。
-6. 数字人能够完成 TTS 到 Lipsync 的完整恢复型状态机。
+6. 数字人能够按渠道完成 Xhadmin TTS/Lipsync 或 Kling Avatar 的完整恢复型状态机。
 7. `image_human` 和动作迁移能够完成提交、查询和结果持久化。
 8. Worker 重启后能继续推进未完成任务。
 9. 重试不会重复扣费或重复创建本地结果。
