@@ -38,6 +38,19 @@ CREATE TABLE IF NOT EXISTS tenant_apps (
 
 CREATE INDEX IF NOT EXISTS tenant_apps_tenant_status_idx ON tenant_apps (tenant_id, status, updated_at DESC);
 
+CREATE TABLE IF NOT EXISTS tenant_app_provider_bindings (
+    id text PRIMARY KEY,
+    tenant_app_id text NOT NULL REFERENCES tenant_apps(id) ON DELETE CASCADE,
+    logical_model_key text NOT NULL,
+    status text NOT NULL CHECK (status IN ('enabled', 'disabled')),
+    bound_by text NOT NULL REFERENCES users(id),
+    created_at bigint NOT NULL,
+    updated_at bigint NOT NULL,
+    UNIQUE (tenant_app_id)
+);
+
+CREATE INDEX IF NOT EXISTS tenant_app_provider_bindings_logical_idx ON tenant_app_provider_bindings (logical_model_key, status, updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS tenant_app_settings (
     id text PRIMARY KEY,
     tenant_app_id text NOT NULL REFERENCES tenant_apps(id) ON DELETE CASCADE,

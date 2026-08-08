@@ -111,7 +111,7 @@ describe("PostgreSQL schema lifecycle", () => {
         expect(ddl).toContain("task_type = 'agent' AND status = 'success' AND execution_phase IN ('review_pending', 'reviewing')");
 
         const tableNames = [...ddl.matchAll(/CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+([a-z][a-z0-9_]*)/gi)].map((match) => match[1]).sort();
-        const applicationTables = ["apps", "app_versions", "tenant_apps", "tenant_app_settings", "tenant_app_pricing"];
+        const applicationTables = ["apps", "app_versions", "tenant_apps", "tenant_app_settings", "tenant_app_pricing", "tenant_app_provider_bindings"];
         const saasBillingTables = [
             "tenant_user_wallets",
             "tenant_user_wallet_ledger_entries",
@@ -122,12 +122,15 @@ describe("PostgreSQL schema lifecycle", () => {
             "merchant_accounts",
             "task_billing_reservations",
         ];
-        expect(tableNames).toHaveLength(77);
+        expect(tableNames).toHaveLength(78);
         expect(tableNames.every((name) => name.startsWith("vozeb_pro_"))).toBe(true);
         expect(tableNames).not.toContain("vozeb_pro_check_ins");
         for (const table of [...applicationTables, ...saasBillingTables]) {
             expect(tableNames).toContain(`vozeb_pro_${table}`);
         }
+        expect(ddl).toContain("CREATE INDEX IF NOT EXISTS vozeb_pro_tenant_app_provider_bindings_logical_idx ON vozeb_pro_tenant_app_provider_bindings");
+        expect(ddl).toContain("tenant_app_id text NOT NULL REFERENCES vozeb_pro_tenant_apps(id) ON DELETE CASCADE");
+        expect(ddl).toContain("UNIQUE (tenant_app_id)");
         expect(ddl).toContain("ALTER TABLE vozeb_pro_billing_orders ADD COLUMN IF NOT EXISTS collection_mode text");
         expect(ddl).toContain("ALTER TABLE vozeb_pro_billing_orders ADD COLUMN IF NOT EXISTS merchant_account_id text REFERENCES vozeb_pro_merchant_accounts(id)");
         expect(ddl).toContain("ALTER TABLE vozeb_pro_merchant_accounts ADD COLUMN IF NOT EXISTS configured_fields_json jsonb NOT NULL DEFAULT '[]'::jsonb");

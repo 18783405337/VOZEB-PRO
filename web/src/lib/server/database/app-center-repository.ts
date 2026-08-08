@@ -7,6 +7,7 @@ import { numberValue, stringValue } from "./repository-shared";
 
 export type TenantAppStatus = "enabled" | "disabled";
 export type TenantAppCollectionMode = "platform" | "tenant";
+export type TenantAppProviderBindingStatus = "enabled" | "disabled";
 
 export type PublishedAppVersion = Readonly<{
     id: string;
@@ -66,6 +67,23 @@ export type TenantAppPricing = Readonly<{
     updatedAt: number;
 }>;
 
+export type TenantAppProviderBindingInput = Readonly<{
+    logicalModelKey: string;
+    status: TenantAppProviderBindingStatus;
+    boundBy: string;
+    updatedAt?: number;
+}>;
+
+export type TenantAppProviderBinding = Readonly<{
+    id: string;
+    tenantAppId: string;
+    logicalModelKey: string;
+    status: TenantAppProviderBindingStatus;
+    boundBy: string;
+    createdAt: number;
+    updatedAt: number;
+}>;
+
 export type TenantAppDetails = TenantApp &
     Readonly<{
         definition: AppDefinition;
@@ -82,6 +100,9 @@ export interface AppCenterRepository {
     setStatus(tenantId: string, tenantAppId: string, status: TenantAppStatus): Promise<TenantApp>;
     saveSettings(tenantId: string, tenantAppId: string, input: TenantAppSettingsInput): Promise<void>;
     savePricing(tenantId: string, tenantAppId: string, input: TenantAppPricingInput): Promise<void>;
+    getProviderBinding(tenantId: string, appKey: string): Promise<TenantAppProviderBinding | null>;
+    saveProviderBinding(tenantId: string, appKey: string, input: TenantAppProviderBindingInput): Promise<TenantAppProviderBinding>;
+    clearProviderBinding(tenantId: string, appKey: string): Promise<void>;
     getTenantApp(tenantId: string, appKey: string): Promise<TenantAppDetails | null>;
     listTenantApps(tenantId: string): Promise<TenantAppDetails[]>;
 }
@@ -244,6 +265,50 @@ export class AppCenterPostgresRepository implements AppCenterRepository {
         if (!result.rows[0]) throw new Error("Tenant application was not found");
     }
 
+    async getProviderBinding(tenantId: string, appKey: string): Promise<TenantAppProviderBinding | null> {
+        const result = await this.db.query(
+            `SELECT tapb.id, tapb.tenant_app_id, tapb.logical_model_key, tapb.status, tapb.bound_by, tapb.created_at, tapb.updated_at
+             FROM tenant_app_provider_bindings tapb
+             JOIN tenant_apps ta ON ta.id = tapb.tenant_app_id
+             JOIN apps a ON a.id = ta.app_id
+             WHERE ta.tenant_id = $1 AND a.app_key = $2`,
+            [tenantId, appKey],
+        );
+        return result.rows[0] ? mapTenantAppProviderBinding(result.rows[0]) : null;
+    }
+
+    async saveProviderBinding(tenantId: string, appKey: string, input: TenantAppProviderBindingInput): Promise<TenantAppProviderBinding> {
+        const now = input.updatedAt || Date.now();
+        const result = await this.db.query(
+            `INSERT INTO tenant_app_provider_bindings (id, tenant_app_id, logical_model_key, status, bound_by, created_at, updated_at)
+             SELECT $3, ta.id, $4, $5, $6, $7, $7
+             FROM tenant_apps ta
+             JOIN apps a ON a.id = ta.app_id
+             WHERE ta.tenant_id = $1 AND a.app_key = $2
+             ON CONFLICT (tenant_app_id) DO UPDATE SET
+                 logical_model_key = EXCLUDED.logical_model_key,
+                 status = EXCLUDED.status,
+                 bound_by = EXCLUDED.bound_by,
+                 updated_at = EXCLUDED.updated_at
+             RETURNING id, tenant_app_id, logical_model_key, status, bound_by, created_at, updated_at`,
+            [tenantId, appKey, randomUUID(), input.logicalModelKey, input.status, input.boundBy, now],
+        );
+        if (!result.rows[0]) throw new Error("Tenant application was not found");
+        return mapTenantAppProviderBinding(result.rows[0]);
+    }
+
+    async clearProviderBinding(tenantId: string, appKey: string): Promise<void> {
+        await this.db.query(
+            `DELETE FROM tenant_app_provider_bindings tapb
+             USING tenant_apps ta
+             JOIN apps a ON a.id = ta.app_id
+             WHERE tapb.tenant_app_id = ta.id
+               AND ta.tenant_id = $1
+               AND a.app_key = $2`,
+            [tenantId, appKey],
+        );
+    }
+
     async getTenantApp(tenantId: string, appKey: string): Promise<TenantAppDetails | null> {
         const result = await this.db.query(
             `${tenantAppDetailsSql()}
@@ -297,6 +362,18 @@ function mapTenantApp(row: Record<string, unknown>): TenantApp {
         status: row.status === "disabled" ? "disabled" : "enabled",
         installedBy: stringValue(row.installed_by),
         installedAt: numberValue(row.installed_at),
+        updatedAt: numberValue(row.updated_at),
+    };
+}
+
+function mapTenantAppProviderBinding(row: Record<string, unknown>): TenantAppProviderBinding {
+    return {
+        id: stringValue(row.id),
+        tenantAppId: stringValue(row.tenant_app_id),
+        logicalModelKey: stringValue(row.logical_model_key),
+        status: row.status === "disabled" ? "disabled" : "enabled",
+        boundBy: stringValue(row.bound_by),
+        createdAt: numberValue(row.created_at),
         updatedAt: numberValue(row.updated_at),
     };
 }
