@@ -1,4 +1,5 @@
 import { POSTGRESQL_COMMERCIAL_FEATURES_SCHEMA_SQL } from "./schema-commercial-features";
+import { POSTGRESQL_APPLICATION_CENTER_SCHEMA_SQL } from "./schema-application-center";
 import { POSTGRESQL_SAAS_CORE_SCHEMA_SQL, POSTGRESQL_SAAS_RESOURCE_SCHEMA_SQL } from "./schema-saas-core";
 import { POSTGRESQL_TRIGGER_SCHEMA_SQL } from "./schema-triggers";
 
@@ -187,6 +188,8 @@ CREATE INDEX IF NOT EXISTS sessions_user_id_idx ON sessions (user_id);
 CREATE INDEX IF NOT EXISTS sessions_expires_at_idx ON sessions (expires_at);
 
 ${POSTGRESQL_SAAS_CORE_SCHEMA_SQL}
+
+${POSTGRESQL_APPLICATION_CENTER_SCHEMA_SQL}
 
 CREATE TABLE IF NOT EXISTS account_deletion_requests (
     id text PRIMARY KEY,
