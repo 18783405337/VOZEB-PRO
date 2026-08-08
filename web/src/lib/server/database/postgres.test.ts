@@ -130,6 +130,8 @@ describe("PostgreSQL schema lifecycle", () => {
         }
         expect(ddl).toContain("ALTER TABLE vozeb_pro_billing_orders ADD COLUMN IF NOT EXISTS collection_mode text");
         expect(ddl).toContain("ALTER TABLE vozeb_pro_billing_orders ADD COLUMN IF NOT EXISTS merchant_account_id text REFERENCES vozeb_pro_merchant_accounts(id)");
+        expect(ddl).toContain("ALTER TABLE vozeb_pro_merchant_accounts ADD COLUMN IF NOT EXISTS configured_fields_json jsonb NOT NULL DEFAULT '[]'::jsonb");
+        expect(ddl).toContain("CREATE UNIQUE INDEX IF NOT EXISTS vozeb_pro_merchant_accounts_enabled_owner_provider_environment_idx");
         expect(ddl).toContain("ALTER TABLE vozeb_pro_payment_transactions ADD COLUMN IF NOT EXISTS tenant_id text REFERENCES vozeb_pro_tenants(id)");
         expect(ddl).toContain("ALTER TABLE vozeb_pro_billing_refund_jobs ADD COLUMN IF NOT EXISTS merchant_account_id text REFERENCES vozeb_pro_merchant_accounts(id)");
         expect(ddl).toContain("DROP TABLE IF EXISTS vozeb_pro_check_ins");

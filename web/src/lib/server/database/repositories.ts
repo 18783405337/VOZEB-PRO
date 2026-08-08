@@ -19,6 +19,7 @@ import { TenantPowerRepository } from "./tenant-power-repository";
 import { TenantSettlementRepository } from "./tenant-settlement-repository";
 import { TenantWalletRepository } from "./tenant-wallet-repository";
 import { TaskBillingRepository } from "./task-billing-repository";
+import { MerchantAccountRepository } from "./merchant-account-repository";
 import type { AppSettingsRecord, EntitlementPlanRecord, JsonValue, SystemModelChannelRecord } from "./repository-shared";
 import { isoValue, jsonParam, jsonValue, numberValue, optionalIso, optionalJson, optionalString, stringValue } from "./repository-shared";
 
@@ -93,6 +94,7 @@ export function createPostgresRepositories(executor?: QueryExecutor) {
         tenantPower: new TenantPowerRepository(database, executor ? undefined : withPostgresTransaction),
         tenantSettlement: new TenantSettlementRepository(database, executor ? undefined : withPostgresTransaction),
         taskBilling: new TaskBillingRepository(database),
+        merchantAccounts: new MerchantAccountRepository(database, executor ? undefined : withPostgresTransaction),
         users: new UsersRepository(database),
         sessions: new SessionsRepository(database),
         emailCodes: new EmailCodesRepository(database),

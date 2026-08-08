@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { isPaymentRuntimeProviderCheckoutReady, type PaymentRuntimeConfig } from "./payment-config-store";
+import { bootstrapLegacyPaymentMerchantAccounts, isPaymentRuntimeProviderCheckoutReady, type PaymentRuntimeConfig } from "./payment-config-store";
 
 describe("payment provider checkout readiness", () => {
     it("keeps manual checkout available without configuration", () => {
@@ -25,6 +25,39 @@ describe("payment provider checkout readiness", () => {
 
     it("rejects an unsupported Alipay mode", () => {
         expect(isPaymentRuntimeProviderCheckoutReady(config({ alipay: { enabled: true, saved: true } }, alipayValues("both")), "alipay")).toBe(false);
+    });
+
+    it("bootstraps a platform merchant account with a stable legacy idempotency key", async () => {
+        const bootstrapLegacy = vi.fn().mockResolvedValue({ id: "merchant-stripe" });
+
+        await bootstrapLegacyPaymentMerchantAccounts({
+            runtimeConfig: {
+                saved: {
+                    providers: {
+                        stripe: {
+                            enabled: true,
+                            values: { secretKey: "sk_live_real_key", webhookSecret: "whsec_real_key" },
+                        },
+                    },
+                },
+                providers: { stripe: { enabled: true, saved: true } },
+                valuesByEnvName: {},
+            },
+            merchantAccountService: { bootstrapLegacy },
+            environment: "production",
+        });
+
+        expect(bootstrapLegacy).toHaveBeenCalledWith(
+            { ownerType: "platform", ownerId: "platform" },
+            {
+                provider: "stripe",
+                environment: "production",
+                credentials: { secretKey: "sk_live_real_key", webhookSecret: "whsec_real_key" },
+                webhookIdentity: "legacy:platform:stripe:production",
+            },
+            "legacy-payment-config:platform:stripe:production",
+            "enabled",
+        );
     });
 });
 

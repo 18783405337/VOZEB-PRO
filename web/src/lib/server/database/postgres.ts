@@ -109,6 +109,8 @@ const POSTGRES_SCHEMA_OBJECTS = [
     "tenant_power_ledger_reference_idx",
     "tenant_settlement_ledger_reference_idx",
     "merchant_accounts_owner_idx",
+    "merchant_accounts_enabled_owner_provider_environment_idx",
+    "merchant_accounts_bootstrap_key_idx",
     "task_billing_reservations_status_idx",
     "account_deletion_requests_user_pending_idx",
     "account_deletion_requests_user_created_idx",

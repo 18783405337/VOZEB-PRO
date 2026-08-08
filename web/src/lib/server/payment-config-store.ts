@@ -1,6 +1,7 @@
 import { createPostgresRepositories, ensurePostgresSchema, getPostgresConnectionString, isPostgresDatabaseEnabled, type JsonValue } from "@/lib/server/database";
 import { readJsonDataFile, writeJsonDataFile } from "@/lib/server/data-adapter";
 import { BillingInputError } from "@/lib/server/billing-errors";
+import { MerchantAccountService, type MerchantAccountSummary } from "@/lib/server/payment/merchant-account-service";
 import { decryptSecretValue, encryptSecretValue } from "@/lib/server/secret-crypto";
 import { PAYMENT_PROVIDER_DEFINITIONS, type PaymentProviderConfigField, type PaymentProviderId, type SavedPaymentConfig, type SavedPaymentProviderConfig } from "@/lib/payment-config-types";
 
@@ -14,6 +15,8 @@ export type PaymentRuntimeConfig = {
     valuesByEnvName: Record<string, string>;
     providers: Partial<Record<PaymentProviderId, PaymentRuntimeProvider>>;
 };
+
+type LegacyMerchantAccountService = Pick<MerchantAccountService, "bootstrapLegacy">;
 
 const PAYMENT_CONFIG_FILE = "payment-config.json";
 const PAYMENT_RUNTIME_CACHE_MS = 5_000;
@@ -104,6 +107,46 @@ export async function savePaymentProviderConfig(input: { providerId: PaymentProv
     await writeStoredPaymentConfig(encryptPaymentConfigSecrets(next));
     invalidatePaymentRuntimeCache();
     return getSavedPaymentConfig();
+}
+
+export async function bootstrapLegacyPaymentMerchantAccounts(input: {
+    runtimeConfig?: PaymentRuntimeConfig;
+    merchantAccountService?: LegacyMerchantAccountService;
+    environment?: "test" | "production";
+} = {}): Promise<MerchantAccountSummary[]> {
+    if (!input.runtimeConfig && !input.merchantAccountService && (!isPostgresDatabaseEnabled() || !getPostgresConnectionString())) return [];
+
+    const runtimeConfig = input.runtimeConfig || (await getPaymentRuntimeConfig());
+    let merchantAccountService = input.merchantAccountService;
+    if (!merchantAccountService) {
+        if (!isPostgresDatabaseEnabled() || !getPostgresConnectionString()) return [];
+        await ensurePostgresSchema();
+        merchantAccountService = new MerchantAccountService(createPostgresRepositories().merchantAccounts);
+    }
+    const environment = input.environment || legacyMerchantEnvironment();
+    const summaries: MerchantAccountSummary[] = [];
+
+    for (const definition of PAYMENT_PROVIDER_DEFINITIONS) {
+        const saved = runtimeConfig.saved.providers[definition.id];
+        if (!saved) continue;
+        const credentials = Object.fromEntries(Object.entries(saved.values).filter(([, value]) => Boolean(value?.trim())));
+        const status = definition.id === "manual" || saved.enabled ? "enabled" : "disabled";
+        summaries.push(
+            await merchantAccountService.bootstrapLegacy(
+                { ownerType: "platform", ownerId: "platform" },
+                {
+                    provider: definition.id,
+                    environment,
+                    credentials,
+                    webhookIdentity: `legacy:platform:${definition.id}:${environment}`,
+                },
+                `legacy-payment-config:platform:${definition.id}:${environment}`,
+                status,
+            ),
+        );
+    }
+
+    return summaries;
 }
 
 export function getPaymentRuntimeEnv(config: PaymentRuntimeConfig, name: string) {
@@ -235,4 +278,8 @@ function normalizePaymentProviderId(value: string): PaymentProviderId | undefine
     if (provider === "payply") return "payply";
     if (provider === "manual" || provider === "custom") return "manual";
     return undefined;
+}
+
+function legacyMerchantEnvironment() {
+    return process.env.VOZEB_PRO_PAYMENT_ENVIRONMENT?.trim().toLowerCase() === "test" ? "test" : "production";
 }

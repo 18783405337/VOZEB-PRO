@@ -442,14 +442,20 @@ git commit -m "feat: settle app billing from task outcomes"
 - Create: `web/src/app/api/admin/billing/merchant-accounts/route.ts`
 - Create: `web/src/app/api/tenant/billing/merchant-accounts/route.ts`
 - Create: `web/src/app/api/tenant/billing/merchant-accounts/route.test.ts`
+- Modify: `web/src/app/api/admin/billing/merchant-accounts/route.test.ts`
+- Modify: `web/src/lib/server/database/index.ts`
+- Modify: `web/src/lib/server/database/postgres.ts`
+- Modify: `web/src/lib/server/database/postgres.test.ts`
+- Modify: `web/src/lib/server/database/repositories.ts`
+- Modify: `web/src/lib/server/database/schema-saas-billing.ts`
 - Modify: `web/src/lib/server/payment-config-store.ts`
 - Modify: `web/src/lib/server/payment-config-store.test.ts`
 
-- [ ] **Step 1: Write encryption, ownership, and redaction tests**
+- [x] **Step 1: Write encryption, ownership, and redaction tests**
 
 Test that stored configuration is encrypted, list responses expose only status metadata, tenant administrators cannot read platform merchants or other tenants, and only one enabled account exists per owner/provider/environment.
 
-- [ ] **Step 2: Define public and secret types**
+- [x] **Step 2: Define public and secret types**
 
 ```ts
 export type MerchantAccountSummary = {
@@ -469,11 +475,11 @@ export type SaveMerchantAccountInput = {
 };
 ```
 
-- [ ] **Step 3: Reuse existing encryption**
+- [x] **Step 3: Reuse existing encryption**
 
 Serialize merchant credentials as JSON and encrypt the full payload with `encryptSecretValue`; decrypt only inside server-side checkout, webhook, and refund services with `decryptSecretValue`. Add an idempotent bootstrap function that reads `getPaymentRuntimeConfig()`, creates platform-owned `merchant_accounts` rows for configured providers, and records a stable bootstrap idempotency key. Keep read compatibility with the singleton configuration until Plan 4 removes that path.
 
-- [ ] **Step 4: Implement APIs**
+- [x] **Step 4: Implement APIs**
 
 - Platform route requires `platform.billing.manage`.
 - Tenant route requires `tenant.merchants.manage`.
@@ -481,10 +487,10 @@ Serialize merchant credentials as JSON and encrypt the full payload with `encryp
 - `PUT` validates provider fields and encrypts credentials.
 - `DELETE` disables the account; it does not delete historical merchant identity.
 
-- [ ] **Step 5: Run tests and commit**
+- [x] **Step 5: Run tests and commit**
 
 ```powershell
-pnpm test -- src/lib/server/database/merchant-account-repository.test.ts src/lib/server/payment/merchant-account-service.test.ts src/app/api/tenant/billing/merchant-accounts
+pnpm test -- src/lib/server/database/merchant-account-repository.test.ts src/lib/server/payment/merchant-account-service.test.ts src/lib/server/payment-config-store.test.ts src/app/api/admin/billing/merchant-accounts src/app/api/tenant/billing/merchant-accounts
 git add web/src/lib/server/database/merchant-account-repository.ts web/src/lib/server/database/merchant-account-repository.test.ts web/src/lib/server/payment web/src/app/api/admin/billing/merchant-accounts web/src/app/api/tenant/billing/merchant-accounts web/src/lib/server/payment-config-store.ts web/src/lib/server/payment-config-store.test.ts
 git commit -m "feat: add scoped merchant accounts"
 ```

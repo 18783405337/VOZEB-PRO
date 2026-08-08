@@ -108,7 +108,9 @@ CREATE TABLE IF NOT EXISTS merchant_accounts (
     environment text NOT NULL CHECK (environment IN ('test', 'production')),
     status text NOT NULL CHECK (status IN ('enabled', 'disabled')),
     encrypted_config text NOT NULL,
+    configured_fields_json jsonb NOT NULL DEFAULT '[]'::jsonb,
     webhook_identity text NOT NULL,
+    bootstrap_idempotency_key text,
     created_at bigint NOT NULL,
     updated_at bigint NOT NULL,
     UNIQUE (provider, environment, webhook_identity),
@@ -120,6 +122,17 @@ CREATE TABLE IF NOT EXISTS merchant_accounts (
 
 CREATE INDEX IF NOT EXISTS merchant_accounts_owner_idx
 ON merchant_accounts (owner_type, owner_id, provider, environment, status);
+
+ALTER TABLE merchant_accounts ADD COLUMN IF NOT EXISTS configured_fields_json jsonb NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE merchant_accounts ADD COLUMN IF NOT EXISTS bootstrap_idempotency_key text;
+
+CREATE UNIQUE INDEX IF NOT EXISTS merchant_accounts_enabled_owner_provider_environment_idx
+ON merchant_accounts (owner_type, owner_id, provider, environment)
+WHERE status = 'enabled';
+
+CREATE UNIQUE INDEX IF NOT EXISTS merchant_accounts_bootstrap_key_idx
+ON merchant_accounts (bootstrap_idempotency_key)
+WHERE bootstrap_idempotency_key IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS task_billing_reservations (
     id text PRIMARY KEY,
