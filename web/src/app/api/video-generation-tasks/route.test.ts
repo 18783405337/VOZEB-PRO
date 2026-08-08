@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
     getVideoTask: vi.fn(),
     linkStoredGenerationTask: vi.fn(),
     getStoredGenerationTaskByRequest: vi.fn(),
+    requireTenantPermission: vi.fn(async () => ({ tenant: { id: "default" } })),
+    requireTenantAppRuntime: vi.fn(),
     touchVideoTask: vi.fn(),
     transitionVideoTask: vi.fn(),
     updateVideoTask: vi.fn(),
@@ -37,6 +39,11 @@ vi.mock("@/lib/server/generation-task-store", () => ({
     getStoredGenerationTaskByRequest: mocks.getStoredGenerationTaskByRequest,
 }));
 vi.mock("@/lib/server/tenant/tenant-context", () => ({ getTrustedTenantId: vi.fn(async () => "default") }));
+vi.mock("@/lib/server/authorization/authorization-service", () => ({
+    AuthorizationError: class AuthorizationError extends Error {},
+    requireTenantPermission: mocks.requireTenantPermission,
+}));
+vi.mock("@/lib/server/apps/tenant-app-runtime", () => ({ requireTenantAppRuntime: mocks.requireTenantAppRuntime }));
 vi.mock("@/lib/server/security", () => ({
     checkGenerationRateLimit: vi.fn(async () => ({ allowed: true, remaining: 5, resetAt: Date.now() + 60_000 })),
     getTrustedProxyHops: vi.fn(() => 0),
@@ -57,6 +64,7 @@ vi.mock("@/lib/server/video-task-store", () => ({
 }));
 
 import { POST } from "./route";
+import { AppCenterServiceError } from "@/lib/server/apps/app-center-service";
 import { resetChannelRuntimeHealth } from "@/lib/server/channel-runtime-health";
 
 const channels = [
@@ -563,6 +571,18 @@ describe("video generation candidate failover", () => {
         expect((await response.json()).error).toBe("请求内容不是有效 JSON");
     });
 
+    it("blocks an app-backed request when the application is not installed", async () => {
+        mocks.requireTenantAppRuntime.mockRejectedValue(new AppCenterServiceError("Application is not installed for this tenant", "APP_NOT_INSTALLED"));
+
+        const response = await POST(request({ model: "video" }, [], undefined, "product-promo-video"));
+
+        expect(response.status).toBe(404);
+        expect(await response.json()).toMatchObject({ code: "APP_NOT_INSTALLED" });
+        expect(mocks.requireTenantPermission).toHaveBeenCalledWith(expect.any(Request), "tenant.apps.use.product-promo-video");
+        expect(mocks.requireTenantAppRuntime).toHaveBeenCalledWith("default", "product-promo-video", "video");
+        expect(mocks.getAuthSettings).not.toHaveBeenCalled();
+    });
+
     it("returns 413 before reading an oversized JSON body", async () => {
         const response = await POST(
             new Request("http://localhost/api/video-generation-tasks", {
@@ -577,7 +597,7 @@ describe("video generation candidate failover", () => {
     });
 });
 
-function request(config: Record<string, unknown> = { model: "video" }, references: Array<{ type: string; url: string }> = [], context?: Record<string, unknown>) {
+function request(config: Record<string, unknown> = { model: "video" }, references: Array<{ type: string; url: string }> = [], context?: Record<string, unknown>, appKey?: string) {
     const clientRequestId = typeof context?.clientRequestId === "string" ? context.clientRequestId : "";
     return new Request("http://localhost/api/video-generation-tasks", {
         method: "POST",
@@ -586,7 +606,7 @@ function request(config: Record<string, unknown> = { model: "video" }, reference
             ...(clientRequestId ? { "x-vozeb-pro-client-request-id": clientRequestId } : {}),
             ...(typeof context?.attemptNo === "number" ? { "x-vozeb-pro-attempt-no": String(context.attemptNo) } : {}),
         },
-        body: JSON.stringify({ config, prompt: "A test video", references, context }),
+        body: JSON.stringify({ ...(appKey ? { appKey } : {}), config, prompt: "A test video", references, context }),
     });
 }
 

@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
     getAuthSettings: vi.fn(),
     getStoredGenerationTaskByRequest: vi.fn(),
+    requireTenantPermission: vi.fn(async () => ({ tenant: { id: "default" } })),
+    requireTenantAppRuntime: vi.fn(),
     rate: vi.fn(),
     withGenerationConcurrencyLimit: vi.fn(),
 }));
@@ -24,8 +26,14 @@ vi.mock("@/lib/server/security", () => ({
 }));
 vi.mock("@/lib/server/proxy-dispatcher", () => ({ configureServerProxyDispatcher: vi.fn() }));
 vi.mock("@/lib/server/tenant/tenant-context", () => ({ getTrustedTenantId: vi.fn(async () => "default") }));
+vi.mock("@/lib/server/authorization/authorization-service", () => ({
+    AuthorizationError: class AuthorizationError extends Error {},
+    requireTenantPermission: mocks.requireTenantPermission,
+}));
+vi.mock("@/lib/server/apps/tenant-app-runtime", () => ({ requireTenantAppRuntime: mocks.requireTenantAppRuntime }));
 
 import { maxDuration, POST } from "./route";
+import { AppCenterServiceError } from "@/lib/server/apps/app-center-service";
 
 describe("image task route", () => {
     beforeEach(() => {
@@ -62,5 +70,24 @@ describe("image task route", () => {
         expect(mocks.getAuthSettings).not.toHaveBeenCalled();
         expect(mocks.rate).not.toHaveBeenCalled();
         expect(mocks.withGenerationConcurrencyLimit).not.toHaveBeenCalled();
+    });
+
+    it("blocks an app-backed request when the tenant application is disabled", async () => {
+        mocks.rate.mockResolvedValue({ allowed: true, remaining: 5, resetAt: Date.now() + 60_000 });
+        mocks.requireTenantAppRuntime.mockRejectedValue(new AppCenterServiceError("Application is disabled for this tenant", "APP_DISABLED"));
+
+        const response = await POST(
+            new Request("http://localhost/api/image-tasks", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ appKey: "background-removal", prompt: "remove background" }),
+            }),
+        );
+
+        expect(response.status).toBe(409);
+        expect(await response.json()).toMatchObject({ code: "APP_DISABLED" });
+        expect(mocks.requireTenantPermission).toHaveBeenCalledWith(expect.any(Request), "tenant.apps.use.background-removal");
+        expect(mocks.requireTenantAppRuntime).toHaveBeenCalledWith("default", "background-removal", "image");
+        expect(mocks.getAuthSettings).not.toHaveBeenCalled();
     });
 });

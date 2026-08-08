@@ -12,7 +12,16 @@ import type {
 export class AppCenterServiceError extends Error {
     constructor(
         message: string,
-        readonly code: "APP_DEFINITION_MISMATCH" | "APP_NOT_FOUND" | "APP_NOT_PUBLISHED" | "APP_NOT_INSTALLED" | "APP_SETTING_INVALID",
+        readonly code:
+            | "APP_CENTER_UNAVAILABLE"
+            | "APP_DEFINITION_MISMATCH"
+            | "APP_NOT_FOUND"
+            | "APP_NOT_PUBLISHED"
+            | "APP_NOT_INSTALLED"
+            | "APP_DISABLED"
+            | "APP_WORKFLOW_MISMATCH"
+            | "APP_OUTPUT_MISMATCH"
+            | "APP_SETTING_INVALID",
     ) {
         super(message);
         this.name = "AppCenterServiceError";
@@ -74,6 +83,16 @@ export class AppCenterService {
         const tenantApp = await this.repository.getTenantApp(tenantId, appKey);
         if (!tenantApp) throw new AppCenterServiceError("Application is not installed for this tenant", "APP_NOT_INSTALLED");
         return this.repository.setStatus(tenantId, tenantApp.id, status);
+    }
+
+    async requireEnabledTenantApp(tenantId: string, appKey: string, workflowKey?: string) {
+        const tenantApp = await this.repository.getTenantApp(tenantId, appKey);
+        if (!tenantApp) throw new AppCenterServiceError("Application is not installed for this tenant", "APP_NOT_INSTALLED");
+        if (tenantApp.status !== "enabled") throw new AppCenterServiceError("Application is disabled for this tenant", "APP_DISABLED");
+        if (workflowKey && tenantApp.definition.workflowKey !== workflowKey) {
+            throw new AppCenterServiceError("Application workflow does not match the requested runtime", "APP_WORKFLOW_MISMATCH");
+        }
+        return tenantApp;
     }
 
     private getReviewedDefinition(appKey: string, version: string) {

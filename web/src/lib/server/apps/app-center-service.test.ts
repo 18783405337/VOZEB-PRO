@@ -51,6 +51,32 @@ function tenantApp(): TenantAppDetails {
 }
 
 describe("AppCenterService", () => {
+    it("requires an installed and enabled application for runtime execution", async () => {
+        const installed = tenantApp();
+        const repository = createRepository({ getTenantApp: vi.fn().mockResolvedValue(installed) });
+        const service = new AppCenterService(repository, appRegistry);
+
+        await expect(service.requireEnabledTenantApp("tenant-a", "background-removal", "background-removal.v1")).resolves.toEqual(installed);
+
+        await expect(service.requireEnabledTenantApp("tenant-a", "background-removal", "product-image.v1")).rejects.toMatchObject({
+            code: "APP_WORKFLOW_MISMATCH",
+        });
+    });
+
+    it("rejects runtime execution for missing or disabled applications", async () => {
+        const repository = createRepository({ getTenantApp: vi.fn().mockResolvedValue(null) });
+        const service = new AppCenterService(repository, appRegistry);
+
+        await expect(service.requireEnabledTenantApp("tenant-a", "background-removal", "background-removal.v1")).rejects.toMatchObject({
+            code: "APP_NOT_INSTALLED",
+        });
+
+        repository.getTenantApp = vi.fn().mockResolvedValue({ ...tenantApp(), status: "disabled" });
+        await expect(service.requireEnabledTenantApp("tenant-a", "background-removal", "background-removal.v1")).rejects.toMatchObject({
+            code: "APP_DISABLED",
+        });
+    });
+
     it("rejects publication when the stored definition differs from the reviewed registry", async () => {
         const definition = appRegistry.get("background-removal", "1.0.0")!;
         const repository = createRepository({

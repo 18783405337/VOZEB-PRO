@@ -21,6 +21,7 @@ import { createSignedReferenceAssetUrl, signReferenceAssetInputUrl } from "@/lib
 import { assertCapabilityConstraints } from "@/lib/server/capability-constraints";
 
 export type CreateImageTaskBody = {
+    appKey?: string;
     kind?: "generation" | "edit";
     config?: ImageTaskConfig;
     prompt?: string;

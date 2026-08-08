@@ -27,13 +27,16 @@ import { maintenanceWorkerContextHeaders, requestRuntimeCredential } from "@/lib
 import { writeVideoGenerationLog } from "@/lib/server/video-task-log";
 import { buildOpenAiVideoFormData } from "./video-task-openai";
 import { getTrustedTenantId } from "@/lib/server/tenant/tenant-context";
+import { AppCenterServiceError } from "@/lib/server/apps/app-center-service";
+import { requireTenantAppRuntime } from "@/lib/server/apps/tenant-app-runtime";
+import { AuthorizationError, requireTenantPermission } from "@/lib/server/authorization/authorization-service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 2400;
 
 const CREATE_PATHS = ["/video/generations", "/videos/generations", "/videos/videos", "/videos"];
-type CreateVideoTaskBody = { config?: Record<string, unknown>; prompt?: string; references?: Array<{ type?: string; url?: string }>; source?: string; context?: GenerationTaskContext };
+type CreateVideoTaskBody = { appKey?: string; config?: Record<string, unknown>; prompt?: string; references?: Array<{ type?: string; url?: string }>; source?: string; context?: GenerationTaskContext };
 
 export async function POST(request: Request) {
     const user = await getCurrentUser(request);
@@ -54,11 +57,21 @@ export async function POST(request: Request) {
         if (isAuthInputError(error)) return NextResponse.json({ error: error.message }, { status: error.status });
         throw error;
     }
+    const appKey = textValue(body.appKey);
+    if (body.appKey !== undefined && !appKey) return NextResponse.json({ error: "Application key is invalid" }, { status: 400 });
+    const runtimeApp = appKey ? await resolveRuntimeApp(request, tenantId, appKey) : undefined;
+    if (runtimeApp instanceof NextResponse) return runtimeApp;
     if (!headerRequestId && body.context?.clientRequestId) {
         const existing = await getStoredGenerationTaskByRequest<VideoTask>("video", tenantId, user.id, body.context.clientRequestId, body.context.attemptNo);
         if (existing) return NextResponse.json({ task: publicTask(existing) });
     }
-    if (headerRequestId) body.context = { ...(body.context || {}), clientRequestId: headerRequestId, ...(headerAttemptNo ? { attemptNo: headerAttemptNo } : {}) };
+    if (headerRequestId || runtimeApp) {
+        body.context = {
+            ...(body.context || {}),
+            ...(runtimeApp ? { appKey: runtimeApp.appKey, appVersion: runtimeApp.version, workflowKey: runtimeApp.definition.workflowKey } : {}),
+            ...(headerRequestId ? { clientRequestId: headerRequestId, ...(headerAttemptNo ? { attemptNo: headerAttemptNo } : {}) } : {}),
+        };
+    }
     const settings = await getAuthSettings();
     const response = await withGenerationConcurrencyLimit(user.id, "video", 30 * 60_000, settings.generationConcurrency.video, async () => {
         const requestedModel = typeof body.config?.model === "string" && body.config.model.trim() ? body.config.model : settings.defaultModels.videoModel;
@@ -196,9 +209,39 @@ export async function POST(request: Request) {
     return response || NextResponse.json({ error: "当前用户视频任务已达到并发上限" }, { status: 429 });
 }
 
+async function resolveRuntimeApp(request: Request, tenantId: string, appKey: string): Promise<Awaited<ReturnType<typeof requireTenantAppRuntime>> | NextResponse> {
+    try {
+        const authorization = await requireTenantPermission(request, `tenant.apps.use.${appKey}`);
+        if (authorization.tenant.id !== tenantId) {
+            throw new AuthorizationError("Tenant context does not match the requested application", 403, "tenant.permission_denied");
+        }
+        return await requireTenantAppRuntime(tenantId, appKey, "video");
+    } catch (error) {
+        if (error instanceof AuthorizationError) {
+            return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });
+        }
+        if (error instanceof AppCenterServiceError) {
+            const status =
+                error.code === "APP_CENTER_UNAVAILABLE"
+                    ? 501
+                    : error.code === "APP_NOT_INSTALLED"
+                      ? 404
+                      : error.code === "APP_DISABLED"
+                        ? 409
+                        : 400;
+            return NextResponse.json({ error: error.message, code: error.code }, { status });
+        }
+        throw error;
+    }
+}
+
 function ratioValue(value: unknown) {
     const text = typeof value === "string" ? value.trim() : "";
     return text || undefined;
+}
+
+function textValue(value: unknown) {
+    return typeof value === "string" ? value.trim() : "";
 }
 
 export async function createUpstream(

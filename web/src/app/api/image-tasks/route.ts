@@ -23,6 +23,9 @@ import { createSignedReferenceAssetUrl, signReferenceAssetInputUrl } from "@/lib
 import { assertCapabilityConstraints } from "@/lib/server/capability-constraints";
 import { checkGenerationRateLimit, rateLimitHeaders } from "@/lib/server/security";
 import { getTrustedTenantId } from "@/lib/server/tenant/tenant-context";
+import { AppCenterServiceError } from "@/lib/server/apps/app-center-service";
+import { requireTenantAppRuntime } from "@/lib/server/apps/tenant-app-runtime";
+import { AuthorizationError, requireTenantPermission } from "@/lib/server/authorization/authorization-service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -147,12 +150,22 @@ export async function POST(request: Request) {
         if (isAuthInputError(error)) return NextResponse.json({ error: error.message }, { status: error.status });
         throw error;
     }
+    const appKey = textValue(resolvedBody.appKey);
+    if (resolvedBody.appKey !== undefined && !appKey) return NextResponse.json({ error: "Application key is invalid" }, { status: 400 });
+    const runtimeApp = appKey ? await resolveRuntimeApp(request, tenantId, appKey) : undefined;
+    if (runtimeApp instanceof NextResponse) return runtimeApp;
     const requestId = headerRequestId || resolvedBody.context?.clientRequestId?.trim();
     if (!headerRequestId && requestId) {
         const existing = await getStoredGenerationTaskByRequest<ImageTask>("image", tenantId, currentUser.id, requestId, resolvedBody.context?.attemptNo);
         if (existing) return NextResponse.json({ task: publicTask(existing) });
     }
-    if (requestId) resolvedBody.context = { ...(resolvedBody.context || {}), clientRequestId: requestId, ...(headerAttemptNo ? { attemptNo: headerAttemptNo } : {}) };
+    if (requestId || runtimeApp) {
+        resolvedBody.context = {
+            ...(resolvedBody.context || {}),
+            ...(runtimeApp ? { appKey: runtimeApp.appKey, appVersion: runtimeApp.version, workflowKey: runtimeApp.definition.workflowKey } : {}),
+            ...(requestId ? { clientRequestId: requestId, ...(headerAttemptNo ? { attemptNo: headerAttemptNo } : {}) } : {}),
+        };
+    }
     const settings = await getAuthSettings();
     const response = await withGenerationConcurrencyLimit(currentUser.id, "image", 10 * 60 * 1000, settings.generationConcurrency.image, async () => {
         const configs = sanitizeConfigs(resolvedBody.config, settings);
@@ -205,7 +218,37 @@ export async function POST(request: Request) {
     return response || NextResponse.json({ error: "当前用户生图任务已达到并发上限，请稍后再试" }, { status: 429 });
 }
 
+async function resolveRuntimeApp(request: Request, tenantId: string, appKey: string): Promise<Awaited<ReturnType<typeof requireTenantAppRuntime>> | NextResponse> {
+    try {
+        const authorization = await requireTenantPermission(request, `tenant.apps.use.${appKey}`);
+        if (authorization.tenant.id !== tenantId) {
+            throw new AuthorizationError("Tenant context does not match the requested application", 403, "tenant.permission_denied");
+        }
+        return await requireTenantAppRuntime(tenantId, appKey, "image");
+    } catch (error) {
+        if (error instanceof AuthorizationError) {
+            return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });
+        }
+        if (error instanceof AppCenterServiceError) {
+            const status =
+                error.code === "APP_CENTER_UNAVAILABLE"
+                    ? 501
+                    : error.code === "APP_NOT_INSTALLED"
+                      ? 404
+                      : error.code === "APP_DISABLED"
+                        ? 409
+                        : 400;
+            return NextResponse.json({ error: error.message, code: error.code }, { status });
+        }
+        throw error;
+    }
+}
+
 function positiveAttemptNo(value: string | null) {
     const parsed = Math.floor(Number(value));
     return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function textValue(value: unknown) {
+    return typeof value === "string" ? value.trim() : "";
 }

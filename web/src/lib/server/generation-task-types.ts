@@ -5,6 +5,9 @@ export type GenerationTaskStatus = "pending" | "running" | "success" | "error" |
 
 export type GenerationTaskContext = {
     tenantId?: string;
+    appKey?: string;
+    appVersion?: string;
+    workflowKey?: string;
     conversationId?: string;
     runId?: string;
     surface?: "chat" | "canvas" | "drama";
