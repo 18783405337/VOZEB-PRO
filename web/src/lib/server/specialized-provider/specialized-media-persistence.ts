@@ -10,7 +10,7 @@ import { persistExternalMediaIfEnabled } from "@/lib/server/object-storage-servi
 
 const MAX_SPECIALIZED_VIDEO_BYTES = 300 * 1024 * 1024;
 
-export type SpecializedTaskType = "digital-human" | "image-human" | "action-transfer";
+export type SpecializedTaskType = "digital-human" | "image-human" | "action-transfer" | "smart-clip";
 
 export type SpecializedMediaPersistenceInput = {
     tenantId: string;
@@ -172,5 +172,6 @@ function generationAssetUrl(storageKey: string) {
 function specializedMediaTitle(taskType: SpecializedTaskType) {
     if (taskType === "digital-human") return "Digital human";
     if (taskType === "image-human") return "Image human";
+    if (taskType === "smart-clip") return "Smart clip";
     return "Action transfer";
 }

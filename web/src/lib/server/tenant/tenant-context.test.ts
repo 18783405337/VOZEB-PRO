@@ -128,6 +128,12 @@ describe("getTenantContext", () => {
         expect(context).toMatchObject({ tenant: { id: "default" }, source: "default" });
     });
 
+    it("treats a platform admin as owner of an unowned bootstrap default tenant", async () => {
+        mocks.getById.mockResolvedValue(tenant({ id: "default", slug: "default", ownerUserId: undefined }));
+        const context = await getTenantContext(new Request("https://public.example.com/api/apps"), { user: { id: "admin-one", role: "admin" }, requireMembership: true });
+        expect(context.member).toMatchObject({ tenantId: "default", userId: "admin-one", roleKey: "owner", status: "active" });
+    });
+
     it("can disable default tenant fallback", async () => {
         await expect(
             getTenantContext(new Request("https://public.example.com/api/apps"), {

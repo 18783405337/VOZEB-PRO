@@ -64,11 +64,12 @@ export async function getLibraryAsset(userId: string, id: string) {
     return (await readDatabase()).assets.find((record) => record.userId === userId && record.asset.id === id)?.asset || null;
 }
 
-export async function createLibraryAsset(userId: string, asset: Asset) {
+export async function createLibraryAsset(userId: string, asset: Asset, tenantId = "default") {
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
-        await postgresQuery(`INSERT INTO library_assets (id, user_id, kind, title, asset_json, created_at, updated_at) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)`, [
+        await postgresQuery(`INSERT INTO library_assets (id, tenant_id, user_id, kind, title, asset_json, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8)`, [
             asset.id,
+            tenantId,
             userId,
             asset.kind,
             asset.title,

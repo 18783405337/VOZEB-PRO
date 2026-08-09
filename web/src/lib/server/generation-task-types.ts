@@ -9,7 +9,8 @@ export type GenerationTaskType =
     | "render"
     | "digital-human"
     | "image-human"
-    | "action-transfer";
+    | "action-transfer"
+    | "smart-clip";
 export type GenerationTaskStatus = "pending" | "running" | "success" | "error" | "paused" | "cancelled";
 
 export type GenerationTaskContext = {

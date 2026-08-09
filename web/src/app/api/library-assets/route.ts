@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth/session";
 import { createLibraryAssetForUser, LibraryAssetServiceError, listLibraryAssetPageForUser } from "@/lib/server/library-asset-service";
+import { getTrustedTenantId } from "@/lib/server/tenant/tenant-context";
 
 export async function GET(request: Request) {
     const user = await getCurrentUser();
@@ -20,7 +21,8 @@ export async function POST(request: Request) {
     const user = await getCurrentUser();
     if (!user) return NextResponse.json({ code: 401, data: null, msg: "请先登录" }, { status: 401 });
     try {
-        const asset = await createLibraryAssetForUser(user.id, await request.json().catch(() => ({})));
+        const tenantId = await getTrustedTenantId(request, user);
+        const asset = await createLibraryAssetForUser(user.id, await request.json().catch(() => ({})), tenantId);
         return NextResponse.json({ code: 0, data: { asset }, msg: "素材已保存" });
     } catch (error) {
         return serviceError(error);

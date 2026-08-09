@@ -22,6 +22,12 @@ export type SpecializedProviderContext = Readonly<{
     apiKey: string;
     protocol: SpecializedProviderProtocol;
     timeoutMs: number;
+    specializedConfig?: {
+        klingMode?: "std" | "pro";
+        klingPrompt?: string;
+        klingCallbackUrl?: string;
+        klingWatermarkEnabled?: boolean;
+    };
 }>;
 
 export type SpecializedProviderTaskSnapshot = Readonly<{

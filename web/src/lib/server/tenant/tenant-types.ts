@@ -26,6 +26,13 @@ export type TenantDomainRecord = {
     updatedAt: string;
 };
 
+export type CreateTenantDomainInput = {
+    id?: string;
+    tenantId: string;
+    hostname: string;
+    kind?: TenantDomainKind;
+};
+
 export type TenantMemberRecord = {
     tenantId: string;
     userId: string;

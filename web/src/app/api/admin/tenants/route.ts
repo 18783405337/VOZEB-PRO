@@ -45,8 +45,12 @@ export async function POST(request: Request) {
         if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(slug)) return apiError(400, "租户标识格式无效");
         if (!name || name.length > 120) return apiError(400, "租户名称格式无效");
 
-        const ownerUserId = typeof body.ownerUserId === "string" && body.ownerUserId.trim() ? body.ownerUserId.trim() : user.id;
-        const tenant = await createPostgresRepositories().tenants.createWithOwner({ slug, name, ownerUserId });
+        const ownerUserId = typeof body.ownerUserId === "string" && body.ownerUserId.trim() ? body.ownerUserId.trim() : "";
+        if (!ownerUserId) return apiError(400, "请选择租户所有者");
+        const repositories = createPostgresRepositories();
+        const owner = await repositories.users.getById(ownerUserId);
+        if (!owner || owner.status !== "active") return apiError(400, "租户所有者用户不存在或已禁用");
+        const tenant = await repositories.tenants.createWithOwner({ slug, name, ownerUserId });
         await safeRecordAuditLog({
             action: "platform.tenant.create",
             actor: auditActorFromRequest(request, user),

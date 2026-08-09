@@ -870,7 +870,8 @@ function isTaskType(value: unknown): value is GenerationTaskType {
         value === "render" ||
         value === "digital-human" ||
         value === "image-human" ||
-        value === "action-transfer"
+        value === "action-transfer" ||
+        value === "smart-clip"
     );
 }
 

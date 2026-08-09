@@ -21,6 +21,11 @@ import { refundTextTask } from "@/lib/server/text-task-refund";
 import { refundVideoTask } from "@/lib/server/video-task-refund";
 import { GENERATION_TASK_RETENTION_MS } from "@/lib/server/generation-task-retention";
 import { transitionStoredGenerationTask } from "@/lib/server/generation-task-store";
+import { createPostgresRepositories } from "@/lib/server/database";
+import { persistSpecializedVideoResult } from "@/lib/server/specialized-provider/specialized-media-persistence";
+import { XhadminSmartClipProvider } from "@/lib/server/smart-clip/xhadmin-smart-clip-provider";
+import { runSmartClipTaskStep } from "@/lib/server/smart-clip/smart-clip-runtime";
+import { applyGenerationTaskBillingOutcome } from "@/lib/server/billing/generation-task-billing-hook";
 
 type RecoveryResult = "pending" | "result_ready" | "completed" | "failed" | "needs_review" | "deferred";
 
@@ -65,12 +70,53 @@ async function processGenerationTaskLease(lease: GenerationTaskLease, workerId: 
     if (lease.type === "digital-human" || lease.type === "image-human" || lease.type === "action-transfer") {
         return processSpecializedLease(lease, workerId, origin, publicOrigin, cookie);
     }
+    if (lease.type === "smart-clip") return processSmartClipLease(lease, workerId, origin, publicOrigin, cookie);
     if (lease.type !== "video") {
         await releaseLease(lease, workerId, { executionPhase: "needs_review", nextPollAt: undefined, lastUpstreamStatus: "worker_handler_missing" });
         return "needs_review";
     }
     return processVideoLease(lease, workerId, origin, cookie);
 }
+
+async function processSmartClipLease(lease: GenerationTaskLease, workerId: string, origin: string, _publicOrigin: string, cookie: string): Promise<RecoveryResult> {
+    const repositories = createPostgresRepositories();
+    const taskId = typeof lease.payload.smartClipTaskId === "string" ? lease.payload.smartClipTaskId : lease.id;
+    const task = await repositories.smartClip.getTask(lease.tenantId, lease.userId, taskId);
+    if (!task) {
+        await releaseLease(lease, workerId, { executionPhase: "needs_review", nextPollAt: undefined, lastUpstreamStatus: "smart_clip_task_missing" });
+        return "needs_review";
+    }
+    const config = await repositories.smartClip.getConfig(lease.tenantId);
+    const providerConfig = recordObject(config.config);
+    const baseUrl = textValue(providerConfig.baseUrl || providerConfig.base_url);
+    const apiKey = textValue(providerConfig.apiKey || providerConfig.api_key);
+    if (!config.enabled || config.provider !== "xhadmin" || !baseUrl || !apiKey) {
+        await releaseLease(lease, workerId, { executionPhase: "needs_review", nextPollAt: undefined, lastUpstreamStatus: "smart_clip_provider_not_configured" });
+        return "needs_review";
+    }
+    try {
+        const step = await runSmartClipTaskStep({ ...task, providerPayload: recordObject(task.providerPayload) }, {
+            config: { baseUrl, apiKey, timeoutMs: Number(providerConfig.timeoutMs || providerConfig.timeout_ms) || 60_000, submitPath: textValue(providerConfig.submitPath || providerConfig.submit_path), queryPath: textValue(providerConfig.queryPath || providerConfig.query_path) },
+            provider: new XhadminSmartClipProvider(),
+            saveTask: async (patch) => { await repositories.smartClip.updateTask(lease.tenantId, lease.userId, task.id, patch); },
+            persistResult: async (url) => (await persistSpecializedVideoResult({ tenantId: lease.tenantId, userId: lease.userId, taskId: task.id, taskType: "smart-clip", sourceUrl: url, origin, cookie, title: task.title, model: task.model, provider: task.provider })).url,
+            completeTask: async (url, payload) => { await repositories.smartClip.createResult({ tenantId: lease.tenantId, userId: lease.userId, taskId: task.id, clipType: task.clipType, styleId: task.styleId, title: task.title, videoUri: url, providerTaskId: task.providerTaskId, result: payload, durationSeconds: task.durationSeconds, costs: task.tenantCostPoints }); },
+        });
+        if (step.state === "completed" || step.state === "failed") {
+            await applyGenerationTaskBillingOutcome({ tenantId: lease.tenantId, generationTaskId: lease.id, outcome: step.state === "completed" ? "success" : "error", sourceEventId: `smart-clip:${lease.id}:${step.state}`, ...(step.state === "completed" ? { billableUsage: { saleAmount: task.userChargePoints, costAmount: task.tenantCostPoints } } : {}) });
+            await transitionStoredGenerationTask("smart-clip", lease.id, lease.userId, ["pending", "running"], { status: step.state === "completed" ? "success" : "error" }, GENERATION_TASK_RETENTION_MS, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: step.state === "completed" ? "smart_clip_completed" : "smart_clip_failed", resultPayload: "videoUrl" in step ? { url: step.videoUrl } : {} }, lease.tenantId);
+            return step.state;
+        }
+        await releaseLease(lease, workerId, { executionPhase: task.providerTaskId ? "polling" : "submitted", upstreamTaskId: "providerTaskId" in step ? step.providerTaskId : undefined, provider: config.provider, nextPollAt: "nextPollAt" in step ? step.nextPollAt : generationTaskNextPollAt({ now: Date.now() }), lastUpstreamStatus: "smart_clip_pending" });
+        return "pending";
+    } catch (error) {
+        await releaseLease(lease, workerId, { executionPhase: "needs_review", nextPollAt: undefined, lastUpstreamStatus: `smart_clip_error:${safeError(error)}` });
+        return "needs_review";
+    }
+}
+
+function recordObject(value: unknown): Record<string, unknown> { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
+function textValue(value: unknown) { return typeof value === "string" ? value.trim() : ""; }
 
 async function processSpecializedLease(lease: GenerationTaskLease, workerId: string, origin: string, publicOrigin: string, cookie: string): Promise<RecoveryResult> {
     const context = { origin, publicOrigin, cookie };

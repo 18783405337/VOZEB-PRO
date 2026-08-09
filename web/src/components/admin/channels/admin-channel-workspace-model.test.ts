@@ -2,11 +2,17 @@ import { describe, expect, it } from "vitest";
 
 import type { SystemModelChannel } from "@/lib/auth/store";
 import { applyChannelProtocol } from "@/lib/channel-protocol-registry";
-import { channelProtocolLabel, channelWorkspaceStatus, channelWorkspaceStatusLabel, defaultModelField, removeChannelFromWorkspace, updateChannelInWorkspace } from "./admin-channel-workspace-model";
+import { channelProtocolLabel, channelWorkspaceKind, channelWorkspaceKindLabel, channelWorkspaceStatus, channelWorkspaceStatusLabel, defaultModelField, removeChannelFromWorkspace, specializedProtocolForWorkspaceKind, updateChannelInWorkspace } from "./admin-channel-workspace-model";
 
 const channel = applyChannelProtocol({ id: "sd2", name: "SD2 渠道", baseUrl: "https://api.example.com", apiKey: "secret", apiFormat: "openai", models: ["seedance-pro"], enabled: true } satisfies SystemModelChannel, "seedance");
 
-describe("admin channel workspace model", () => {
+describe("channel workspace model", () => {
+    it("classifies specialized providers as independent channel workspaces", () => {
+        expect(channelWorkspaceKind({ ...channel, advancedConfig: { ...channel.advancedConfig!, specializedProtocol: "xhadmin-digital-human-v1" } })).toBe("digital-human");
+        expect(channelWorkspaceKind({ ...channel, advancedConfig: { ...channel.advancedConfig!, specializedProtocol: "xhadmin-image-human-v1" } })).toBe("image-human");
+        expect(channelWorkspaceKindLabel("digital-human")).toBe("数字人");
+        expect(specializedProtocolForWorkspaceKind("action-transfer")).toBe("xhadmin-action-transfer-v1");
+    });
     it("keeps SD2 and Stable Diffusion labels distinct", () => {
         const stableDiffusion = applyChannelProtocol({ ...channel, id: "sd", models: ["sdxl"] }, "stable-diffusion");
         expect(channelProtocolLabel(channel)).toContain("SD2");

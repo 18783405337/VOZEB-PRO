@@ -82,13 +82,13 @@ export async function getDramaProject(id: string, userId: string) {
     return (await readDatabase()).projects.find((record) => record.userId === userId && record.project.id === id)?.project || null;
 }
 
-export async function createDramaProject(userId: string, project: DramaProject) {
+export async function createDramaProject(userId: string, project: DramaProject, tenantId = "default") {
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
         await postgresQuery(
-            `INSERT INTO drama_projects (id, user_id, title, status, project_json, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)`,
-            [project.id, userId, project.title, project.status, JSON.stringify(project), new Date(project.createdAt), new Date(project.updatedAt)],
+            `INSERT INTO drama_projects (id, tenant_id, user_id, title, status, project_json, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8)`,
+            [project.id, tenantId, userId, project.title, project.status, JSON.stringify(project), new Date(project.createdAt), new Date(project.updatedAt)],
         );
         return project;
     }

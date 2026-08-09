@@ -4,6 +4,7 @@ import type { LocalMediaClass, LocalMediaType } from "@/lib/local-media-storage-
 import { isManagedMediaType, isMediaSourceGroup } from "@/lib/media-management-contract";
 
 export type LocalMediaRegistration = {
+    tenantId?: string;
     storageKey: string;
     scope: "generation" | "reference";
     storageClass: LocalMediaClass;
@@ -52,10 +53,10 @@ export async function registerLocalMediaAsset(input: Omit<LocalMediaRegistration
         await ensurePostgresSchema();
         await postgresQuery(
             `INSERT INTO local_media_assets (
-                storage_key, scope, storage_class, type, owner_user_id, original_name, source,
+                storage_key, tenant_id, scope, storage_class, type, owner_user_id, original_name, source,
                 conversation_id, run_id, task_id, project_id, mime_type, bytes, storage_provider,
                 external_storage_id, external_object_key, external_synced_at, created_at, expires_at
-             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
              ON CONFLICT (storage_key) DO UPDATE SET
                 owner_user_id = EXCLUDED.owner_user_id, original_name = COALESCE(EXCLUDED.original_name, local_media_assets.original_name),
                 source = EXCLUDED.source, conversation_id = COALESCE(EXCLUDED.conversation_id, local_media_assets.conversation_id),
@@ -66,6 +67,7 @@ export async function registerLocalMediaAsset(input: Omit<LocalMediaRegistration
                 external_synced_at = EXCLUDED.external_synced_at, expires_at = EXCLUDED.expires_at`,
             [
                 asset.storageKey,
+                asset.tenantId || "default",
                 asset.scope,
                 asset.storageClass,
                 asset.type,

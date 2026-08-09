@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { App, Button, Form, Input, Modal, Pagination, Select, Table, Tag } from "antd";
+import { App, Button, Form, Input, Modal, Pagination, Select, Switch, Table, Tag } from "antd";
 import type { TableColumnsType } from "antd";
 import { Building2, Plus, RefreshCw } from "lucide-react";
 
 import type { TenantListResult, TenantRecord, TenantStatus } from "@/lib/server/tenant/tenant-types";
-import { createPlatformTenant, listPlatformTenants, updatePlatformTenant } from "@/services/api/admin-tenants";
+import { AdminUserIdentity, AdminUserSearchSelect } from "./admin-user-identity";
+import { createPlatformTenant, listPlatformTenants, updatePlatformTenant, updatePlatformTenantSettings } from "@/services/api/admin-tenants";
 
 type TenantFormValue = {
     slug: string;
@@ -25,6 +26,8 @@ export function AdminTenantsSection() {
     const [loading, setLoading] = useState(true);
     const [open, setOpen] = useState(false);
     const [submitting, setSubmitting] = useState(false);
+    const [editingTenant, setEditingTenant] = useState<TenantRecord>();
+    const [settingsForm] = Form.useForm<Record<string, unknown>>();
 
     const load = async (page = result.page) => {
         setLoading(true);
@@ -72,6 +75,18 @@ export function AdminTenantsSection() {
         }
     }
 
+    async function saveSettings(value: Record<string, unknown>) {
+        if (!editingTenant) return;
+        try {
+            await updatePlatformTenantSettings(editingTenant.id, value);
+            message.success("租户基础信息已保存");
+            setEditingTenant(undefined);
+            await load();
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "租户基础信息保存失败");
+        }
+    }
+
     const columns: TableColumnsType<TenantRecord> = [
         {
             title: "租户",
@@ -92,8 +107,8 @@ export function AdminTenantsSection() {
         {
             title: "所有者",
             dataIndex: "ownerUserId",
-            width: 180,
-            render: (value?: string) => <span className="font-mono text-xs text-zinc-600 dark:text-zinc-400">{value || "未设置"}</span>,
+            width: 220,
+            render: (value?: string) => value ? <AdminUserIdentity username={value} accountId={value} fallback={value} /> : <span className="text-zinc-500">未设置</span>,
         },
         {
             title: "创建时间",
@@ -105,7 +120,12 @@ export function AdminTenantsSection() {
             title: "操作",
             key: "actions",
             width: 110,
-            render: (_, record) => <Button type="link" onClick={() => void toggleStatus(record)}>{record.status === "active" ? "停用" : "启用"}</Button>,
+            render: (_, record) => (
+                <div className="flex items-center gap-1">
+                    <Button type="link" onClick={() => void toggleStatus(record)}>{record.status === "active" ? "停用" : "启用"}</Button>
+                    <Button type="link" onClick={() => { setEditingTenant(record); settingsForm.setFieldsValue(record.settings); }}>基础信息</Button>
+                </div>
+            ),
         },
     ];
 
@@ -132,6 +152,18 @@ export function AdminTenantsSection() {
             <div className="mt-4 flex justify-end">
                 <Pagination current={result.page} pageSize={result.pageSize} total={result.total} showSizeChanger={false} onChange={(page) => void load(page)} />
             </div>
+            <Modal title="租户基础信息" open={Boolean(editingTenant)} okText="保存" cancelText="取消" onCancel={() => setEditingTenant(undefined)} onOk={() => void settingsForm.submit()} destroyOnHidden>
+                <Form form={settingsForm} layout="vertical" onFinish={saveSettings} className="pt-3">
+                    <Form.Item name="title" label="站点标题"><Input /></Form.Item>
+                    <Form.Item name="logoUrl" label="Logo 地址"><Input placeholder="https://..." /></Form.Item>
+                    <Form.Item name="iconUrl" label="站点图标地址"><Input placeholder="https://..." /></Form.Item>
+                    <Form.Item name="siteUrl" label="站点地址"><Input placeholder="https://..." /></Form.Item>
+                    <Form.Item name="phone" label="联系电话"><Input /></Form.Item>
+                    <Form.Item name="notes" label="备注"><Input.TextArea rows={3} /></Form.Item>
+                    <Form.Item name="allowCustomStorage" label="允许自定义存储" valuePropName="checked"><Switch /></Form.Item>
+                    <Form.Item name="allowLocalStorage" label="允许本地存储" valuePropName="checked"><Switch /></Form.Item>
+                </Form>
+            </Modal>
             <Modal title="新建租户" open={open} okText="创建" cancelText="取消" confirmLoading={submitting} onCancel={() => setOpen(false)} onOk={() => void form.submit()} destroyOnHidden>
                 <Form form={form} layout="vertical" className="pt-3" onFinish={submit}>
                     <Form.Item name="name" label="租户名称" rules={[{ required: true, message: "请输入租户名称" }]}>
@@ -140,8 +172,8 @@ export function AdminTenantsSection() {
                     <Form.Item name="slug" label="租户标识" rules={[{ required: true, pattern: /^[a-z0-9][a-z0-9-]{0,62}$/, message: "使用小写字母、数字或连字符" }]}>
                         <Input placeholder="例如：brand-design" />
                     </Form.Item>
-                    <Form.Item name="ownerUserId" label="所有者用户 ID">
-                        <Input placeholder="留空则使用当前管理员" />
+                    <Form.Item name="ownerUserId" label="租户所有者">
+                        <AdminUserSearchSelect activeOnly placeholder="搜索并选择租户所有者" />
                     </Form.Item>
                 </Form>
             </Modal>

@@ -4,7 +4,7 @@ import { Button, Drawer, Empty, Space, Tabs, Tag } from "antd";
 import { RefreshCw } from "lucide-react";
 
 import { SystemChannelEditor } from "@/components/admin/admin-system-channel-editor";
-import type { SystemModelChannel } from "@/lib/auth/store";
+import type { SystemModelChannel } from "@/lib/auth/store-types";
 import { channelRequiresApiKey } from "@/lib/channel-protocol-registry";
 import { capabilityLabel, channelModelCapability } from "@/lib/model-routing-config";
 

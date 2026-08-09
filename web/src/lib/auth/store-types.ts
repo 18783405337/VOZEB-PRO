@@ -26,6 +26,8 @@ export type SystemChannelModelConfig = {
     durationRange?: string;
     referenceRule?: string;
     supportsReferenceImage?: boolean;
+    maxReferenceImages?: number;
+    referenceImagesField?: string;
     supportsReferenceVideo?: boolean;
     supportsReferenceAudio?: boolean;
 };
@@ -34,6 +36,12 @@ export type SystemChannelAdvancedConfig = {
     protocol: SystemChannelProtocol;
     specializedProtocol?: SpecializedProviderProtocol;
     specializedTimeoutMs?: number;
+    specializedConfig?: {
+        klingMode?: "std" | "pro";
+        klingPrompt?: string;
+        klingCallbackUrl?: string;
+        klingWatermarkEnabled?: boolean;
+    };
     authMode?: SystemChannelAuthMode;
     authHeader?: string;
     authPrefix?: string;

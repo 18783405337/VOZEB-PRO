@@ -9,8 +9,8 @@ export async function listAdminGenerationOperations(options: GenerationTaskRecor
     const settingsPromise = getAuthSettings();
     const searchUserIds = options.search?.trim() ? await findPublicUserIdsByKeyword(options.search) : [];
     const [result, agentRecords] = await Promise.all([
-        listStoredGenerationTaskRecords({ ...options, searchUserIds, includeAll: false }),
-        listStoredGenerationTaskRecords({ ...options, type: "agent", searchUserIds, includeAll: true, page: 1, pageSize: 100 }),
+        listStoredGenerationTaskRecords({ ...options, searchUserIds, includeAll: false, includeAllTenants: true }),
+        listStoredGenerationTaskRecords({ ...options, type: "agent", searchUserIds, includeAll: true, includeAllTenants: true, page: 1, pageSize: 100 }),
     ]);
     const [settings, users] = await Promise.all([settingsPromise, getPublicUsersByIds(result.items.map((record) => record.userId))]);
     const usersById = new Map(users.map((user) => [user.id, user]));

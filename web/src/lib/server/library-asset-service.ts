@@ -23,9 +23,9 @@ export function listLibraryAssetPageForUser(userId: string, input: { page?: unkn
     });
 }
 
-export function createLibraryAssetForUser(userId: string, value: unknown) {
+export function createLibraryAssetForUser(userId: string, value: unknown, tenantId = "default") {
     const now = new Date().toISOString();
-    return createLibraryAsset(userId, normalizeAsset(value, { id: `asset-${nanoid()}`, createdAt: now, updatedAt: now }));
+    return createLibraryAsset(userId, normalizeAsset(value, { id: `asset-${nanoid()}`, createdAt: now, updatedAt: now }), tenantId);
 }
 
 export async function updateLibraryAssetForUser(userId: string, id: string, value: unknown) {

@@ -25,12 +25,15 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
 
         const hasName = body.name !== undefined;
         const hasStatus = body.status !== undefined;
+        const hasOwner = body.ownerUserId !== undefined;
         const name = typeof body.name === "string" ? body.name.trim() : "";
         const status = tenantStatus(body.status);
+        const ownerUserId = typeof body.ownerUserId === "string" ? body.ownerUserId.trim() : "";
         if (hasName && (!name || name.length > 120)) return apiError(400, "租户名称格式无效");
         if (hasStatus && !status) return apiError(400, "租户状态无效");
-        if (!hasName && !hasStatus) return apiError(400, "没有可更新的租户字段");
-        if (hasName && hasStatus) return apiError(400, "每次只能更新租户名称或状态");
+        if (hasOwner && !ownerUserId) return apiError(400, "租户所有者用户无效");
+        if (!hasName && !hasStatus && !hasOwner) return apiError(400, "没有可更新的租户字段");
+        if ([hasName, hasStatus, hasOwner].filter(Boolean).length > 1) return apiError(400, "每次只能更新一个租户字段");
 
         const repositories = createPostgresRepositories();
         const existing = await repositories.tenants.getById(id);
@@ -59,6 +62,14 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
                 target: { type: "tenant", id, label: tenant.name },
                 metadata: { status: tenant.status, previousStatus: existing.status },
             });
+        }
+
+        if (hasOwner) {
+            const owner = await repositories.users.getById(ownerUserId);
+            if (!owner || owner.status !== "active") return apiError(400, "租户所有者用户不存在或已禁用");
+            const updated = await repositories.tenants.updateOwner(id, ownerUserId);
+            if (!updated) return apiError(404, "租户不存在");
+            tenant = updated;
         }
 
         return apiOk({ tenant });

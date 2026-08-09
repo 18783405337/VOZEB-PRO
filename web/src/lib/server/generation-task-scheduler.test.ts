@@ -83,7 +83,7 @@ describe("generation task scheduler", () => {
         ]);
     });
 
-    it.each(["digital-human", "image-human", "action-transfer"] as const)("claims due %s tasks with the existing tenant and worker isolation", async (type) => {
+    it.each(["digital-human", "image-human", "action-transfer", "smart-clip"] as const)("claims due %s tasks with the existing tenant and worker isolation", async (type) => {
         mocks.records = [
             { ...record("specialized-one", 900), type, tenantId: "tenant-one" },
             { ...record("specialized-two", 901), type, tenantId: "tenant-two" },

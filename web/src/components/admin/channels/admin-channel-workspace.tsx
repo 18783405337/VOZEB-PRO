@@ -13,7 +13,7 @@ import { capabilityLabel, isLogicalModelResolvable } from "@/lib/model-routing-c
 import { AdminChannelDetailDrawer } from "./admin-channel-detail-drawer";
 import { AdminChannelOnboardingDrawer } from "./admin-channel-onboarding-drawer";
 import { ChannelStatusBadge } from "./admin-channel-status-badge";
-import { channelBindingCount, channelCapabilityLabels, channelProtocolLabel, channelSearchText, channelWorkspaceStatus, updateChannelInWorkspace, type ChannelWorkspaceSettings, type ChannelWorkspaceStatus } from "./admin-channel-workspace-model";
+import { channelBindingCount, channelCapabilityLabels, channelProtocolLabel, channelSearchText, channelWorkspaceKind, channelWorkspaceKindLabel, channelWorkspaceStatus, specializedProtocolForWorkspaceKind, updateChannelInWorkspace, type ChannelWorkspaceKind, type ChannelWorkspaceSettings, type ChannelWorkspaceStatus } from "./admin-channel-workspace-model";
 
 type Props = {
     settings: ChannelWorkspaceSettings;
@@ -28,11 +28,13 @@ type Props = {
 
 export function AdminChannelWorkspace({ settings, fetchingModelId, saving, onChange, onDeleteChannel, onFetchModels, onFetchAll, onPersist }: Props) {
     const [activeTab, setActiveTab] = useState("channels");
+    const [activeKind, setActiveKind] = useState<ChannelWorkspaceKind>("general");
     const [query, setQuery] = useState("");
     const [statusFilter, setStatusFilter] = useState<ChannelWorkspaceStatus | "all">("all");
     const [protocolFilter, setProtocolFilter] = useState<SystemChannelProtocol | "all">("all");
     const [wizardOpen, setWizardOpen] = useState(false);
     const [wizardProtocol, setWizardProtocol] = useState<SystemChannelProtocol | undefined>();
+    const [wizardKind, setWizardKind] = useState<ChannelWorkspaceKind>("general");
     const [detailId, setDetailId] = useState("");
     const deferredQuery = useDeferredValue(query.trim().toLowerCase());
     const selectedChannel = settings.systemChannels.find((channel) => channel.id === detailId);
@@ -40,9 +42,9 @@ export function AdminChannelWorkspace({ settings, fetchingModelId, saving, onCha
         () =>
             settings.systemChannels.filter((channel) => {
                 const status = channelWorkspaceStatus(channel);
-                return (!deferredQuery || channelSearchText(channel).includes(deferredQuery)) && (statusFilter === "all" || status === statusFilter) && (protocolFilter === "all" || (channel.advancedConfig?.protocol || "auto") === protocolFilter);
+                return channelWorkspaceKind(channel) === activeKind && (!deferredQuery || channelSearchText(channel).includes(deferredQuery)) && (statusFilter === "all" || status === statusFilter) && (protocolFilter === "all" || (channel.advancedConfig?.protocol || "auto") === protocolFilter);
             }),
-        [deferredQuery, protocolFilter, settings.systemChannels, statusFilter],
+        [activeKind, deferredQuery, protocolFilter, settings.systemChannels, statusFilter],
     );
     const enabledChannels = settings.systemChannels.filter((channel) => channel.enabled).length;
     const synchronizedChannels = settings.systemChannels.filter((channel) => channel.models.length).length;
@@ -51,8 +53,9 @@ export function AdminChannelWorkspace({ settings, fetchingModelId, saving, onCha
         const key = capability === "text" ? "textModel" : capability === "image" ? "imageModel" : capability === "video" ? "videoModel" : "audioModel";
         return isLogicalModelResolvable(settings.logicalModels, settings.systemChannels, capability, settings.defaultModels[key]);
     }).length;
-    const openWizard = (protocol?: SystemChannelProtocol) => {
+    const openWizard = (protocol?: SystemChannelProtocol, kind: ChannelWorkspaceKind = activeKind) => {
         setWizardProtocol(protocol);
+        setWizardKind(kind);
         setWizardOpen(true);
     };
     const updateChannel = (id: string, patch: Partial<SystemModelChannel>) => onChange(updateChannelInWorkspace(settings, id, patch));
@@ -102,6 +105,14 @@ export function AdminChannelWorkspace({ settings, fetchingModelId, saving, onCha
     return (
         <div>
             <ChannelMetrics enabled={enabledChannels} total={settings.systemChannels.length} synchronized={synchronizedChannels} protocols={protocolCount} readyDefaults={readyDefaults} />
+            <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {(["general", "digital-human", "image-human", "action-transfer"] as const).map((kind) => {
+                    const count = settings.systemChannels.filter((channel) => channelWorkspaceKind(channel) === kind).length;
+                    return <Button key={kind} type={activeKind === kind ? "primary" : "default"} onClick={() => { setActiveKind(kind); setActiveTab("channels"); }}>
+                        {channelWorkspaceKindLabel(kind)} ({count})
+                    </Button>;
+                })}
+            </div>
             <Tabs
                 className="max-sm:[&_.ant-tabs-nav-list]:w-full max-sm:[&_.ant-tabs-tab]:!m-0 max-sm:[&_.ant-tabs-tab]:min-w-0 max-sm:[&_.ant-tabs-tab]:flex-1 max-sm:[&_.ant-tabs-tab]:justify-center max-sm:[&_.ant-tabs-tab]:!px-1"
                 activeKey={activeTab}
@@ -159,6 +170,7 @@ export function AdminChannelWorkspace({ settings, fetchingModelId, saving, onCha
             <AdminChannelOnboardingDrawer
                 open={wizardOpen}
                 initialProtocol={wizardProtocol}
+                initialSpecializedProtocol={wizardKind === "general" ? undefined : specializedProtocolForWorkspaceKind(wizardKind)}
                 settings={settings}
                 fetchingModelId={fetchingModelId}
                 saving={saving}

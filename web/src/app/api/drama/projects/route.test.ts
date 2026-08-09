@@ -4,9 +4,11 @@ const mocks = vi.hoisted(() => ({
     getCurrentUser: vi.fn(),
     createDramaProjectForUser: vi.fn(),
     listDramaProjectSummariesForUser: vi.fn(),
+    requireTenantMembership: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session", () => ({ getCurrentUser: mocks.getCurrentUser }));
+vi.mock("@/lib/server/authorization/authorization-service", () => ({ requireTenantMembership: mocks.requireTenantMembership }));
 vi.mock("@/lib/server/drama-project-service", () => ({
     DramaProjectServiceError: class DramaProjectServiceError extends Error {
         constructor(
@@ -26,6 +28,7 @@ describe("/api/drama/projects", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.getCurrentUser.mockResolvedValue({ id: "user-one" });
+        mocks.requireTenantMembership.mockResolvedValue({ user: { id: "user-one" }, tenant: { id: "default" } });
         mocks.listDramaProjectSummariesForUser.mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 20 });
         mocks.createDramaProjectForUser.mockResolvedValue({ id: "drama-one", title: "测试短剧" });
     });
@@ -45,7 +48,7 @@ describe("/api/drama/projects", () => {
         );
 
         expect(response.status).toBe(200);
-        expect(mocks.createDramaProjectForUser).toHaveBeenCalledWith("user-one", expect.objectContaining({ title: "测试短剧" }));
+        expect(mocks.createDramaProjectForUser).toHaveBeenCalledWith("user-one", expect.objectContaining({ title: "测试短剧" }), "default");
     });
 
     it("returns lightweight summaries for the current user", async () => {

@@ -29,7 +29,7 @@ export class CreativeRuntimeServiceError extends Error {
     }
 }
 
-export async function createConversationForUser(userId: string, value: unknown) {
+export async function createConversationForUser(userId: string, value: unknown, tenantId = "default") {
     const input = object(value);
     const surface = normalizeCreativeSurface(input.surface);
     const source = input.source === undefined ? (surface ? creativeConversationSourceForSurface(surface) : null) : normalizeCreativeConversationSource(input.source);
@@ -39,7 +39,7 @@ export async function createConversationForUser(userId: string, value: unknown) 
     if (!source || !isCreativeConversationSourceCompatible(surface, source)) throw new CreativeRuntimeServiceError("创作会话来源不正确", 400);
     if (surface === "chat" && projectId) throw new CreativeRuntimeServiceError("普通对话不接受项目标识", 400);
     if (surface !== "chat" && !projectId) throw new CreativeRuntimeServiceError(surface === "canvas" ? "画布标识不能为空" : "短剧项目标识不能为空", 400);
-    return createCreativeConversation(userId, { surface, source, projectId, title });
+    return createCreativeConversation(userId, { surface, source, projectId, title }, tenantId);
 }
 
 export function listConversationsForUser(userId: string, input: { surface?: string | null; source?: string | null; status?: string | null; limit?: string | null; offset?: string | null }) {

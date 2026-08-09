@@ -30,7 +30,7 @@ export async function getCanvasProjectForUser(userId: string, id: string) {
     return project;
 }
 
-export async function createCanvasProjectForUser(userId: string, value: unknown) {
+export async function createCanvasProjectForUser(userId: string, value: unknown, tenantId = "default") {
     const input = object(value) as CreateCanvasProjectInput;
     const source = object(input.project);
     const sourceHandoffId = text(input.sourceHandoffId || source.sourceHandoffId, 160);
@@ -41,7 +41,7 @@ export async function createCanvasProjectForUser(userId: string, value: unknown)
     }
     const title = text(input.title || source.title, 120) || "未命名画布";
     const now = new Date().toISOString();
-    const conversation = await createCreativeConversation(userId, { surface: "canvas", projectId: id, title });
+    const conversation = await createCreativeConversation(userId, { surface: "canvas", projectId: id, title }, tenantId);
     const project = normalizeProject(source, {
         id,
         sourceHandoffId: sourceHandoffId || undefined,
@@ -58,7 +58,7 @@ export async function createCanvasProjectForUser(userId: string, value: unknown)
         viewport: { x: 0, y: 0, k: 1 },
     });
     try {
-        return await createCanvasProject(userId, project);
+        return await createCanvasProject(userId, project, tenantId);
     } catch (error) {
         await deleteCanvasProjectAggregates(userId, [id]).catch(() => null);
         throw error;

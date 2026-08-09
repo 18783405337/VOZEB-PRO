@@ -23,6 +23,17 @@ function response(payload: Record<string, unknown>) {
 }
 
 describe("KlingAvatarProvider", () => {
+    it("uses the Kling protocol configuration as defaults for the request", async () => {
+        const fetcher = vi.fn(async (_input: string | URL, init?: RequestInit) => new Response(JSON.stringify({ task_id: "task-config" }), { status: 200, headers: { "content-type": "application/json" } }));
+        const provider = new KlingAvatarProvider(fetcher);
+        await provider.submitAvatar(
+            { localTaskId: "local-config", scriptText: "你好", avatar: { mediaUrl: "https://img.example/avatar.png" }, voice: { mediaUrl: "https://audio.example/voice.mp3" } },
+            "https://audio.example/generated.mp3",
+            { ...context, specializedConfig: { klingMode: "pro", klingPrompt: "自然口型", klingCallbackUrl: "https://video.example/callback", klingWatermarkEnabled: false } },
+        );
+        const body = JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body));
+        expect(body).toMatchObject({ mode: "pro", prompt: "自然口型", callback_url: "https://video.example/callback", watermark_info: { enabled: false } });
+    });
     it("creates an image-to-avatar task using the official request contract", async () => {
         const fetcher = vi.fn().mockResolvedValue(response({ code: 0, data: { task_id: "kling-1", task_status: "submitted" } }));
         const provider = new KlingAvatarProvider(fetcher);

@@ -17,7 +17,7 @@ export type TenantContextOptions = {
     allowDefault?: boolean;
     defaultTenantId?: string;
     requireMembership?: boolean;
-    user?: { id: string } | null;
+    user?: { id: string; role?: "admin" | "user" } | null;
 };
 
 export class TenantContextError extends Error {
@@ -66,8 +66,11 @@ export async function getTenantContext(request: Request, options: TenantContextO
 
     const user = options.user === undefined ? await getCurrentUser(request) : options.user;
     const member = user?.id ? await repositories.tenants.getMember(tenant.id, user.id) : null;
+    const bootstrapAdminMember = tenant.id === "default" && tenant.slug === "default" && user?.role === "admin" && tenant.ownerUserId == null
+        ? { tenantId: tenant.id, userId: user.id, roleId: "bootstrap-owner", roleKey: "owner", status: "active" as const, permissions: [], joinedAt: tenant.createdAt, updatedAt: tenant.updatedAt }
+        : undefined;
 
-    if (options.requireMembership && (!member || member.status !== "active")) {
+    if (options.requireMembership && (!member || member.status !== "active") && !bootstrapAdminMember) {
         throw new TenantContextError("Active tenant membership is required", 403, "tenant.membership_required");
     }
 
@@ -75,6 +78,7 @@ export async function getTenantContext(request: Request, options: TenantContextO
         tenant,
         source,
         ...(member?.status === "active" ? { member } : {}),
+        ...(bootstrapAdminMember ? { member: bootstrapAdminMember } : {}),
     };
 }
 

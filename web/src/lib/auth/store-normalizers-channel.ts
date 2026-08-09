@@ -16,10 +16,12 @@ export function normalizeSystemChannelAdvancedConfig(config: Partial<SystemChann
     const modelCatalogPaths = Array.from(new Set((Array.isArray(config.modelCatalogPaths) ? config.modelCatalogPaths : []).map(normalizeApiPath).filter(Boolean))).slice(0, 12);
     const specializedProtocol = SPECIALIZED_PROVIDER_PROTOCOLS.includes(config.specializedProtocol as (typeof SPECIALIZED_PROVIDER_PROTOCOLS)[number]) ? config.specializedProtocol : undefined;
     const specializedTimeoutMs = normalizeSpecializedTimeout(config.specializedTimeoutMs);
+    const specializedConfig = normalizeSpecializedConfig(config.specializedConfig);
     return {
         protocol,
         ...(specializedProtocol ? { specializedProtocol } : {}),
         ...(specializedTimeoutMs ? { specializedTimeoutMs } : {}),
+        ...(specializedConfig ? { specializedConfig } : {}),
         ...(config.authMode === "none" || config.authMode === "bearer" || config.authMode === "x-api-key" || config.authMode === "custom-header" ? { authMode: config.authMode } : {}),
         ...(textOrEmpty(config.authHeader, 120) ? { authHeader: textOrEmpty(config.authHeader, 120) } : {}),
         ...(textOrEmpty(config.authPrefix, 120) ? { authPrefix: textOrEmpty(config.authPrefix, 120) } : {}),
@@ -63,6 +65,17 @@ export function textOrEmpty(value: unknown, maxLength: number) {
     return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
 }
 
+function normalizeSpecializedConfig(value: unknown): SystemChannelAdvancedConfig["specializedConfig"] {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    const input = value as Record<string, unknown>;
+    const result: NonNullable<SystemChannelAdvancedConfig["specializedConfig"]> = {};
+    if (input.klingMode === "std" || input.klingMode === "pro") result.klingMode = input.klingMode;
+    if (typeof input.klingPrompt === "string" && input.klingPrompt.trim()) result.klingPrompt = input.klingPrompt.trim().slice(0, 1000);
+    if (typeof input.klingCallbackUrl === "string" && input.klingCallbackUrl.trim()) result.klingCallbackUrl = input.klingCallbackUrl.trim().slice(0, 2000);
+    if (typeof input.klingWatermarkEnabled === "boolean") result.klingWatermarkEnabled = input.klingWatermarkEnabled;
+    return Object.keys(result).length ? result : undefined;
+}
+
 function normalizeChannelModelCapabilities(value: unknown) {
     if (!value || typeof value !== "object" || Array.isArray(value)) return {} as NonNullable<SystemChannelAdvancedConfig["modelCapabilities"]>;
     return Object.fromEntries(
@@ -102,6 +115,8 @@ function normalizeChannelModelConfigs(value: unknown) {
                         ...(textOrEmpty(config.durationRange, 120) ? { durationRange: textOrEmpty(config.durationRange, 120) } : {}),
                         ...(textOrEmpty(config.referenceRule, 1000) ? { referenceRule: textOrEmpty(config.referenceRule, 1000) } : {}),
                         ...(typeof config.supportsReferenceImage === "boolean" ? { supportsReferenceImage: config.supportsReferenceImage } : {}),
+                        ...(Number.isInteger(config.maxReferenceImages) && Number(config.maxReferenceImages) > 0 ? { maxReferenceImages: Number(config.maxReferenceImages) } : {}),
+                        ...(typeof config.referenceImagesField === "string" && config.referenceImagesField.trim() ? { referenceImagesField: config.referenceImagesField.trim() } : {}),
                         ...(typeof config.supportsReferenceVideo === "boolean" ? { supportsReferenceVideo: config.supportsReferenceVideo } : {}),
                         ...(typeof config.supportsReferenceAudio === "boolean" ? { supportsReferenceAudio: config.supportsReferenceAudio } : {}),
                     },

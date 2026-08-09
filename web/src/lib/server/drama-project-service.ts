@@ -29,7 +29,7 @@ export async function getDramaProjectForUser(userId: string, id: string) {
     return project;
 }
 
-export async function createDramaProjectForUser(userId: string, value: unknown) {
+export async function createDramaProjectForUser(userId: string, value: unknown, tenantId = "default") {
     const input = normalizeCreateInput(value);
     const now = new Date().toISOString();
     if (input.sourceHandoffId) {
@@ -48,7 +48,7 @@ export async function createDramaProjectForUser(userId: string, value: unknown) 
         reviewStatus: "draft",
         shots: [],
     };
-    const conversation = await createCreativeConversation(userId, { surface: "drama", projectId, title: input.title });
+    const conversation = await createCreativeConversation(userId, { surface: "drama", projectId, title: input.title }, tenantId);
     const project: DramaProject = {
         id: projectId,
         sourceHandoffId: input.sourceHandoffId,
@@ -70,7 +70,7 @@ export async function createDramaProjectForUser(userId: string, value: unknown) 
         updatedAt: now,
     };
     try {
-        return await createDramaProject(userId, project);
+        return await createDramaProject(userId, project, tenantId);
     } catch (error) {
         await updateCreativeConversation(conversation.id, userId, { status: "archived" }).catch(() => null);
         throw error;

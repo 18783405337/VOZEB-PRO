@@ -242,9 +242,9 @@ export async function upsertPostgresAsset(client: QueryExecutor, input: NewAsset
     const now = Date.now();
     const result = await client.query(
         `INSERT INTO creative_assets (
-            id, user_id, conversation_id, message_id, source_run_id, source_task_id, parent_asset_id, ordinal, type, status, title,
+            id, tenant_id, user_id, conversation_id, message_id, source_run_id, source_task_id, parent_asset_id, ordinal, type, status, title,
             text_content, storage_kind, storage_key, remote_url, server_url, mime_type, width, height, duration_ms, bytes, metadata, created_at, updated_at
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22::jsonb, $23, $23)
+         ) VALUES ($1, (SELECT tenant_id FROM creative_conversations WHERE id = $3), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22::jsonb, $23, $23)
          ON CONFLICT (source_run_id, source_task_id, ordinal) DO UPDATE SET
             message_id = EXCLUDED.message_id, parent_asset_id = EXCLUDED.parent_asset_id, status = EXCLUDED.status, title = EXCLUDED.title,
             text_content = EXCLUDED.text_content, storage_kind = EXCLUDED.storage_kind, storage_key = EXCLUDED.storage_key,

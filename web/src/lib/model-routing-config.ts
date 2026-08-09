@@ -1,4 +1,5 @@
 import { SPECIALIZED_PROVIDER_APP_KEYS, type SpecializedProviderAppKey } from "@/lib/auth/store-types";
+import { SPECIALIZED_PROVIDER_PROTOCOLS } from "@/lib/auth/store-types";
 import type { LogicalModel, LogicalModelBinding, LogicalModelCapability, LogicalModelCapabilityProfile, SystemDefaultModels, SystemModelChannel } from "@/lib/auth/store";
 import { resolveGlobalAiOpcPreset } from "@/lib/globalaiopc-catalog";
 import { inferModelCapability, normalizeModelId } from "@/lib/model-capability";
@@ -68,7 +69,7 @@ export function synchronizeLogicalModelsWithChannels(existingModels: LogicalMode
                 };
             })
             .sort((left, right) => left.priority - right.priority || left.id.localeCompare(right.id));
-        const appKeys = normalizeSpecializedProviderAppKeys(existing?.appKeys);
+        const appKeys = normalizeSpecializedProviderAppKeys(existing?.appKeys).length ? normalizeSpecializedProviderAppKeys(existing?.appKeys) : specializedAppsForProtocol(catalogModel.bindings[0]?.channel.advancedConfig?.specializedProtocol);
         return {
             id,
             name: catalogModel.upstreamModel,
@@ -78,6 +79,13 @@ export function synchronizeLogicalModelsWithChannels(existingModels: LogicalMode
             ...(appKeys.length ? { appKeys } : {}),
         };
     });
+}
+
+function specializedAppsForProtocol(protocol: unknown): SpecializedProviderAppKey[] {
+    if (!SPECIALIZED_PROVIDER_PROTOCOLS.includes(protocol as (typeof SPECIALIZED_PROVIDER_PROTOCOLS)[number])) return [];
+    if (protocol === "xhadmin-digital-human-v1" || protocol === "kling-avatar-v1") return ["aigc-digital-human"];
+    if (protocol === "xhadmin-image-human-v1") return ["image-human"];
+    return ["action-transfer"];
 }
 
 export function mergeChannelModelsIntoLogicalModels(logicalModels: LogicalModel[], channels: SystemModelChannel[]) {
@@ -197,7 +205,7 @@ export function resolveLogicalModelCapabilityProfile(binding: Pick<LogicalModelB
         supportsReferenceImage: booleanValue(stored.supportsReferenceImage, globalPreset?.supportsReferenceImage ?? modelConfig?.supportsReferenceImage ?? advanced?.supportsReferenceImage),
         supportsReferenceVideo: booleanValue(stored.supportsReferenceVideo, globalPreset?.supportsReferenceVideo ?? modelConfig?.supportsReferenceVideo ?? advanced?.supportsReferenceVideo),
         supportsReferenceAudio: booleanValue(stored.supportsReferenceAudio, globalPreset?.supportsReferenceAudio ?? modelConfig?.supportsReferenceAudio ?? advanced?.supportsReferenceAudio),
-        maxReferenceImages: positiveInteger(stored.maxReferenceImages),
+        maxReferenceImages: positiveInteger(stored.maxReferenceImages) || positiveInteger(modelConfig?.maxReferenceImages),
         aspectRatios: normalizeAspectRatios(stored.aspectRatios),
         minDurationSeconds: positiveNumber(stored.minDurationSeconds),
         maxDurationSeconds: positiveNumber(stored.maxDurationSeconds),

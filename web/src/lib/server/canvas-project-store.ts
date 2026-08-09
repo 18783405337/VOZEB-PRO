@@ -108,13 +108,13 @@ export async function getCanvasProject(id: string, userId: string) {
     return (await readDatabase()).projects.find((record) => record.userId === userId && record.project.id === id)?.project || null;
 }
 
-export async function createCanvasProject(userId: string, project: CanvasProject) {
+export async function createCanvasProject(userId: string, project: CanvasProject, tenantId = "default") {
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
         await postgresQuery(
-            `INSERT INTO canvas_projects (id, user_id, title, project_json, created_at, updated_at)
-             VALUES ($1, $2, $3, $4::jsonb, $5, $6)`,
-            [project.id, userId, project.title, JSON.stringify(project), new Date(project.createdAt), new Date(project.updatedAt)],
+            `INSERT INTO canvas_projects (id, tenant_id, user_id, title, project_json, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)`,
+            [project.id, tenantId, userId, project.title, JSON.stringify(project), new Date(project.createdAt), new Date(project.updatedAt)],
         );
         return project;
     }

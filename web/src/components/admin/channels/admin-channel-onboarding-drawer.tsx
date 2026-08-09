@@ -7,7 +7,7 @@ import { ArrowLeft, Check, CircleDollarSign, Info, Link2, PlugZap, RefreshCw, Sa
 import { AdminChannelProtocolSetup } from "@/components/admin/admin-channel-protocol-setup";
 import { LabeledControl } from "@/components/admin/admin-settings-controls";
 import { createSystemChannel } from "@/components/admin/admin-dashboard-elements";
-import type { SystemChannelAuthMode, SystemChannelProtocol, SystemModelChannel } from "@/lib/auth/store";
+import type { SpecializedProviderProtocol, SystemChannelAuthMode, SystemChannelProtocol, SystemModelChannel } from "@/lib/auth/store";
 import { applyChannelProtocol, channelConnectionReady, channelProtocolDefinition, channelProtocolOptions, channelRequiresApiKey, resolveChannelAuthMode } from "@/lib/channel-protocol-registry";
 import { capabilityLabel, channelModelCapability, synchronizeLogicalModelsWithChannels } from "@/lib/model-routing-config";
 
@@ -16,6 +16,7 @@ import { defaultModelField, removeChannelFromWorkspace, type ChannelWorkspaceSet
 type Props = {
     open: boolean;
     initialProtocol?: SystemChannelProtocol;
+    initialSpecializedProtocol?: SpecializedProviderProtocol;
     settings: ChannelWorkspaceSettings;
     fetchingModelId: string;
     saving: boolean;
@@ -27,7 +28,7 @@ type Props = {
 
 const steps = [{ title: "选择协议" }, { title: "连接上游" }, { title: "获取模型" }, { title: "同步模型" }, { title: "确认启用" }];
 
-export function AdminChannelOnboardingDrawer({ open, initialProtocol, settings, fetchingModelId, saving, onClose, onChange, onFetchModels, onPersist }: Props) {
+export function AdminChannelOnboardingDrawer({ open, initialProtocol, initialSpecializedProtocol, settings, fetchingModelId, saving, onClose, onChange, onFetchModels, onPersist }: Props) {
     const { message, modal } = App.useApp();
     const [step, setStep] = useState(0);
     const [selectedProtocol, setSelectedProtocol] = useState<SystemChannelProtocol>("openai");
@@ -42,10 +43,10 @@ export function AdminChannelOnboardingDrawer({ open, initialProtocol, settings, 
     useEffect(() => {
         if (!open) return;
         setStep(0);
-        setSelectedProtocol(initialProtocol || "openai");
+        setSelectedProtocol(initialProtocol || (initialSpecializedProtocol ? "custom" : "openai"));
         setDraftId("");
         setSetAsDefault(true);
-    }, [initialProtocol, open]);
+    }, [initialProtocol, initialSpecializedProtocol, open]);
 
     const protocolOptions = useMemo(() => channelProtocolOptions().filter((item) => !["auto", "compatible"].includes(item.value)), []);
     const updateChannel = (patch: Partial<SystemModelChannel>) => {
@@ -54,7 +55,8 @@ export function AdminChannelOnboardingDrawer({ open, initialProtocol, settings, 
     };
     const beginChannel = () => {
         const definition = channelProtocolDefinition(selectedProtocol);
-        const next = applyChannelProtocol({ ...createSystemChannel(), name: `${definition.label} 渠道`, enabled: false }, selectedProtocol);
+        const next = applyChannelProtocol({ ...createSystemChannel(), name: initialSpecializedProtocol ? (initialSpecializedProtocol.includes("image-human") ? "图片数字人渠道" : initialSpecializedProtocol.includes("action-transfer") ? "动作迁移渠道" : "数字人渠道") : `${definition.label} 渠道`, enabled: false }, selectedProtocol);
+        if (initialSpecializedProtocol && next.advancedConfig) next.advancedConfig = { ...next.advancedConfig, protocol: next.advancedConfig.protocol || selectedProtocol, specializedProtocol: initialSpecializedProtocol };
         onChange({ ...settings, systemChannels: [...settings.systemChannels, next] });
         setDraftId(next.id);
         setStep(1);
@@ -108,6 +110,7 @@ export function AdminChannelOnboardingDrawer({ open, initialProtocol, settings, 
     };
 
     const renderStep = () => {
+        if (step === 0 && initialSpecializedProtocol) return <SpecializedProtocolSelection protocol={initialSpecializedProtocol} />;
         if (step === 0) return <ProtocolSelection protocols={protocolOptions} selected={selectedProtocol} onSelect={setSelectedProtocol} />;
         if (!channel) return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="渠道草稿不存在" />;
         if (step === 1) return <ConnectionStep channel={channel} onChange={updateChannel} />;
@@ -166,6 +169,22 @@ export function AdminChannelOnboardingDrawer({ open, initialProtocol, settings, 
             <OnboardingProgress current={step} />
             {renderStep()}
         </Drawer>
+    );
+}
+
+function SpecializedProtocolSelection({ protocol }: { protocol: SpecializedProviderProtocol }) {
+    const label = protocol === "kling-avatar-v1" ? "可灵数字人" : protocol === "xhadmin-image-human-v1" ? "Xhadmin 图片数字人" : protocol === "xhadmin-action-transfer-v1" ? "Xhadmin 动作迁移" : "Xhadmin 数字人";
+    return (
+        <div className="rounded-lg border border-cyan-200 bg-cyan-50/60 p-5 dark:border-cyan-900/70 dark:bg-cyan-950/20">
+            <div className="flex items-center gap-2 text-base font-semibold text-cyan-950 dark:text-cyan-100">
+                <WandSparkles className="size-4" />
+                {label}专项协议
+            </div>
+            <p className="mt-2 text-sm leading-6 text-cyan-900/80 dark:text-cyan-200/80">这是独立的专项 Provider，不使用 OpenAI、Seedance 或普通视频协议。下一步只需填写该 Provider 的 Base URL、API Key 和模型目录。</p>
+            <div className="mt-4 flex flex-wrap gap-2 text-xs text-cyan-900 dark:text-cyan-100">
+                <Tag>专项协议：{protocol}</Tag><Tag>独立渠道</Tag><Tag>异步任务</Tag>
+            </div>
+        </div>
     );
 }
 

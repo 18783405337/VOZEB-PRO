@@ -26,6 +26,7 @@ import { systemAiBillingHeaders } from "@/lib/server/system-ai-billing";
 import { maintenanceWorkerContextHeaders, requestRuntimeCredential } from "@/lib/server/maintenance-auth";
 import { writeVideoGenerationLog } from "@/lib/server/video-task-log";
 import { buildOpenAiVideoFormData } from "./video-task-openai";
+import { resolveChannelModelConfig } from "@/lib/channel-protocol-registry";
 import { getTrustedTenantId } from "@/lib/server/tenant/tenant-context";
 import { AppCenterServiceError } from "@/lib/server/apps/app-center-service";
 import { requireTenantAppRuntime } from "@/lib/server/apps/tenant-app-runtime";
@@ -302,7 +303,8 @@ export async function createUpstream(
         ...(references.length ? { ref_assets: references.map((item) => ({ type: item.type, url: item.url })) } : {}),
     };
     const globalPreset = globalAiOpcVideoPreset(channel.advancedConfig, channel.model);
-    const multipart = channel.advancedConfig?.requestTemplate?.trim().toLowerCase().startsWith("multipart/form-data") === true;
+    const modelConfig = resolveChannelModelConfig(channel.advancedConfig, channel.model);
+    const multipart = channel.advancedConfig?.requestTemplate?.trim().toLowerCase().startsWith("multipart/form-data") === true && !(images.length > 1 && (modelConfig?.maxReferenceImages || 0) > 1);
     const payload = multipart
         ? undefined
         : channel.advancedConfig?.protocol === "vozeb-recommended"
@@ -339,7 +341,7 @@ export async function createUpstream(
                     generateAudio,
                 })
               : buildVideoProviderRequest(channel.advancedConfig?.requestTemplate, defaults, values);
-    const requestBody = multipart ? await buildOpenAiVideoFormData({ model: channel.model, prompt, seconds: values.seconds as number, width: dimensions.width, height: dimensions.height, imageUrls: images, origin, cookie }) : JSON.stringify(payload);
+    const requestBody = multipart ? await buildOpenAiVideoFormData({ model: channel.model, prompt, seconds: values.seconds as number, width: dimensions.width, height: dimensions.height, imageUrls: images, maxReferenceImages: modelConfig?.maxReferenceImages, referenceImagesField: modelConfig?.referenceImagesField, origin, cookie }) : JSON.stringify(payload);
     const imageToVideoPath = images.length ? channel.advancedConfig?.imageToVideoPath?.trim() : "";
     const createPaths = globalPreset ? [globalPreset.createPath] : imageToVideoPath ? [imageToVideoPath] : resolvedProviderCreatePaths(channel.advancedConfig, "video", CREATE_PATHS);
     for (const path of createPaths) {

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { TENANT_PERMISSIONS } from "@/lib/server/authorization/permission-catalog";
 import type { QueryExecutor } from "@/lib/server/database/postgres";
-import type { AddTenantMemberInput, CreateTenantRoleInput, CreateTenantWithOwnerInput, TenantListOptions, TenantListResult, TenantMemberRecord, TenantMemberStatus, TenantRecord, TenantRoleRecord, TenantStatus } from "@/lib/server/tenant/tenant-types";
+import type { AddTenantMemberInput, CreateTenantDomainInput, CreateTenantRoleInput, CreateTenantWithOwnerInput, TenantDomainRecord, TenantDomainStatus, TenantListOptions, TenantListResult, TenantMemberRecord, TenantMemberStatus, TenantRecord, TenantRoleRecord, TenantStatus } from "@/lib/server/tenant/tenant-types";
 
 import { isoValue, optionalString, stringValue } from "./repository-shared";
 
@@ -41,6 +41,55 @@ export class TenantRepository {
             [hostname.trim().toLowerCase()],
         );
         return result.rows[0] ? mapTenant(result.rows[0]) : null;
+    }
+
+    async getSettings(tenantId: string): Promise<Record<string, unknown>> {
+        const result = await this.db.query("SELECT settings FROM tenants WHERE id = $1", [tenantId]);
+        return recordValue(result.rows[0]?.settings);
+    }
+
+    async updateSettings(tenantId: string, settings: Record<string, unknown>): Promise<Record<string, unknown>> {
+        const result = await this.db.query("UPDATE tenants SET settings = $2::jsonb WHERE id = $1 RETURNING settings", [tenantId, JSON.stringify(settings)]);
+        if (!result.rows[0]) throw new Error("Tenant was not found");
+        return recordValue(result.rows[0].settings);
+    }
+
+    async listDomains(tenantId: string): Promise<TenantDomainRecord[]> {
+        const result = await this.db.query("SELECT * FROM tenant_domains WHERE tenant_id = $1 ORDER BY created_at ASC, id ASC", [tenantId]);
+        return result.rows.map(mapTenantDomain);
+    }
+
+    async createDomain(input: CreateTenantDomainInput): Promise<TenantDomainRecord> {
+        const id = input.id?.trim() || randomUUID();
+        const tenantId = requiredText(input.tenantId, "Tenant id");
+        const hostname = normalizeHostname(input.hostname);
+        const kind = input.kind || "custom";
+        const token = randomUUID().replace(/-/g, "");
+        const result = await this.db.query(
+            `INSERT INTO tenant_domains (id, tenant_id, hostname, kind, status, verification_token)
+             VALUES ($1, $2, $3, $4, 'pending', $5) RETURNING *`,
+            [id, tenantId, hostname, kind, token],
+        );
+        if (!result.rows[0]) throw new Error("Tenant domain creation did not return a record");
+        return mapTenantDomain(result.rows[0]);
+    }
+
+    async verifyDomainForTenant(domainId: string, tenantId: string): Promise<TenantDomainRecord | null> {
+        const result = await this.db.query("UPDATE tenant_domains SET status = 'verified', verified_at = now() WHERE id = $1 AND tenant_id = $2 RETURNING *", [domainId, tenantId]);
+        return result.rows[0] ? mapTenantDomain(result.rows[0]) : null;
+    }
+
+    async updateDomainStatusForTenant(domainId: string, tenantId: string, status: TenantDomainStatus): Promise<TenantDomainRecord | null> {
+        const result = await this.db.query(
+            `UPDATE tenant_domains SET status = $3, verified_at = CASE WHEN $3 = 'verified' THEN COALESCE(verified_at, now()) ELSE NULL END WHERE id = $1 AND tenant_id = $2 RETURNING *`,
+            [domainId, tenantId, status],
+        );
+        return result.rows[0] ? mapTenantDomain(result.rows[0]) : null;
+    }
+
+    async deleteDomainForTenant(domainId: string, tenantId: string): Promise<boolean> {
+        const result = await this.db.query("DELETE FROM tenant_domains WHERE id = $1 AND tenant_id = $2", [domainId, tenantId]);
+        return Number(result.rowCount || 0) > 0;
     }
 
     async list(options: TenantListOptions = {}): Promise<TenantListResult> {
@@ -122,6 +171,11 @@ export class TenantRepository {
 
     async updateName(tenantId: string, name: string): Promise<TenantRecord | null> {
         const result = await this.db.query("UPDATE tenants SET name = $2 WHERE id = $1 RETURNING *", [tenantId, requiredText(name, "Tenant name")]);
+        return result.rows[0] ? mapTenant(result.rows[0]) : null;
+    }
+
+    async updateOwner(tenantId: string, ownerUserId: string): Promise<TenantRecord | null> {
+        const result = await this.db.query("UPDATE tenants SET owner_user_id = $2 WHERE id = $1 RETURNING *", [tenantId, requiredText(ownerUserId, "Tenant owner user id")]);
         return result.rows[0] ? mapTenant(result.rows[0]) : null;
     }
 
@@ -248,6 +302,20 @@ function mapTenant(row: Record<string, unknown>): TenantRecord {
     };
 }
 
+function mapTenantDomain(row: Record<string, unknown>): TenantDomainRecord {
+    return {
+        id: stringValue(row.id),
+        tenantId: stringValue(row.tenant_id),
+        hostname: stringValue(row.hostname),
+        kind: row.kind === "subdomain" ? "subdomain" : "custom",
+        status: row.status === "verified" || row.status === "disabled" ? row.status : "pending",
+        verificationToken: stringValue(row.verification_token),
+        ...(row.verified_at ? { verifiedAt: isoValue(row.verified_at) } : {}),
+        createdAt: isoValue(row.created_at),
+        updatedAt: isoValue(row.updated_at),
+    };
+}
+
 function mapTenantMember(row: Record<string, unknown>): TenantMemberRecord {
     return {
         tenantId: stringValue(row.tenant_id),
@@ -288,6 +356,19 @@ function recordValue(value: unknown): Record<string, unknown> {
 
 function stringArrayValue(value: unknown): string[] {
     return Array.isArray(value) ? value.map(stringValue).filter(Boolean) : [];
+}
+
+function normalizeHostname(value: string) {
+    const raw = value.trim().toLowerCase();
+    if (!raw) throw new Error("Domain hostname is required");
+    let hostname = raw;
+    try {
+        hostname = new URL(raw.includes("://") ? raw : `http://${raw}`).hostname.toLowerCase().replace(/\.$/, "");
+    } catch {
+        throw new Error("Invalid domain hostname");
+    }
+    if (!hostname || hostname.includes("/") || hostname.includes("@")) throw new Error("Invalid domain hostname");
+    return hostname;
 }
 
 function requiredText(value: string, label: string) {

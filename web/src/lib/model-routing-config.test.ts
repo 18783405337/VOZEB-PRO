@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { LogicalModel, SystemModelChannel } from "@/lib/auth/store";
+import { emptyAdvancedConfig } from "@/lib/channel-protocol-registry";
 import {
     channelDetectedCapabilities,
     channelModelCapability,
@@ -17,6 +18,10 @@ import {
 const channel = (id: string, models: string[], enabled = true): SystemModelChannel => ({ id, name: id, baseUrl: `https://${id}.example.com/v1`, apiKey: "test-secret", apiFormat: "openai", models, enabled });
 
 describe("model routing config", () => {
+    it("maps a channel specialized protocol to the corresponding application model", () => {
+        const models = synchronizeLogicalModelsWithChannels([], [{ id: "digital-channel", name: "数字人渠道", baseUrl: "https://provider.example", apiKey: "", apiFormat: "openai", models: ["avatar-v1"], enabled: true, advancedConfig: { ...emptyAdvancedConfig(), specializedProtocol: "xhadmin-digital-human-v1" } }]);
+        expect(models).toEqual([expect.objectContaining({ id: "avatar-v1", appKeys: ["aigc-digital-human"] })]);
+    });
     it("removes missing, unsupported, and duplicate bindings", () => {
         const channels = [channel("one", ["models/GPT-TEST"]), channel("two", ["gpt-test-2"], false)];
         const models: LogicalModel[] = [

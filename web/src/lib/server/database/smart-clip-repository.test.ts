@@ -8,6 +8,25 @@ function queryResult(rows: Record<string, unknown>[] = []) {
 }
 
 describe("SmartClipRepository", () => {
+    it("updates provider config without exposing or replacing the encrypted key accidentally", async () => {
+        const query = vi.fn().mockResolvedValue(queryResult([{ id: "config-1", tenant_id: "tenant-a", provider: "xhadmin", model: "smart-clip-v1", config_json: { baseUrl: "https://provider.example" }, enabled: true }]));
+        const repository = new SmartClipRepository({ query } as unknown as QueryExecutor);
+        await repository.updateConfig("tenant-a", { provider: "xhadmin", model: "smart-clip-v1", config: { baseUrl: "https://provider.example" }, enabled: true });
+        expect(query.mock.calls[0]?.[0]).toContain("ON CONFLICT (tenant_id) DO UPDATE");
+        expect(query.mock.calls[0]?.[1]).not.toContain("apiKey");
+    });
+
+    it("uses the configured provider and model when creating a task", async () => {
+        const query = vi.fn()
+            .mockResolvedValueOnce({ rows: [{ provider: "xhadmin", model: "smart-clip-v1", config_json: {} }] })
+            .mockResolvedValueOnce({ rows: [{ provider: "xhadmin", model: "smart-clip-v1", config_json: {} }] })
+            .mockResolvedValueOnce({ rows: [{ id: "task-1", tenant_id: "tenant-a", user_id: "user-a", clip_type: "broadcast_mixcut", provider: "xhadmin", model: "smart-clip-v1" }] });
+        const repository = new SmartClipRepository({ query } as unknown as QueryExecutor);
+        await repository.getConfig("tenant-a");
+        await repository.createTask({ tenantId: "tenant-a", userId: "user-a", clipType: "broadcast_mixcut", scene: "oralMixCutting", styleId: "style", title: "Demo", videoUri: "video", audioUri: "", materials: [], introduceCard: {}, packRules: {}, processRules: {}, structLayers: {}, subtitle: {}, language: "zh", sourceApp: "", sourceResultId: "", channel: "smart_clip", quality: "standard", ratio: "16:9", durationSeconds: 30, quantity: 1 });
+        expect(query.mock.calls[2]?.[1]).toContain("xhadmin");
+    });
+
     it("exposes the three migrated smart clip templates", () => {
         const repository = new SmartClipRepository({ query: vi.fn() } as unknown as QueryExecutor);
 
@@ -27,7 +46,9 @@ describe("SmartClipRepository", () => {
 
     it("creates a tenant-scoped pending task through the mock provider", async () => {
         const timestamp = "2026-08-08T00:00:00.000Z";
-        const query = vi.fn().mockResolvedValue(
+        const query = vi.fn()
+            .mockResolvedValueOnce(queryResult())
+            .mockResolvedValueOnce(
             queryResult([
                 {
                     id: "task-1",
@@ -79,7 +100,7 @@ describe("SmartClipRepository", () => {
             }),
         ).resolves.toMatchObject({ id: "task-1", tenantId: "tenant-a", provider: "mock", status: "pending" });
         expect(query).toHaveBeenCalledWith(expect.stringContaining("INSERT INTO smart_clip_tasks"), expect.arrayContaining(["tenant-a", "user-a", "realman_broadcast"]));
-        expect(query.mock.calls[0]?.[1]).toHaveLength(23);
+        expect(query.mock.calls[1]?.[1]).toHaveLength(25);
     });
 
     it("estimates the source default per-second cost", () => {

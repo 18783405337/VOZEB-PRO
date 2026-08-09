@@ -148,12 +148,27 @@ export class SmartClipRepository {
         return result.rows[0] ? mapConfig(result.rows[0]) : defaultConfig(tenantId);
     }
 
+    async updateConfig(tenantId: string, input: Readonly<{ provider: string; model: string; config: Record<string, unknown>; enabled: boolean }>) {
+        const safeConfig = Object.fromEntries(Object.entries(input.config).filter(([key]) => !/^(apiKey|api_key|secret|token)$/i.test(key)));
+        const result = await this.db.query(
+            `INSERT INTO smart_clip_configs (id, tenant_id, provider, model, config_json, enabled)
+             VALUES ($1, $2, $3, $4, $5::jsonb, $6)
+             ON CONFLICT (tenant_id) DO UPDATE SET provider = EXCLUDED.provider, model = EXCLUDED.model, config_json = EXCLUDED.config_json, enabled = EXCLUDED.enabled, updated_at = now()
+             RETURNING *`,
+            [input.provider === "mock" ? `${tenantId}:smart-clip` : `${tenantId}:smart-clip`, tenantId, input.provider.trim() || "mock", input.model.trim() || "smart-clip", JSON.stringify(safeConfig), input.enabled === true],
+        );
+        return result.rows[0] ? mapConfig(result.rows[0]) : defaultConfig(tenantId);
+    }
+
     listTemplates(clipType?: SmartClipType) {
         return clipType ? TEMPLATES.filter((item) => item.clipType === clipType) : TEMPLATES;
     }
 
     async createTask(input: CreateSmartClipTaskInput) {
         const id = input.id || randomUUID();
+        const config = await this.getConfig(input.tenantId);
+        const provider = config.enabled ? config.provider : "mock";
+        const model = config.enabled ? config.model : "smart-clip";
         const result = await this.db.query(
             `INSERT INTO smart_clip_tasks (
                  id, tenant_id, user_id, clip_type, scene, style_id, title, video_uri, audio_uri,
@@ -163,7 +178,7 @@ export class SmartClipRepository {
              )
              VALUES (
                  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
-                 $17, $18, $19, $20, $21, $22, $23, 'mock', 'smart-clip'
+                 $17, $18, $19, $20, $21, $22, $23, $24, $25
              )
              RETURNING *`,
             [
@@ -190,6 +205,8 @@ export class SmartClipRepository {
                 input.ratio,
                 input.durationSeconds,
                 input.quantity,
+                provider,
+                model,
             ],
         );
         if (!result.rows[0]) throw new Error("Smart clip task could not be created");
@@ -216,6 +233,28 @@ export class SmartClipRepository {
             [tenantId, userId, id],
         );
         return result.rows[0] ? mapTask(result.rows[0]) : null;
+    }
+
+    async updateTask(tenantId: string, userId: string, id: string, patch: Readonly<Record<string, unknown>>) {
+        const result = await this.db.query(
+            `UPDATE smart_clip_tasks
+             SET provider_task_id = COALESCE($4, provider_task_id), provider_payload = COALESCE($5::jsonb, provider_payload),
+                 status = COALESCE($6, status), progress = COALESCE($7, progress), error = COALESCE($8, error),
+                 finished_at = COALESCE($9, finished_at), updated_at = now()
+             WHERE tenant_id = $1 AND user_id = $2 AND id = $3 AND deleted_at IS NULL
+             RETURNING *`,
+            [tenantId, userId, id, stringOrNull(patch.providerTaskId), patch.providerPayload ? JSON.stringify(patch.providerPayload) : null, stringOrNull(patch.status), numberOrNull(patch.progress), stringOrNull(patch.error), patch.finishedAt ? new Date(Number(patch.finishedAt)) : null],
+        );
+        return result.rows[0] ? mapTask(result.rows[0]) : null;
+    }
+
+    async createResult(input: Readonly<{ tenantId: string; userId: string; taskId: string; clipType: SmartClipType; styleId: string; title: string; videoUri: string; providerTaskId: string; result?: unknown; durationSeconds?: number; costs?: number }>) {
+        const result = await this.db.query(
+            `INSERT INTO smart_clip_results (id, tenant_id, task_id, user_id, clip_type, style_id, title, video_uri, duration_seconds, costs, provider_task_id, result_json)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb) RETURNING *`,
+            [randomUUID(), input.tenantId, input.taskId, input.userId, input.clipType, input.styleId, input.title, input.videoUri, input.durationSeconds || 0, input.costs || 0, input.providerTaskId, JSON.stringify(input.result || {})],
+        );
+        return result.rows[0] ? mapResult(result.rows[0]) : null;
     }
 
     async listResults(tenantId: string, userId: string, limit = 50) {
@@ -334,6 +373,15 @@ function mapResult(row: Record<string, unknown>): SmartClipResultRecord {
         result: jsonValue(row.result_json),
         createdAt: isoValue(row.created_at),
     };
+}
+
+function stringOrNull(value: unknown) {
+    return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function numberOrNull(value: unknown) {
+    const number = Number(value);
+    return Number.isFinite(number) ? Math.max(0, Math.floor(number)) : null;
 }
 
 function smartClipTypeValue(value: unknown): SmartClipType {

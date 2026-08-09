@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
     audit: vi.fn(),
     auditActorFromRequest: vi.fn(() => ({ id: "admin-one" })),
     createWithOwner: vi.fn(),
+    getById: vi.fn(),
     list: vi.fn(),
     requirePlatformPermission: vi.fn(),
 }));
@@ -17,8 +18,10 @@ vi.mock("@/lib/server/database", () => ({
     createPostgresRepositories: () => ({
         tenants: {
             createWithOwner: mocks.createWithOwner,
+            getById: mocks.getById,
             list: mocks.list,
         },
+        users: { getById: mocks.getById },
     }),
 }));
 
@@ -38,6 +41,7 @@ describe("platform tenant collection API", () => {
         mocks.requirePlatformPermission.mockResolvedValue({ user: { id: "admin-one", username: "admin", role: "admin" } });
         mocks.list.mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 20 });
         mocks.createWithOwner.mockResolvedValue({ id: "tenant-a", slug: "tenant-a", name: "Tenant A", status: "active" });
+        mocks.getById.mockResolvedValue({ id: "admin-one", status: "active" });
     });
 
     afterEach(() => {
@@ -69,7 +73,7 @@ describe("platform tenant collection API", () => {
             new Request("http://localhost/api/admin/tenants", {
                 method: "POST",
                 headers: { "content-type": "application/json" },
-                body: JSON.stringify({ slug: "tenant-a", name: "Tenant A" }),
+                body: JSON.stringify({ slug: "tenant-a", name: "Tenant A", ownerUserId: "admin-one" }),
             }),
         );
 

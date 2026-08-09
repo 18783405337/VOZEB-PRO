@@ -38,7 +38,14 @@ import {
 } from "./creative-runtime-store";
 import { resolvePostgresConversation } from "./creative-runtime-repository";
 
-describe("creative runtime file provider", () => {
+describe("creative runtime store", () => {
+    it("persists the tenant boundary when creating a PostgreSQL conversation", async () => {
+        mocks.databaseProvider = "postgres";
+        mocks.query.mockResolvedValue({ rows: [] });
+        const conversation = await createCreativeConversation("user-one", { surface: "chat", source: "image-workbench", title: "生成图片" }, "tenant-one");
+        expect(conversation.id).toMatch(/^conversation-/);
+        expect(mocks.query).toHaveBeenCalledWith(expect.stringContaining("tenant_id"), expect.arrayContaining(["tenant-one"]));
+    });
     beforeEach(() => {
         mocks.files = new Map();
         mocks.databaseProvider = "file";

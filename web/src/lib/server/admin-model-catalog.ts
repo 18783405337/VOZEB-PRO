@@ -284,6 +284,8 @@ function modelConfigFromMetadata(record: Record<string, unknown> | undefined, ca
         ...optionalMetadataText(record, "durationRange", "duration_range", 120),
         ...optionalMetadataText(record, "referenceRule", "reference_rule", 1_000),
         ...(typeof record.supportsReferenceImage === "boolean" ? { supportsReferenceImage: record.supportsReferenceImage } : {}),
+        ...(Number.isInteger(record.maxReferenceImages) && Number(record.maxReferenceImages) > 0 ? { maxReferenceImages: Number(record.maxReferenceImages) } : {}),
+        ...(typeof record.referenceImagesField === "string" && record.referenceImagesField.trim() ? { referenceImagesField: record.referenceImagesField.trim() } : {}),
         ...(typeof record.supportsReferenceVideo === "boolean" ? { supportsReferenceVideo: record.supportsReferenceVideo } : {}),
         ...(typeof record.supportsReferenceAudio === "boolean" ? { supportsReferenceAudio: record.supportsReferenceAudio } : {}),
     };

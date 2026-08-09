@@ -2,13 +2,59 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { QueryExecutor } from "./postgres";
 import { createPostgresRepositories } from "./repositories";
-import { TenantRepository, type TenantTransactionRunner } from "./tenant-repository";
+import { TenantRepository, DEFAULT_TENANT_OWNER_PERMISSIONS, type TenantTransactionRunner } from "./tenant-repository";
 
 function queryResult(rows: Record<string, unknown>[] = [], rowCount = rows.length) {
     return { rows, rowCount };
 }
 
 describe("TenantRepository", () => {
+    it("reads and updates tenant settings without changing tenant identity", async () => {
+        const timestamp = "2026-08-08T00:00:00.000Z";
+        const query = vi.fn()
+            .mockResolvedValueOnce(queryResult([{ id: "tenant-a", slug: "tenant-a", name: "Tenant A", status: "active", settings: { title: "旧标题" }, created_at: timestamp, updated_at: timestamp }]))
+            .mockResolvedValueOnce(queryResult([{ id: "tenant-a", slug: "tenant-a", name: "Tenant A", status: "active", settings: { title: "新标题", phone: "13800000000" }, created_at: timestamp, updated_at: timestamp }]));
+        const repository = new TenantRepository({ query } as unknown as QueryExecutor);
+
+        await expect(repository.getSettings("tenant-a")).resolves.toEqual({ title: "旧标题" });
+        await expect(repository.updateSettings("tenant-a", { title: "新标题", phone: "13800000000" })).resolves.toMatchObject({ title: "新标题", phone: "13800000000" });
+        expect(query.mock.calls[1]?.[0]).toContain("UPDATE tenants SET settings");
+    });
+
+    it("lists tenant domains and creates a pending domain with a verification token", async () => {
+        const timestamp = "2026-08-08T00:00:00.000Z";
+        const query = vi
+            .fn()
+            .mockResolvedValueOnce(queryResult([]))
+            .mockResolvedValueOnce(
+                queryResult([
+                    {
+                        id: "domain-one",
+                        tenant_id: "tenant-a",
+                        hostname: "studio.example.com",
+                        kind: "custom",
+                        status: "pending",
+                        verification_token: "token-one",
+                        verified_at: null,
+                        created_at: timestamp,
+                        updated_at: timestamp,
+                    },
+                ]),
+            );
+        const repository = new TenantRepository({ query } as unknown as QueryExecutor);
+
+        await expect(repository.listDomains("tenant-a")).resolves.toEqual([]);
+        await expect(repository.createDomain({ tenantId: "tenant-a", hostname: "Studio.Example.com" })).resolves.toMatchObject({
+            tenantId: "tenant-a",
+            hostname: "studio.example.com",
+            kind: "custom",
+            status: "pending",
+            verificationToken: expect.any(String),
+        });
+        expect(query.mock.calls[0]?.[0]).toContain("FROM tenant_domains");
+        expect(query.mock.calls[1]?.[0]).toContain("INSERT INTO tenant_domains");
+    });
+
     it("loads tenants by id and case-insensitive slug", async () => {
         const timestamp = "2026-08-07T00:00:00.000Z";
         const row = {
@@ -247,7 +293,7 @@ describe("TenantRepository", () => {
         expect(query.mock.calls[0]?.[0]).toContain("INSERT INTO tenants");
         expect(query.mock.calls[1]?.[0]).toContain("INSERT INTO tenant_roles");
         expect(query.mock.calls[2]?.[0]).toContain("INSERT INTO tenant_role_permissions");
-        expect(query.mock.calls[2]?.[1]).toEqual(["tenant-a", "tenant-a-owner", ["tenant.members.read", "tenant.members.manage", "tenant.roles.manage", "tenant.apps.read", "tenant.apps.configure", "tenant.billing.read", "tenant.merchants.manage"]]);
+        expect(query.mock.calls[2]?.[1]).toEqual(["tenant-a", "tenant-a-owner", DEFAULT_TENANT_OWNER_PERMISSIONS]);
         expect(query.mock.calls[3]?.[0]).toContain("INSERT INTO tenant_members");
     });
 

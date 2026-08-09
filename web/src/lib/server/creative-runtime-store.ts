@@ -40,7 +40,7 @@ import { notifyCreativeRunEvent } from "./creative-run-event-signal";
 export { CreativeStoreConflict } from "./creative-runtime-repository";
 import { CreativeStoreConflict } from "./creative-runtime-repository";
 
-export async function createCreativeConversation(userId: string, input: { surface: CreativeSurface; source?: CreativeConversationSource; projectId?: string; title?: string }) {
+export async function createCreativeConversation(userId: string, input: { surface: CreativeSurface; source?: CreativeConversationSource; projectId?: string; title?: string }, tenantId = "default") {
     const now = Date.now();
     const conversation: CreativeConversation = {
         id: `conversation-${nanoid()}`,
@@ -59,9 +59,9 @@ export async function createCreativeConversation(userId: string, input: { surfac
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
         await postgresQuery(
-            `INSERT INTO creative_conversations (id, user_id, surface, source, project_id, title, status, created_at, updated_at, last_message_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $8)`,
-            [conversation.id, userId, conversation.surface, conversation.source, conversation.projectId || null, conversation.title, conversation.status, new Date(now)],
+            `INSERT INTO creative_conversations (id, user_id, surface, source, project_id, tenant_id, title, status, created_at, updated_at, last_message_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, $9)`,
+            [conversation.id, userId, conversation.surface, conversation.source, conversation.projectId || null, tenantId, conversation.title, conversation.status, new Date(now)],
         );
         return conversation;
     }

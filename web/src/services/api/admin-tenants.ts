@@ -26,7 +26,18 @@ export async function createPlatformTenant(input: { slug: string; name: string; 
     })).tenant;
 }
 
-export async function updatePlatformTenant(tenantId: string, patch: { name?: string; status?: TenantStatus }) {
+export async function getPlatformTenantSettings(tenantId: string) {
+    return (await requestApiData<{ settings: Record<string, unknown> }>(`/api/admin/tenants/${encodeURIComponent(tenantId)}/settings`, { cache: "no-store" })).settings;
+}
+
+export async function updatePlatformTenantSettings(tenantId: string, settings: Record<string, unknown>) {
+    return (await requestApiData<{ settings: Record<string, unknown> }>(`/api/admin/tenants/${encodeURIComponent(tenantId)}/settings`, {
+        method: "PATCH",
+        body: JSON.stringify(settings),
+    })).settings;
+}
+
+export async function updatePlatformTenant(tenantId: string, patch: { name?: string; status?: TenantStatus; ownerUserId?: string }) {
     return (await requestApiData<{ tenant: TenantRecord }>(`/api/admin/tenants/${encodeURIComponent(tenantId)}`, {
         method: "PATCH",
         body: JSON.stringify(patch),

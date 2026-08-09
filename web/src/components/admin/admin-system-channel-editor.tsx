@@ -1,13 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { App, Button, Checkbox, Input, Popconfirm, Select, Switch, Tag, Tooltip } from "antd";
+import { App, Button, Checkbox, Input, InputNumber, Popconfirm, Select, Switch, Tag, Tooltip } from "antd";
 import { Eye, EyeOff, PlugZap, RefreshCw, Sparkles, Trash2 } from "lucide-react";
 
 import { LabeledControl } from "@/components/admin/admin-settings-controls";
 import { parseChannelExampleConfig } from "@/lib/channel-example-parser";
 import { buildGlobalAiOpcSelection, GLOBAL_AIOPC_PRESETS, globalAiOpcPresetOptions, resolveGlobalAiOpcCatalogPresets, resolveGlobalAiOpcPresets } from "@/lib/globalaiopc-catalog";
-import type { LogicalModelCapability, SystemChannelAdvancedConfig, SystemChannelModelConfig, SystemChannelProtocol, SystemModelChannel } from "@/lib/auth/store";
+import type { LogicalModelCapability, SpecializedProviderProtocol, SystemChannelAdvancedConfig, SystemChannelModelConfig, SystemChannelProtocol, SystemModelChannel } from "@/lib/auth/store-types";
+import { SPECIALIZED_PROVIDER_PROTOCOLS } from "@/lib/auth/store-types";
 import { capabilityLabel, channelDetectedCapabilities, channelModelCapability } from "@/lib/model-routing-config";
 import { normalizeModelId } from "@/lib/model-capability";
 import { revealAdminChannelApiKey } from "@/services/api/admin-settings";
@@ -269,6 +270,7 @@ export function SystemChannelEditor({ channel, fetching, onChange, onDelete, onF
                         </LabeledControl>
                     ) : null}
                     <ModelRouteConfigEditor channel={channel} advanced={advanced} onChange={updateAdvanced} />
+                    <SpecializedProviderEditor advanced={advanced} onChange={updateAdvanced} />
                     {protocolDefinition.advanced ? (
                         <>
                             {detectedCapabilities.has("video") ? (
@@ -351,6 +353,52 @@ export function SystemChannelEditor({ channel, fetching, onChange, onDelete, onF
                     <div className="text-xs leading-5 text-stone-500 md:col-span-2 dark:text-stone-400">拉取会合并上游模型、官方目录和已有手工模型，不会覆盖手工配置；混合接口优先使用模型级路由，上方兜底字段只在模型没有专属配置时生效。</div>
                 </div>
             </details>
+        </div>
+    );
+}
+
+function SpecializedProviderEditor({ advanced, onChange }: { advanced: SystemChannelAdvancedConfig; onChange: (patch: Partial<SystemChannelAdvancedConfig>) => void }) {
+    const options = [
+        { label: "不使用专项 Provider", value: "" },
+        { label: "Xhadmin 数字人", value: "xhadmin-digital-human-v1" },
+        { label: "Kling 数字人", value: "kling-avatar-v1" },
+        { label: "Xhadmin 图片数字人", value: "xhadmin-image-human-v1" },
+        { label: "Xhadmin 动作迁移", value: "xhadmin-action-transfer-v1" },
+    ];
+    const protocol = advanced.specializedProtocol && SPECIALIZED_PROVIDER_PROTOCOLS.includes(advanced.specializedProtocol) ? advanced.specializedProtocol : "";
+    const kling = advanced.specializedConfig || {};
+    return (
+        <div className="rounded-lg border border-cyan-200 bg-cyan-50/50 p-3 md:col-span-2 dark:border-cyan-900/70 dark:bg-cyan-950/20">
+            <div className="text-sm font-semibold text-cyan-950 dark:text-cyan-100">专项 Provider 配置</div>
+            <div className="mt-1 text-xs leading-5 text-cyan-800/80 dark:text-cyan-200/80">用于数字人、图片数字人和动作迁移。选择后，该渠道会出现在对应专项应用的 Provider 候选中。</div>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <LabeledControl label="专项协议">
+                    <Select className="w-full" value={protocol} options={options} onChange={(value: string) => onChange({ specializedProtocol: (value || undefined) as SpecializedProviderProtocol | undefined })} />
+                </LabeledControl>
+                <LabeledControl label="专项请求超时（毫秒）">
+                    <InputNumber className="w-full" min={10_000} max={3_600_000} step={10_000} value={advanced.specializedTimeoutMs || 600_000} onChange={(value) => onChange({ specializedTimeoutMs: Number(value) || 600_000 })} />
+                </LabeledControl>
+            </div>
+            {protocol === "kling-avatar-v1" ? (
+                <div className="mt-3 grid gap-3 border-t border-cyan-200 pt-3 sm:grid-cols-2 dark:border-cyan-900/70">
+                    <LabeledControl label="可灵数字人模式">
+                        <Select className="w-full" value={kling.klingMode || "std"} options={[{ label: "标准 std", value: "std" }, { label: "专业 pro", value: "pro" }]} onChange={(value) => onChange({ specializedConfig: { ...kling, klingMode: value } })} />
+                    </LabeledControl>
+                    <LabeledControl label="回调地址（可选）">
+                        <Input value={kling.klingCallbackUrl || ""} placeholder="留空则轮询任务" onChange={(event) => onChange({ specializedConfig: { ...kling, klingCallbackUrl: event.target.value } })} />
+                    </LabeledControl>
+                    <div className="sm:col-span-2">
+                        <LabeledControl label="默认提示词（可选）">
+                            <Input.TextArea rows={2} value={kling.klingPrompt || ""} placeholder="例如：自然口型、稳定面部表情、轻微镜头运动" onChange={(event) => onChange({ specializedConfig: { ...kling, klingPrompt: event.target.value } })} />
+                        </LabeledControl>
+                    </div>
+                    <div className="sm:col-span-2">
+                        <Checkbox checked={kling.klingWatermarkEnabled === true} onChange={(event) => onChange({ specializedConfig: { ...kling, klingWatermarkEnabled: event.target.checked } })}>
+                            启用可灵水印
+                        </Checkbox>
+                    </div>
+                </div>
+            ) : null}
         </div>
     );
 }

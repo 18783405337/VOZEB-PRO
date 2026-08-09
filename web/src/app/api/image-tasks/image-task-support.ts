@@ -694,11 +694,13 @@ export async function imageReferenceToFile(reference: ImageTaskReference, name: 
         try {
             if (/^data:image\//i.test(value)) return dataUrlToFile(value, name, reference.type);
             if (/^blob:/i.test(value)) throw new Error("参考图已失效，请重新上传");
-            const fetchUrl = value.startsWith("/") ? `${origin}${value}` : value;
+            const internalPath = internalReferencePath(value);
+            const isInternalReference = Boolean(internalPath);
+            const fetchUrl = internalPath ? `${origin}${internalPath}` : value.startsWith("/") ? `${origin}${value}` : value;
             if (!isRemoteMediaUrl(fetchUrl)) throw new Error("参考图地址无效，请重新上传参考图");
             const workerHeaders = maintenanceWorkerContextHeaders(cookie);
-            const response = await (value.startsWith("/") ? fetchInternalApi : fetchSafeOutbound)(fetchUrl, {
-                headers: value.startsWith("/") ? workerHeaders || (cookie ? { cookie } : undefined) : undefined,
+            const response = await (isInternalReference ? fetchInternalApi : fetchSafeOutbound)(fetchUrl, {
+                headers: isInternalReference ? workerHeaders || (cookie ? { cookie } : undefined) : undefined,
                 cache: "no-store",
                 signal: AbortSignal.timeout(INLINE_IMAGE_TIMEOUT_MS),
             });
@@ -716,6 +718,17 @@ export async function imageReferenceToFile(reference: ImageTaskReference, name: 
         }
     }
     throw lastError instanceof Error ? lastError : new Error("参考图读取失败");
+}
+
+function internalReferencePath(value: string) {
+    if (value.startsWith("/api/reference-assets/") || value.startsWith("/api/media-assets/")) return value;
+    try {
+        const url = new URL(value);
+        if (url.pathname.startsWith("/api/reference-assets/") || url.pathname.startsWith("/api/media-assets/")) return `${url.pathname}${url.search}`;
+    } catch {
+        return "";
+    }
+    return "";
 }
 
 export async function imageReferenceToDataUrl(reference: ImageTaskReference, name: string, origin: string, cookie: string) {

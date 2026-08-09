@@ -41,6 +41,7 @@ export function resolveSpecializedProviderContext(candidate: SpecializedProvider
         apiKey,
         protocol,
         timeoutMs: normalizeTimeout(config?.specializedTimeoutMs ?? config?.timeoutMs ?? config?.timeout),
+        specializedConfig: normalizeSpecializedConfig(config?.specializedConfig),
     };
 }
 
@@ -66,6 +67,17 @@ function normalizeBaseUrl(value: string) {
 function normalizeTimeout(value: unknown) {
     const timeout = Number(value);
     return Number.isFinite(timeout) ? Math.max(5_000, Math.min(300_000, Math.floor(timeout))) : 60_000;
+}
+
+function normalizeSpecializedConfig(value: unknown) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    const input = value as Record<string, unknown>;
+    return {
+        klingMode: input.klingMode === "pro" ? "pro" as const : input.klingMode === "std" ? "std" as const : undefined,
+        klingPrompt: typeof input.klingPrompt === "string" ? input.klingPrompt.trim().slice(0, 1000) : undefined,
+        klingCallbackUrl: typeof input.klingCallbackUrl === "string" ? input.klingCallbackUrl.trim().slice(0, 2000) : undefined,
+        klingWatermarkEnabled: typeof input.klingWatermarkEnabled === "boolean" ? input.klingWatermarkEnabled : undefined,
+    };
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
