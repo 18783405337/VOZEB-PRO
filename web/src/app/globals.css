@@ -3,6 +3,7 @@
 @import "shadcn/tailwind.css";
 
 @import "./styles/global-foundation.css";
+@import "./styles/global-liquid-glass.css";
 @import "./styles/global-hero.css";
 @import "./styles/global-app-shell.css";
 @import "./styles/global-auth.css";

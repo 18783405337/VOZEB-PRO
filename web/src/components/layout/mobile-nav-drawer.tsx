@@ -42,8 +42,8 @@ export function MobileNavDrawer({ open, activeToolSlug, onClose }: MobileNavDraw
             size={288}
             open={open}
             onClose={onClose}
-            className="lg:hidden"
-            styles={{ header: { borderBottomColor: "var(--border)", minHeight: 60, padding: "12px 16px" }, body: { padding: "12px 14px 18px" } }}
+            className="glass-drawer lg:hidden"
+            styles={{ header: { background: "var(--glass-bg-strong)", borderBottomColor: "var(--glass-border)", minHeight: 60, padding: "12px 16px" }, body: { background: "var(--glass-bg-strong)", padding: "12px 14px 18px" } }}
         >
             {navigationGroups.map((group, groupIndex) => (
                 <div key={group.id} className={cn(groupIndex > 0 && "mt-5")}>

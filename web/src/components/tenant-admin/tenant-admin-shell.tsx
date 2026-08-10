@@ -62,7 +62,7 @@ export function TenantAdminShell({ initialContext }: { initialContext: TenantAdm
 
     return (
         <div className="mx-auto flex min-h-dvh w-full max-w-[1480px] flex-col px-4 py-5 sm:px-6 lg:px-8">
-            <header className="flex flex-wrap items-start justify-between gap-4 border-b border-zinc-200 pb-5 dark:border-zinc-800">
+            <header data-glass-header className="glass-surface-strong flex flex-wrap items-start justify-between gap-4 rounded-2xl p-4 sm:p-5">
                 <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                         <h1 className="text-xl font-semibold text-zinc-950 sm:text-2xl dark:text-zinc-100">{initialContext.tenant.name}</h1>

@@ -16,8 +16,8 @@ export function AppSidebar({ activeToolSlug, expanded }: { activeToolSlug?: Navi
     const helpActive = pathname.startsWith("/help");
 
     return (
-        <aside className={cn("hidden h-full shrink-0 flex-col border-r border-[#e8ebef] bg-white text-[#20242a] transition-[width] duration-200 lg:flex dark:border-[#292d33] dark:bg-[#111316] dark:text-[#f3f5f7]", expanded ? "w-56" : "w-[72px]")}>
-            <Link href="/create" className={cn("flex h-[60px] shrink-0 items-center border-b border-[#e8ebef] px-3 dark:border-[#292d33]", expanded ? "justify-start px-5" : "justify-center")} aria-label={site.title || "VOZEB PRO"}>
+        <aside data-glass-sidebar className={cn("glass-surface-strong hidden h-full shrink-0 flex-col rounded-none border-y-0 border-l-0 text-[#20242a] transition-[width] duration-200 lg:flex dark:text-[#f3f5f7]", expanded ? "w-56" : "w-[72px]")}>
+            <Link href="/create" className={cn("flex h-[60px] shrink-0 items-center border-x-0 border-t-0 px-3", expanded ? "justify-start px-5" : "justify-center")} aria-label={site.title || "VOZEB PRO"}>
                 <SiteLogo logoUrl={site.logoUrl} className="size-8" />
                 {expanded ? <span className="ml-3 min-w-0 truncate text-sm font-semibold">{site.title || "VOZEB PRO"}</span> : null}
             </Link>

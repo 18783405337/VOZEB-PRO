@@ -47,7 +47,7 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
                 pointsBalance: currentUser.pointsBalance,
             }}
         >
-            <main className="admin-console-page app-scroll-page relative bg-white text-zinc-950 dark:bg-zinc-950 dark:text-zinc-100">
+            <main data-glass-admin className="admin-console-page app-scroll-page relative bg-white text-zinc-950 dark:bg-zinc-950 dark:text-zinc-100">
                 <AdminDashboard
                     initialUsers={[]}
                     initialUserSummary={userSummary}

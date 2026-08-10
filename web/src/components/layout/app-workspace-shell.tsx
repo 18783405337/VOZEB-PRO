@@ -31,10 +31,10 @@ export function AppWorkspaceShell({ children }: { children: ReactNode }) {
     if (fullscreen) return <div className="h-dvh min-h-0 overflow-hidden">{children}</div>;
 
     return (
-        <div className="workspace-shell flex h-dvh min-h-0 overflow-hidden bg-[#fafbfc] text-foreground dark:bg-[#111316]">
+        <div data-glass-shell className="workspace-shell flex h-dvh min-h-0 overflow-hidden bg-[#fafbfc] text-foreground dark:bg-[#111316]">
             <AppSidebar activeToolSlug={tool?.slug} expanded={sidebarExpanded} />
             <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-                <header className="flex h-[60px] shrink-0 items-center justify-between gap-3 border-b border-[#e8ebef] bg-white/95 px-3 backdrop-blur-xl sm:px-4 lg:px-5 dark:border-[#292d33] dark:bg-[#111316]/95">
+                <header data-glass-header className="glass-surface-strong flex h-[60px] shrink-0 items-center justify-between gap-3 border-x-0 border-t-0 px-3 sm:px-4 lg:px-5">
                     <div className="flex min-w-0 items-center gap-2.5">
                         <button
                             type="button"
@@ -66,7 +66,7 @@ export function AppWorkspaceShell({ children }: { children: ReactNode }) {
                         <UserStatusActions />
                     </div>
                 </header>
-                <div className="min-h-0 min-w-0 flex-1 overflow-hidden bg-[#fafbfc] dark:bg-[#111316]">{children}</div>
+                <div className="app-workspace-content min-h-0 min-w-0 flex-1 overflow-hidden bg-[#fafbfc] dark:bg-[#111316]">{children}</div>
             </div>
             <MobileNavDrawer open={mobileNavOpen} activeToolSlug={tool?.slug} onClose={() => setMobileNavOpen(false)} />
         </div>
