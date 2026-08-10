@@ -336,6 +336,7 @@ CREATE TABLE IF NOT EXISTS creative_conversations (
 ALTER TABLE creative_conversations ADD COLUMN IF NOT EXISTS context_summary text NOT NULL DEFAULT '';
 ALTER TABLE creative_conversations ADD COLUMN IF NOT EXISTS context_summary_through_sequence integer NOT NULL DEFAULT 0;
 ALTER TABLE creative_conversations ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT 'agent';
+ALTER TABLE creative_conversations ADD COLUMN IF NOT EXISTS tenant_id text NOT NULL DEFAULT 'default';
 UPDATE creative_conversations SET source = surface WHERE surface IN ('canvas', 'drama') AND source = 'agent';
 
 CREATE INDEX IF NOT EXISTS creative_conversations_user_updated_idx ON creative_conversations (user_id, updated_at DESC);
@@ -486,10 +487,11 @@ CREATE INDEX IF NOT EXISTS creative_run_events_run_id_idx ON creative_run_events
 CREATE TABLE IF NOT EXISTS canvas_projects (
     id text PRIMARY KEY,
     user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    title text NOT NULL,
+    title text NOT NULL DEFAULT '',
     project_json jsonb NOT NULL DEFAULT '{}'::jsonb,
     created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now()
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    tenant_id text NOT NULL DEFAULT 'default'
 );
 
 CREATE INDEX IF NOT EXISTS canvas_projects_user_updated_idx ON canvas_projects (user_id, updated_at DESC);

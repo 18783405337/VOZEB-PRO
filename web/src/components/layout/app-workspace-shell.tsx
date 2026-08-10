@@ -31,14 +31,14 @@ export function AppWorkspaceShell({ children }: { children: ReactNode }) {
     if (fullscreen) return <div className="h-dvh min-h-0 overflow-hidden">{children}</div>;
 
     return (
-        <div data-glass-shell className="workspace-shell flex h-dvh min-h-0 overflow-hidden bg-[#fafbfc] text-foreground dark:bg-[#111316]">
+        <div data-glass-shell className="workspace-shell app-workspace-shell flex h-dvh min-h-0 overflow-hidden text-foreground">
             <AppSidebar activeToolSlug={tool?.slug} expanded={sidebarExpanded} />
             <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-                <header data-glass-header className="glass-surface-strong flex h-[60px] shrink-0 items-center justify-between gap-3 border-x-0 border-t-0 px-3 sm:px-4 lg:px-5">
+                <header data-glass-header className="app-shell-header glass-surface-strong flex h-[60px] shrink-0 items-center justify-between gap-3 px-3 sm:px-4 lg:px-5">
                     <div className="flex min-w-0 items-center gap-2.5">
                         <button
                             type="button"
-                            className="inline-flex size-9 shrink-0 items-center justify-center rounded-md text-stone-600 transition hover:bg-stone-100 hover:text-stone-950 lg:hidden dark:text-stone-300 dark:hover:bg-stone-900 dark:hover:text-white"
+                            className="glass-interactive glass-focus-ring inline-flex size-9 shrink-0 items-center justify-center rounded-lg text-stone-600 hover:bg-[var(--glass-bg-hover)] hover:text-stone-950 lg:hidden dark:text-stone-300 dark:hover:bg-white/10 dark:hover:text-white"
                             onClick={() => setMobileNavOpen(true)}
                             aria-label="打开导航菜单"
                             title="导航菜单"
@@ -50,7 +50,7 @@ export function AppWorkspaceShell({ children }: { children: ReactNode }) {
                         </Link>
                         <button
                             type="button"
-                            className="hidden size-8 shrink-0 items-center justify-center rounded-lg text-[#68717c] transition hover:bg-[#f1f3f5] hover:text-[#20242a] lg:inline-flex dark:text-[#a5adb8] dark:hover:bg-[#22262c] dark:hover:text-white"
+                            className="glass-interactive glass-focus-ring hidden size-8 shrink-0 items-center justify-center rounded-lg text-[#68717c] hover:bg-[var(--glass-bg-hover)] hover:text-[#20242a] lg:inline-flex dark:text-[#a5adb8] dark:hover:bg-white/10 dark:hover:text-white"
                             onClick={() => setSidebarExpanded((value) => !value)}
                             aria-label={sidebarExpanded ? "收起侧边栏" : "展开侧边栏"}
                             title={sidebarExpanded ? "收起侧边栏" : "展开侧边栏"}
@@ -66,7 +66,7 @@ export function AppWorkspaceShell({ children }: { children: ReactNode }) {
                         <UserStatusActions />
                     </div>
                 </header>
-                <div className="app-workspace-content min-h-0 min-w-0 flex-1 overflow-hidden bg-[#fafbfc] dark:bg-[#111316]">{children}</div>
+                <div className="app-workspace-content min-h-0 min-w-0 flex-1 overflow-hidden">{children}</div>
             </div>
             <MobileNavDrawer open={mobileNavOpen} activeToolSlug={tool?.slug} onClose={() => setMobileNavOpen(false)} />
         </div>

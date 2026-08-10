@@ -42,8 +42,10 @@ export function MobileNavDrawer({ open, activeToolSlug, onClose }: MobileNavDraw
             size={288}
             open={open}
             onClose={onClose}
-            className="glass-drawer lg:hidden"
-            styles={{ header: { background: "var(--glass-bg-strong)", borderBottomColor: "var(--glass-border)", minHeight: 60, padding: "12px 16px" }, body: { background: "var(--glass-bg-strong)", padding: "12px 14px 18px" } }}
+            className="glass-mobile-nav-drawer lg:hidden"
+            rootClassName="glass-mobile-nav-root"
+            width="min(288px, calc(100vw - 24px))"
+            styles={{ mask: { backdropFilter: "blur(8px)", WebkitBackdropFilter: "blur(8px)", background: "rgba(2, 6, 23, 0.34)" }, content: { background: "var(--glass-bg-strong)", backdropFilter: "blur(22px) saturate(1.18)", WebkitBackdropFilter: "blur(22px) saturate(1.18)", borderRight: "1px solid var(--glass-border)" }, header: { borderBottomColor: "var(--glass-border)", minHeight: 60, padding: "12px 16px", background: "transparent" }, body: { padding: "12px 14px 18px", background: "transparent" } }}
         >
             {navigationGroups.map((group, groupIndex) => (
                 <div key={group.id} className={cn(groupIndex > 0 && "mt-5")}>
@@ -63,10 +65,10 @@ export function MobileNavDrawer({ open, activeToolSlug, onClose }: MobileNavDraw
                                         onFocus={() => router.prefetch(`/${tool.slug}`)}
                                         onClick={onClose}
                                         className={cn(
-                                            "flex min-h-11 items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition",
+                                            "glass-focus-ring flex min-h-11 items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition",
                                             active
-                                                ? "bg-[#f0f2f4] font-medium text-[#1d2127] dark:bg-[#22262c] dark:text-[#f3f5f7]"
-                                                : "text-[#697381] hover:bg-[#f3f5f7] hover:text-[#20242a] dark:text-[#9aa3af] dark:hover:bg-[#20242a] dark:hover:text-[#f3f5f7]",
+                                                ? "glass-surface-muted font-medium text-[#1d2127] dark:text-[#f3f5f7]"
+                                                : "text-[#697381] hover:bg-[var(--glass-bg-hover)] hover:text-[#20242a] dark:text-[#9aa3af] dark:hover:bg-white/8 dark:hover:text-[#f3f5f7]",
                                         )}
                                         aria-current={active ? "page" : undefined}
                                     >
@@ -79,7 +81,7 @@ export function MobileNavDrawer({ open, activeToolSlug, onClose }: MobileNavDraw
                     </div>
                 </div>
             ))}
-            <div className="mt-5 border-t border-border pt-4">
+            <div className="mt-5 border-t border-[var(--glass-border)] pt-4">
                 <Link
                     href="/help"
                     prefetch
@@ -87,8 +89,8 @@ export function MobileNavDrawer({ open, activeToolSlug, onClose }: MobileNavDraw
                     onFocus={() => router.prefetch("/help")}
                     onClick={onClose}
                     className={cn(
-                        "flex min-h-11 items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition",
-                        helpActive ? "bg-[#f0f2f4] font-medium text-[#1d2127] dark:bg-[#22262c] dark:text-[#f3f5f7]" : "text-[#697381] hover:bg-[#f3f5f7] hover:text-[#20242a] dark:text-[#9aa3af] dark:hover:bg-[#20242a] dark:hover:text-[#f3f5f7]",
+                        "glass-focus-ring flex min-h-11 items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition",
+                        helpActive ? "glass-surface-muted font-medium text-[#1d2127] dark:text-[#f3f5f7]" : "text-[#697381] hover:bg-[var(--glass-bg-hover)] hover:text-[#20242a] dark:text-[#9aa3af] dark:hover:bg-white/8 dark:hover:text-[#f3f5f7]",
                     )}
                     aria-current={helpActive ? "page" : undefined}
                 >

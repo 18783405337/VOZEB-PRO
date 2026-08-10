@@ -16,8 +16,8 @@ export function AppSidebar({ activeToolSlug, expanded }: { activeToolSlug?: Navi
     const helpActive = pathname.startsWith("/help");
 
     return (
-        <aside data-glass-sidebar className={cn("glass-surface-strong hidden h-full shrink-0 flex-col rounded-none border-y-0 border-l-0 text-[#20242a] transition-[width] duration-200 lg:flex dark:text-[#f3f5f7]", expanded ? "w-56" : "w-[72px]")}>
-            <Link href="/create" className={cn("flex h-[60px] shrink-0 items-center border-x-0 border-t-0 px-3", expanded ? "justify-start px-5" : "justify-center")} aria-label={site.title || "VOZEB PRO"}>
+        <aside data-glass-sidebar className={cn("glass-surface-strong hidden h-full shrink-0 flex-col rounded-none text-[#20242a] transition-[width] duration-200 lg:flex dark:text-[#f3f5f7]", expanded ? "w-56" : "w-[72px]")}>
+            <Link href="/create" className={cn("flex h-[60px] shrink-0 items-center border-b border-[var(--glass-border)] px-3", expanded ? "justify-start px-5" : "justify-center")} aria-label={site.title || "VOZEB PRO"}>
                 <SiteLogo logoUrl={site.logoUrl} className="size-8" />
                 {expanded ? <span className="ml-3 min-w-0 truncate text-sm font-semibold">{site.title || "VOZEB PRO"}</span> : null}
             </Link>
@@ -42,19 +42,19 @@ export function AppSidebar({ activeToolSlug, expanded }: { activeToolSlug?: Navi
                                             onMouseEnter={() => router.prefetch(`/${tool.slug}`)}
                                             onFocus={() => router.prefetch(`/${tool.slug}`)}
                                             className={cn(
-                                                "group relative flex h-10 items-center rounded-lg px-2 text-sm font-medium transition",
+                                                "glass-focus-ring group relative flex h-10 items-center rounded-lg px-2 text-sm font-medium transition",
                                                 expanded ? "justify-start gap-3 px-3" : "justify-center",
                                                 active
-                                                    ? "bg-[#f0f2f4] text-[#1d2127] dark:bg-[#22262c] dark:text-[#f3f5f7]"
+                                                    ? "glass-surface-muted text-[#1d2127] dark:text-[#f3f5f7]"
                                                     : primary
-                                                      ? "text-[#343b44] hover:bg-[#f3f5f7] dark:text-[#d4d9df] dark:hover:bg-[#20242a]"
-                                                      : "text-[#697381] hover:bg-[#f3f5f7] hover:text-[#20242a] dark:text-[#8f99a6] dark:hover:bg-[#20242a] dark:hover:text-[#f3f5f7]",
+                                                      ? "text-[#343b44] hover:bg-[var(--glass-bg-hover)] dark:text-[#d4d9df] dark:hover:bg-white/8"
+                                                      : "text-[#697381] hover:bg-[var(--glass-bg-hover)] hover:text-[#20242a] dark:text-[#8f99a6] dark:hover:bg-white/8 dark:hover:text-[#f3f5f7]",
                                             )}
                                             aria-current={active ? "page" : undefined}
                                         >
                                             <Icon className="size-[18px] shrink-0" />
                                             {expanded ? <span className="min-w-0 truncate">{tool.label}</span> : null}
-                                            {active ? <span className="absolute right-0 h-4 w-0.5 rounded-full bg-[#5d7fdb]" /> : null}
+                                            {active ? <span className="absolute right-1 h-4 w-0.5 rounded-full bg-[rgb(var(--glass-accent))]" /> : null}
                                         </Link>
                                     );
                                 })}
@@ -64,7 +64,7 @@ export function AppSidebar({ activeToolSlug, expanded }: { activeToolSlug?: Navi
                 })}
             </nav>
 
-            <div className={cn("shrink-0 border-t border-[#e8ebef] dark:border-[#292d33]", expanded ? "p-3" : "p-2")}>
+            <div className={cn("shrink-0 border-t border-[var(--glass-border)]", expanded ? "p-3" : "p-2")}>
                 <Link
                     href="/help"
                     prefetch
@@ -72,15 +72,15 @@ export function AppSidebar({ activeToolSlug, expanded }: { activeToolSlug?: Navi
                     onMouseEnter={() => router.prefetch("/help")}
                     onFocus={() => router.prefetch("/help")}
                     className={cn(
-                        "relative flex h-10 items-center rounded-lg px-2 text-sm font-medium text-[#697381] transition hover:bg-[#f3f5f7] hover:text-[#20242a] dark:text-[#8f99a6] dark:hover:bg-[#20242a] dark:hover:text-[#f3f5f7]",
+                        "glass-focus-ring relative flex h-10 items-center rounded-lg px-2 text-sm font-medium text-[#697381] transition hover:bg-[var(--glass-bg-hover)] hover:text-[#20242a] dark:text-[#8f99a6] dark:hover:bg-white/8 dark:hover:text-[#f3f5f7]",
                         expanded ? "justify-start gap-3 px-3" : "justify-center",
-                        helpActive && "bg-[#f0f2f4] text-[#1d2127] dark:bg-[#22262c] dark:text-[#f3f5f7]",
+                        helpActive && "glass-surface-muted text-[#1d2127] dark:text-[#f3f5f7]",
                     )}
                     aria-current={helpActive ? "page" : undefined}
                 >
                     <CircleHelp className="size-[18px] shrink-0" />
                     {expanded ? <span>帮助中心</span> : null}
-                    {helpActive ? <span className="absolute right-0 h-4 w-0.5 rounded-full bg-[#5d7fdb]" /> : null}
+                    {helpActive ? <span className="absolute right-1 h-4 w-0.5 rounded-full bg-[rgb(var(--glass-accent))]" /> : null}
                 </Link>
             </div>
         </aside>

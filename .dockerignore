@@ -7,6 +7,9 @@ docs/node_modules
 docs/out
 web/.next
 web/.data
+web/.e2e-artifacts
+web/.e2e-data*
+web/.screenshot-data
 web/node_modules
 web/out
 *.log

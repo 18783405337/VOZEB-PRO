@@ -39,7 +39,7 @@ export function UserStatusActions({ variant = "default", onOpenShortcuts, initia
     const setTheme = useThemeStore((state) => state.setTheme);
     const canvasTheme = canvasThemes[theme];
     const defaultControlClass =
-        "inline-flex h-8 shrink-0 items-center justify-center rounded-lg border border-[#e6e9ed] bg-white text-sm font-medium text-[#59616c] transition hover:border-[#d9dde3] hover:bg-[#f3f5f7] hover:text-[#20242a] dark:border-[#2c3138] dark:bg-[#181b20] dark:text-[#b7bec8] dark:hover:border-[#3b424c] dark:hover:bg-[#22262c] dark:hover:text-white";
+        "glass-surface-muted glass-interactive glass-focus-ring inline-flex h-8 shrink-0 items-center justify-center rounded-lg text-sm font-medium text-[#59616c] hover:bg-[var(--glass-bg-hover)] hover:text-[#20242a] dark:text-[#b7bec8] dark:hover:bg-white/10 dark:hover:text-white";
     const canvasControlClass =
         "inline-flex h-9 shrink-0 items-center justify-center rounded-xl border px-2.5 text-sm font-medium shadow-sm transition hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/35 [&_svg]:size-4";
     const canvasIconClass = cn(canvasControlClass, "w-9 px-0");

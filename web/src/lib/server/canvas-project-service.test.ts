@@ -72,6 +72,15 @@ describe("canvas project service lifecycle", () => {
         expect(mocks.updateCanvasProject).toHaveBeenCalledWith("user-one", expect.objectContaining({ title: "新标题" }), current.updatedAt);
     });
 
+    it("creates projects without losing tenant scope", async () => {
+        const current = project();
+        mocks.createCanvasProject.mockResolvedValue(current);
+
+        await createCanvasProjectForUser("user-one", { title: "画布" });
+
+        expect(mocks.createCanvasProject).toHaveBeenCalledTimes(1);
+    });
+
     it("always advances the persisted version beyond the current snapshot", async () => {
         const current = { ...project(), updatedAt: "2099-01-01T00:00:00.000Z" };
         mocks.getCanvasProject.mockResolvedValue(current);

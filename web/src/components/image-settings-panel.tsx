@@ -3,8 +3,10 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { ConfigProvider, Switch } from "antd";
 
+import { GlassPanel } from "@/components/ui/glass-panel";
 import { type CanvasTheme } from "@/lib/canvas-theme";
 import { parseImageDimensions } from "@/lib/image-size";
+import { cn } from "@/lib/utils";
 import type { AiConfig } from "@/stores/use-config-store";
 
 const qualityOptions = [
@@ -48,8 +50,10 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
 
     return (
         <ImageSettingsTheme theme={theme}>
-            <div
-                className={className}
+            <GlassPanel
+                tone="muted"
+                radius="lg"
+                className={cn("p-3", className)}
                 style={{ color: theme.node.text }}
                 onMouseDown={(event) => {
                     event.stopPropagation();
@@ -80,7 +84,7 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                         <CountInput value={count} max={maxCount} theme={theme} onChange={(value) => onConfigChange("count", String(value || 1))} />
                     </div>
                 </div>
-            </div>
+            </GlassPanel>
         </ImageSettingsTheme>
     );
 }
@@ -126,8 +130,8 @@ export function ImageSizeControls({ size, onChange, theme, compact = false }: { 
                             type="button"
                             className={
                                 compact
-                                    ? "flex h-14 cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border bg-transparent text-xs transition hover:opacity-80"
-                                    : "flex h-[72px] cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border bg-transparent text-sm transition hover:opacity-80"
+                                    ? "glass-interactive glass-focus-ring flex h-14 cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border bg-transparent text-xs hover:opacity-80"
+                                    : "glass-interactive glass-focus-ring flex h-[72px] cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border bg-transparent text-sm hover:opacity-80"
                             }
                             style={{ borderColor: selectedAspect?.value === item.value ? theme.node.text : theme.node.stroke, background: "transparent", color: theme.node.text }}
                             onMouseDown={(event) => event.stopPropagation()}
@@ -168,7 +172,7 @@ function OptionPill({ selected, theme, onClick, children }: { selected: boolean;
     return (
         <button
             type="button"
-            className="h-9 cursor-pointer rounded-full border px-2 text-sm transition hover:opacity-80"
+            className="glass-interactive glass-focus-ring h-9 cursor-pointer rounded-full border px-2 text-sm hover:opacity-80"
             style={{ background: "transparent", borderColor: selected ? theme.node.text : theme.node.stroke, color: theme.node.text }}
             onMouseDown={(event) => event.stopPropagation()}
             onClick={onClick}
@@ -191,7 +195,7 @@ function DimensionInput({ prefix, value, theme, onChange, onCommit }: { prefix: 
     };
 
     return (
-        <label className="flex h-9 overflow-hidden rounded-xl text-sm" style={{ background: theme.node.fill, color: theme.node.text }}>
+        <label className="glass-surface-muted flex h-9 overflow-hidden rounded-xl text-sm" style={{ background: theme.node.fill, color: theme.node.text }}>
             <span className="grid w-9 place-items-center" style={{ color: theme.node.muted }}>
                 {prefix}
             </span>
@@ -224,7 +228,7 @@ export function imagePresetSize(value: string) {
 
 function CountInput({ value, max, theme, onChange }: { value: number; max: number; theme: CanvasTheme; onChange: (value: number | null) => void }) {
     return (
-        <label className="col-span-2 flex h-9 overflow-hidden rounded-full border text-sm" style={{ borderColor: theme.node.stroke, color: theme.node.text }}>
+        <label className="glass-surface-muted col-span-2 flex h-9 overflow-hidden rounded-full border text-sm" style={{ borderColor: theme.node.stroke, color: theme.node.text }}>
             <input
                 type="number"
                 min={1}

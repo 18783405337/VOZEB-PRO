@@ -7,6 +7,18 @@ type GlassPanelProps = HTMLAttributes<HTMLDivElement> & {
     radius?: "sm" | "md" | "lg";
 };
 
-export function GlassPanel({ className, tone = "default", radius = "md", ...props }: GlassPanelProps) {
-    return <div data-glass-panel className={cn(tone === "strong" ? "glass-surface-strong" : tone === "muted" ? "glass-surface-muted" : "glass-surface", radius === "sm" ? "rounded-lg" : radius === "lg" ? "rounded-2xl" : "rounded-xl", className)} {...props} />;
+const toneClasses = {
+    default: "glass-surface",
+    strong: "glass-surface-strong",
+    muted: "glass-surface-muted",
+} as const;
+
+const radiusClasses = {
+    sm: "rounded-lg",
+    md: "rounded-[var(--glass-radius)]",
+    lg: "rounded-2xl",
+} as const;
+
+export function GlassPanel({ tone = "default", radius = "md", className, ...props }: GlassPanelProps) {
+    return <div data-glass-panel className={cn(toneClasses[tone], radiusClasses[radius], className)} {...props} />;
 }
