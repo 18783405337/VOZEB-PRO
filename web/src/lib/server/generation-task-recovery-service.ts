@@ -19,6 +19,7 @@ import { refundAudioTask } from "@/lib/server/audio-task-refund";
 import { refundImageTask } from "@/lib/server/image-task-refund";
 import { refundTextTask } from "@/lib/server/text-task-refund";
 import { refundVideoTask } from "@/lib/server/video-task-refund";
+import { writeVideoGenerationLog } from "@/lib/server/video-task-log";
 import { GENERATION_TASK_RETENTION_MS } from "@/lib/server/generation-task-retention";
 import { transitionStoredGenerationTask } from "@/lib/server/generation-task-store";
 import { createPostgresRepositories } from "@/lib/server/database";
@@ -271,9 +272,16 @@ async function queryCancelledUpstream(target: GenerationCancellationTarget, orig
 }
 
 async function finishCancelledLease(target: GenerationCancellationTarget, lease: GenerationTaskLease, workerId: string, status: string) {
+    if (target.type === "video") await syncCancelledVideoGenerationLog(target);
     if (status !== "cancel_unconfirmed" && status !== "cancelled_task_missing") await refundCancelledTask(target);
     await releaseLease(lease, workerId, { executionPhase: "completed", nextPollAt: undefined, lastPollAt: Date.now(), lastUpstreamStatus: status }, { cancellation: true });
     await redactCancelledTaskSecret(target).catch((error) => console.warn("Cancelled generation task secret cleanup failed", { taskId: target.taskId, type: target.type, error: safeError(error) }));
+}
+
+async function syncCancelledVideoGenerationLog(target: GenerationCancellationTarget) {
+    const task = await getVideoTask(target.taskId, target.tenantId);
+    if (!task) return;
+    await writeVideoGenerationLog(task, "failed", task.error || "任务已取消", false).catch((error) => console.warn("Cancelled video generation log sync failed", { taskId: target.taskId, error: safeError(error) }));
 }
 
 async function refundCancelledTask(target: GenerationCancellationTarget) {
