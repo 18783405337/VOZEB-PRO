@@ -21,7 +21,8 @@ description: VOZEB PRO 环境变量、模型渠道、服务器媒体与支付配
 | `VOZEB_PRO_INTERNAL_ORIGIN`                | 推荐             | 服务端回调自身 API，Docker 默认 `http://127.0.0.1:3000`                               |
 | `VOZEB_PRO_DATA_DIR`                       | 否               | 服务器媒体和文件模式数据目录                                                          |
 | `VOZEB_PRO_COOKIE_SECURE`                  | 否               | 留空自动判断；特殊代理可强制 `true/false`                                             |
-| `VOZEB_PRO_TRUSTED_PROXY_HOPS`             | 否               | 速率限制读取代理 IP 时信任的代理层数；直连保持 `0`，单层 Nginx/Caddy 使用 `1`         |
+| `VOZEB_PRO_TRUSTED_PROXY_HOPS`             | 否               | 速率限制与租户 Host 识别读取代理头时信任的代理层数；直连保持 `0`，单层 Nginx/Caddy 使用 `1` |
+| `VOZEB_PRO_PLATFORM_HOSTS`                 | SaaS 推荐        | 允许回退到默认租户的平台 Host，逗号分隔；`NEXT_PUBLIC_SITE_URL` 的 Host 与 localhost 自动包含 |
 | `VOZEB_PRO_ALLOW_PRIVATE_UPSTREAMS`        | 否               | 默认 `0`；只有接入管理员控制的 Ollama/局域网模型时才设置为 `1`                        |
 | `VOZEB_PRO_PRIVATE_UPSTREAM_HOSTS`         | 私网上游必填     | 允许访问的精确 Host/IP，逗号分隔；链路本地、云元数据和组播地址始终拒绝                |
 | `VOZEB_PRO_MAINTENANCE_TOKEN`              | 生产推荐         | 生成 Worker 与外部计划任务调用维护接口的 Bearer Token，至少 32 个字符                 |

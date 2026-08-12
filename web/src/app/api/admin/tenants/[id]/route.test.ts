@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
     auditActorFromRequest: vi.fn(() => ({ id: "admin-one" })),
     getById: vi.fn(),
     requirePlatformPermission: vi.fn(),
+    transferOwner: vi.fn(),
     updateName: vi.fn(),
     updateStatus: vi.fn(),
 }));
@@ -18,6 +19,7 @@ vi.mock("@/lib/server/database", () => ({
     createPostgresRepositories: () => ({
         tenants: {
             getById: mocks.getById,
+            transferOwner: mocks.transferOwner,
             updateName: mocks.updateName,
             updateStatus: mocks.updateStatus,
         },
@@ -38,7 +40,8 @@ describe("platform tenant detail API", () => {
         vi.clearAllMocks();
         process.env.VOZEB_PRO_SAAS_ENABLED = "1";
         mocks.requirePlatformPermission.mockResolvedValue({ user: { id: "admin-one", username: "admin", role: "admin" } });
-        mocks.getById.mockResolvedValue({ id: "tenant-a", slug: "tenant-a", name: "Tenant A", status: "active" });
+        mocks.getById.mockResolvedValue({ id: "tenant-a", slug: "tenant-a", name: "Tenant A", status: "active", ownerUserId: "owner-one" });
+        mocks.transferOwner.mockResolvedValue({ id: "tenant-a", slug: "tenant-a", name: "Tenant A", status: "active", ownerUserId: "owner-two" });
         mocks.updateName.mockResolvedValue({ id: "tenant-a", slug: "tenant-a", name: "Renamed", status: "active" });
         mocks.updateStatus.mockResolvedValue({ id: "tenant-a", slug: "tenant-a", name: "Tenant A", status: "disabled" });
     });
@@ -74,6 +77,17 @@ describe("platform tenant detail API", () => {
         await expect(response.json()).resolves.toMatchObject({ code: 0, data: { tenant: { status: "disabled" } } });
         expect(mocks.updateStatus).toHaveBeenCalledWith("tenant-a", "disabled");
         expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({ action: "platform.tenant.status", metadata: expect.objectContaining({ status: "disabled" }) }));
+    });
+
+    it("transfers tenant ownership and records the previous owner", async () => {
+        const response = await PATCH(request({ ownerUserId: "owner-two" }), context());
+
+        expect(response.status).toBe(200);
+        expect(mocks.transferOwner).toHaveBeenCalledWith("tenant-a", "owner-two");
+        expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({
+            action: "platform.tenant.owner.transfer",
+            metadata: { ownerUserId: "owner-two", previousOwnerUserId: "owner-one" },
+        }));
     });
 
     it("returns not found without applying updates", async () => {

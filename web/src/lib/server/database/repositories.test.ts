@@ -833,10 +833,10 @@ describe("split Postgres repositories", () => {
     it("deletes only the requested generation log ids", async () => {
         const { executor, query } = mockExecutor([[]]);
 
-        const deleted = await createPostgresRepositories(executor).generationLogs.delete(["log-one", "log-three"]);
+        const deleted = await createPostgresRepositories(executor).generationLogs.delete(["log-one", "log-three"], "tenant-one");
 
         expect(deleted).toBe(1);
-        expect(query).toHaveBeenCalledWith("DELETE FROM generation_logs WHERE id = ANY($1::text[])", [["log-one", "log-three"]]);
+        expect(query).toHaveBeenCalledWith("DELETE FROM generation_logs WHERE id = ANY($1::text[]) AND tenant_id = $2", [["log-one", "log-three"], "tenant-one"]);
     });
 
     it("aggregates the generation overview in one bounded query without loading log payloads or assets", async () => {

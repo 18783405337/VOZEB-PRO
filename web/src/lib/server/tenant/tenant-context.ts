@@ -55,7 +55,7 @@ export async function getTenantContext(request: Request, options: TenantContextO
         if (tenant) source = "path";
     }
 
-    if (!tenant && options.allowDefault !== false) {
+    if (!tenant && options.allowDefault !== false && lookup.defaultHostAllowed) {
         tenant = await repositories.tenants.getById(resolveDefaultTenantId(options.defaultTenantId));
         if (tenant) source = "default";
     }

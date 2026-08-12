@@ -7,6 +7,7 @@ import { createPostgresRepositories, ensurePostgresSchema, isPostgresDatabaseEna
 import { assertInstallToken, InstallTokenError } from "@/lib/server/install-token";
 import { adjustPermanentPointsInAuthDb, adjustPermanentPointsInPostgresTransaction, walletClock } from "@/lib/server/points-wallet-service";
 import { bindReferralRelationshipAfterRegistration, normalizeReferralCode } from "@/lib/server/referral-service";
+import { isSaasEnabled } from "@/lib/server/tenant/saas-feature";
 
 import { hashPassword, verifyPasswordWithDummy } from "./password";
 import { consumePostgresEmailCode } from "./postgres-email-code-service";
@@ -71,6 +72,7 @@ export async function createUser(input: { username: string; email?: string; emai
                 createdAt: now,
                 updatedAt: now,
             });
+            if (isSaasEnabled()) await repos.tenants.ensureDefaultMember(user.id, "member");
             if (referralCode) {
                 try {
                     await bindReferralRelationshipAfterRegistration(client, {
@@ -161,6 +163,7 @@ export async function createFirstAdmin(input: { username: string; email?: string
                 createdAt: now,
                 updatedAt: now,
             });
+            if (isSaasEnabled()) await repos.tenants.ensureDefaultMember(user.id, "owner");
             const record = (await repos.users.getPublicDetails([user.id], { now, date: clock.date }))[0];
             if (!record) throw new AuthInputError("管理员创建失败");
             return publicUserFromAuthenticatedRecord(record, clock.expiresAt);
@@ -224,6 +227,7 @@ export async function createUserByAdmin(input: { username: string; email?: strin
                 createdAt: now,
                 updatedAt: now,
             });
+            if (isSaasEnabled()) await repos.tenants.ensureDefaultMember(user.id, input.role === "admin" ? "owner" : "member");
             if (pointsBalance) {
                 await adjustPermanentPointsInPostgresTransaction(client, {
                     userId: user.id,

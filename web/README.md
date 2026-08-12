@@ -36,6 +36,7 @@ After the migration gate passes, set:
 ```bash
 VOZEB_PRO_SAAS_ENABLED=1
 VOZEB_PRO_DEFAULT_TENANT_ID=default
+VOZEB_PRO_PLATFORM_HOSTS=app.example.com
 ```
 
 When SaaS is enabled, tenant-aware routes require PostgreSQL and an active tenant membership. Validate task and generated-asset isolation with two tenant origins and authenticated Playwright storage states:

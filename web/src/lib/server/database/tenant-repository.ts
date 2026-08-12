@@ -174,9 +174,45 @@ export class TenantRepository {
         return result.rows[0] ? mapTenant(result.rows[0]) : null;
     }
 
-    async updateOwner(tenantId: string, ownerUserId: string): Promise<TenantRecord | null> {
-        const result = await this.db.query("UPDATE tenants SET owner_user_id = $2 WHERE id = $1 RETURNING *", [tenantId, requiredText(ownerUserId, "Tenant owner user id")]);
-        return result.rows[0] ? mapTenant(result.rows[0]) : null;
+    async transferOwner(tenantId: string, ownerUserId: string): Promise<TenantRecord | null> {
+        const nextOwnerUserId = requiredText(ownerUserId, "Tenant owner user id");
+        return this.transaction(async (executor) => {
+            const tenantResult = await executor.query("SELECT * FROM tenants WHERE id = $1 FOR UPDATE", [tenantId]);
+            const existing = tenantResult.rows[0];
+            if (!existing) return null;
+
+            const ownerRoleId = randomUUID();
+            const memberRoleId = randomUUID();
+            const roleResult = await executor.query(
+                `INSERT INTO tenant_roles (id, tenant_id, key, name, system)
+                 VALUES ($2, $1, 'owner', 'Owner', true), ($3, $1, 'member', 'Member', true)
+                 ON CONFLICT (tenant_id, key) DO UPDATE SET system = true
+                 RETURNING id, key`,
+                [tenantId, ownerRoleId, memberRoleId],
+            );
+            const roles = new Map(roleResult.rows.map((row) => [stringValue(row.key), stringValue(row.id)]));
+            const resolvedOwnerRoleId = roles.get("owner");
+            const resolvedMemberRoleId = roles.get("member");
+            if (!resolvedOwnerRoleId || !resolvedMemberRoleId) throw new Error("Tenant owner roles were not initialized");
+
+            const previousOwnerUserId = optionalString(existing.owner_user_id);
+            if (previousOwnerUserId && previousOwnerUserId !== nextOwnerUserId) {
+                await executor.query(
+                    `UPDATE tenant_members
+                     SET role_id = $3, status = 'active'
+                     WHERE tenant_id = $1 AND user_id = $2`,
+                    [tenantId, previousOwnerUserId, resolvedMemberRoleId],
+                );
+            }
+            await executor.query(
+                `INSERT INTO tenant_members (tenant_id, user_id, role_id, status)
+                 VALUES ($1, $2, $3, 'active')
+                 ON CONFLICT (tenant_id, user_id) DO UPDATE SET role_id = EXCLUDED.role_id, status = 'active'`,
+                [tenantId, nextOwnerUserId, resolvedOwnerRoleId],
+            );
+            const updated = await executor.query("UPDATE tenants SET owner_user_id = $2 WHERE id = $1 RETURNING *", [tenantId, nextOwnerUserId]);
+            return updated.rows[0] ? mapTenant(updated.rows[0]) : null;
+        });
     }
 
     async getMember(tenantId: string, userId: string): Promise<TenantMemberRecord | null> {
@@ -266,6 +302,18 @@ export class TenantRepository {
 
             return mapTenantRole({ ...role, permissions });
         });
+    }
+
+    async ensureDefaultMember(userId: string, roleKey: "owner" | "member" = "member", tenantId = resolveDefaultTenantId()): Promise<TenantMemberRecord> {
+        const normalizedUserId = requiredText(userId, "Tenant member user id");
+        const normalizedTenantId = requiredText(tenantId, "Tenant id");
+        const roleResult = await this.db.query(
+            `SELECT id FROM tenant_roles WHERE tenant_id = $1 AND key = $2 AND system = true LIMIT 1`,
+            [normalizedTenantId, roleKey],
+        );
+        const roleId = optionalString(roleResult.rows[0]?.id);
+        if (!roleId) throw new Error("Default tenant role was not found");
+        return this.addMember({ tenantId: normalizedTenantId, userId: normalizedUserId, roleId, status: "active" });
     }
 
     async addMember(input: AddTenantMemberInput): Promise<TenantMemberRecord> {
@@ -369,6 +417,10 @@ function normalizeHostname(value: string) {
     }
     if (!hostname || hostname.includes("/") || hostname.includes("@")) throw new Error("Invalid domain hostname");
     return hostname;
+}
+
+function resolveDefaultTenantId() {
+    return process.env.VOZEB_PRO_DEFAULT_TENANT_ID?.trim() || "default";
 }
 
 function requiredText(value: string, label: string) {

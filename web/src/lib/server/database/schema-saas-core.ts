@@ -109,6 +109,16 @@ VALUES
     ('default-member', 'default', 'member', '成员', true)
 ON CONFLICT (id) DO NOTHING;
 
+INSERT INTO tenant_role_permissions (tenant_id, role_id, permission)
+SELECT 'default', 'default-owner', permission
+FROM unnest(ARRAY[
+    'tenant.members.read', 'tenant.members.manage', 'tenant.roles.manage',
+    'tenant.domains.read', 'tenant.domains.manage', 'tenant.settings.read',
+    'tenant.settings.manage', 'tenant.apps.read', 'tenant.apps.configure',
+    'tenant.billing.read', 'tenant.merchants.manage'
+]::text[]) AS permission
+ON CONFLICT (tenant_id, role_id, permission) DO NOTHING;
+
 INSERT INTO tenant_members (tenant_id, user_id, role_id, status)
 SELECT 'default', id, CASE WHEN role = 'admin' THEN 'default-owner' ELSE 'default-member' END, 'active'
 FROM users
@@ -163,4 +173,14 @@ ALTER TABLE published_works ALTER COLUMN tenant_id SET NOT NULL;
 ALTER TABLE billing_orders ADD COLUMN IF NOT EXISTS tenant_id text REFERENCES tenants(id);
 UPDATE billing_orders SET tenant_id = 'default' WHERE tenant_id IS NULL;
 ALTER TABLE billing_orders ALTER COLUMN tenant_id SET NOT NULL;
+
+CREATE INDEX IF NOT EXISTS generation_logs_tenant_user_created_idx ON generation_logs (tenant_id, user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS creative_conversations_tenant_user_updated_idx ON creative_conversations (tenant_id, user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS creative_assets_tenant_conversation_created_idx ON creative_assets (tenant_id, conversation_id, created_at ASC);
+CREATE INDEX IF NOT EXISTS local_media_assets_tenant_owner_created_idx ON local_media_assets (tenant_id, owner_user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS canvas_projects_tenant_user_updated_idx ON canvas_projects (tenant_id, user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS library_assets_tenant_user_updated_idx ON library_assets (tenant_id, user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS drama_projects_tenant_user_updated_idx ON drama_projects (tenant_id, user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS published_works_tenant_owner_created_idx ON published_works (tenant_id, owner_user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS billing_orders_tenant_user_created_idx ON billing_orders (tenant_id, user_id, created_at DESC);
 `;

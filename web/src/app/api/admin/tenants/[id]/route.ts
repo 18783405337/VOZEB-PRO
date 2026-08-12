@@ -67,9 +67,15 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         if (hasOwner) {
             const owner = await repositories.users.getById(ownerUserId);
             if (!owner || owner.status !== "active") return apiError(400, "租户所有者用户不存在或已禁用");
-            const updated = await repositories.tenants.updateOwner(id, ownerUserId);
+            const updated = await repositories.tenants.transferOwner(id, ownerUserId);
             if (!updated) return apiError(404, "租户不存在");
             tenant = updated;
+            await safeRecordAuditLog({
+                action: "platform.tenant.owner.transfer",
+                actor: auditActorFromRequest(request, user),
+                target: { type: "tenant", id, label: tenant.name },
+                metadata: { ownerUserId, previousOwnerUserId: existing.ownerUserId },
+            });
         }
 
         return apiOk({ tenant });

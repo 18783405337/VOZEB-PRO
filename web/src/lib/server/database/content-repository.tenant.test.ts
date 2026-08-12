@@ -16,17 +16,17 @@ describe("generation log tenant scoping", () => {
     it("scopes id lookups by tenant", async () => {
         const { executor, query } = mockExecutor();
 
-        await createPostgresRepositories(executor).generationLogs.getByIds(["log-one"], "user-one", false, "tenant-one");
+        await createPostgresRepositories(executor).generationLogs.getByIds(["log-one"], "tenant-one", "user-one");
 
         const [statement, params] = queryArgs(query, 0);
-        expect(String(statement)).toContain("tenant_id = $3");
-        expect(params).toEqual([["log-one"], "user-one", "tenant-one"]);
+        expect(String(statement)).toContain("tenant_id = $2");
+        expect(params).toEqual([["log-one"], "tenant-one", "user-one"]);
     });
 
     it("scopes user listings by tenant", async () => {
         const { executor, query } = mockExecutor();
 
-        await createPostgresRepositories(executor).generationLogs.listByUserId("user-one", false, "tenant-one");
+        await createPostgresRepositories(executor).generationLogs.listByUserId("user-one", "tenant-one");
 
         const [statement, params] = queryArgs(query, 0);
         expect(String(statement)).toContain("user_id = $1");

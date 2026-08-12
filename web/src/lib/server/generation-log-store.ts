@@ -45,7 +45,7 @@ export async function listGenerationLogs(options: GenerationLogListOptions = {})
         const result = await createPostgresRepositories().generationLogs.list({
             page,
             pageSize,
-            tenantId: options.tenantId,
+            tenantId: options.tenantId ?? null,
             userId: options.userId,
             kind: isGenerationKind(options.kind) ? options.kind : undefined,
             source: isGenerationSource(options.source) ? options.source : undefined,
@@ -94,7 +94,7 @@ export async function listUserGenerationLogsForDelete(tenantId: string, userId: 
     if (isPostgresDatabaseEnabled()) {
         await ensurePostgresSchema();
         const repository = createPostgresRepositories().generationLogs;
-        const requestedLogs = await repository.getByIds(Array.from(idSet), targetUserId, false, tenantId);
+        const requestedLogs = await repository.getByIds(Array.from(idSet), tenantId, targetUserId);
         const assetUrls = Array.from(new Set(requestedLogs.flatMap((log) => log.assets.map(stableAssetUrl).filter(Boolean))));
         const sharedLogs = await repository.listByUserAndAssetUrls(targetUserId, assetUrls, tenantId);
         return uniqueGenerationLogs([...requestedLogs, ...sharedLogs]).map(toStoredGenerationLog);
@@ -112,7 +112,9 @@ export async function recordGenerationLog(input: GenerationLogInput) {
     if (isPostgresDatabaseEnabled()) {
         await ensurePostgresSchema();
         const repository = createPostgresRepositories().generationLogs;
-        const existing = await repository.getById(id, false, input.tenantId);
+        const existing = input.tenantId
+            ? await repository.getById(id, input.tenantId)
+            : await repository.getByIdUnscoped(id);
         if (existing && (existing.userId !== input.userId || (input.tenantId && existing.tenantId !== input.tenantId))) throw new Error("generation log id belongs to another tenant or user");
         const assets = await normalizeAssets(input.assets || [], {
             ownerUserId: input.userId,
@@ -123,7 +125,9 @@ export async function recordGenerationLog(input: GenerationLogInput) {
         });
         return withPostgresTransaction(async (client) => {
             const transactionRepository = createPostgresRepositories(client).generationLogs;
-            const current = await transactionRepository.getById(id, true, input.tenantId);
+            const current = input.tenantId
+                ? await transactionRepository.getById(id, input.tenantId, true)
+                : await transactionRepository.getByIdUnscoped(id, true);
             if (current && (current.userId !== input.userId || (input.tenantId && current.tenantId !== input.tenantId))) throw new Error("generation log id belongs to another tenant or user");
             const next = buildGenerationLog(input, id, current ? toStoredGenerationLog(current) : undefined, assets);
             return toStoredGenerationLog(await transactionRepository.upsert(next));
@@ -157,8 +161,11 @@ export async function deleteGenerationLogs(ids: string[], tenantId?: string) {
         await ensurePostgresSchema();
         const removed = await withPostgresTransaction(async (client) => {
             const repository = createPostgresRepositories(client).generationLogs;
-            const logs = await repository.getByIds(normalizedIds, undefined, true, tenantId);
-            await repository.delete(logs.map((log) => log.id));
+            const logs = tenantId
+                ? await repository.getByIds(normalizedIds, tenantId, undefined, true)
+                : await repository.getByIdsUnscoped(normalizedIds, undefined, true);
+            if (tenantId) await repository.delete(logs.map((log) => log.id), tenantId);
+            else await repository.deleteUnscoped(logs.map((log) => log.id));
             return logs.map(toStoredGenerationLog);
         });
         await deleteRemovedLogMedia(removed);
@@ -183,8 +190,8 @@ export async function deleteGenerationLogsByUserId(userId: string) {
         await ensurePostgresSchema();
         const removed = await withPostgresTransaction(async (client) => {
             const repository = createPostgresRepositories(client).generationLogs;
-            const logs = await repository.listByUserId(targetUserId, true);
-            await repository.delete(logs.map((log) => log.id));
+            const logs = await repository.listByUserIdUnscoped(targetUserId, true);
+            await repository.deleteUnscoped(logs.map((log) => log.id));
             return logs.map(toStoredGenerationLog);
         });
         await deleteRemovedLogMedia(removed);

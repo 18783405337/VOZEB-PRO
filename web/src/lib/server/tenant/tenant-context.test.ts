@@ -30,6 +30,7 @@ import { getTenantContext, getTrustedTenantId, TenantContextError } from "./tena
 
 const timestamp = "2026-08-07T00:00:00.000Z";
 const originalSaasEnabled = process.env.VOZEB_PRO_SAAS_ENABLED;
+const originalPlatformHosts = process.env.VOZEB_PRO_PLATFORM_HOSTS;
 
 function tenant(overrides: Partial<TenantRecord> = {}): TenantRecord {
     return {
@@ -62,6 +63,7 @@ describe("getTenantContext", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         process.env.VOZEB_PRO_SAAS_ENABLED = "1";
+        process.env.VOZEB_PRO_PLATFORM_HOSTS = "public.example.com";
         mocks.isPostgresDatabaseEnabled.mockReturnValue(true);
         mocks.getCurrentUser.mockResolvedValue(null);
         mocks.getByVerifiedHostname.mockResolvedValue(null);
@@ -126,6 +128,16 @@ describe("getTenantContext", () => {
         });
 
         expect(context).toMatchObject({ tenant: { id: "default" }, source: "default" });
+    });
+
+    it("rejects an unknown host instead of silently using the default tenant", async () => {
+        mocks.getById.mockResolvedValue(tenant({ id: "default", slug: "default" }));
+
+        await expect(getTenantContext(new Request("https://unknown.example.com/api/apps"))).rejects.toMatchObject({
+            code: "tenant.not_found",
+            status: 404,
+        });
+        expect(mocks.getById).not.toHaveBeenCalled();
     });
 
     it("treats a platform admin as owner of an unowned bootstrap default tenant", async () => {
@@ -194,4 +206,6 @@ describe("getTenantContext", () => {
 afterEach(() => {
     if (originalSaasEnabled === undefined) delete process.env.VOZEB_PRO_SAAS_ENABLED;
     else process.env.VOZEB_PRO_SAAS_ENABLED = originalSaasEnabled;
+    if (originalPlatformHosts === undefined) delete process.env.VOZEB_PRO_PLATFORM_HOSTS;
+    else process.env.VOZEB_PRO_PLATFORM_HOSTS = originalPlatformHosts;
 });

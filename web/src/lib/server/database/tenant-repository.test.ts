@@ -131,6 +131,27 @@ describe("TenantRepository", () => {
         expect(query.mock.calls[1]?.[1]).toEqual(["%studio%", "disabled", 10, 10]);
     });
 
+    it("transfers owner membership and tenant ownership in one transaction", async () => {
+        const timestamp = "2026-08-07T00:00:00.000Z";
+        const query = vi
+            .fn()
+            .mockResolvedValueOnce(queryResult([{ id: "tenant-a", owner_user_id: "owner-one" }]))
+            .mockResolvedValueOnce(queryResult([{ id: "role-owner", key: "owner" }, { id: "role-member", key: "member" }]))
+            .mockResolvedValueOnce(queryResult())
+            .mockResolvedValueOnce(queryResult())
+            .mockResolvedValueOnce(queryResult([{ id: "tenant-a", slug: "tenant-a", name: "Tenant A", status: "active", owner_user_id: "owner-two", settings: {}, created_at: timestamp, updated_at: timestamp }]));
+        const transaction = vi.fn(async (handler: Parameters<TenantTransactionRunner>[0]) => handler({ query } as unknown as QueryExecutor));
+        const repository = new TenantRepository({ query: vi.fn() } as unknown as QueryExecutor, transaction as unknown as TenantTransactionRunner);
+
+        await expect(repository.transferOwner("tenant-a", "owner-two")).resolves.toMatchObject({ id: "tenant-a", ownerUserId: "owner-two" });
+        expect(transaction).toHaveBeenCalledTimes(1);
+        expect(query.mock.calls[0]).toEqual(["SELECT * FROM tenants WHERE id = $1 FOR UPDATE", ["tenant-a"]]);
+        expect(query.mock.calls[1]?.[0]).toContain("ON CONFLICT (tenant_id, key)");
+        expect(query.mock.calls[2]).toEqual([expect.stringContaining("UPDATE tenant_members"), ["tenant-a", "owner-one", "role-member"]]);
+        expect(query.mock.calls[3]).toEqual([expect.stringContaining("INSERT INTO tenant_members"), ["tenant-a", "owner-two", "role-owner"]]);
+        expect(query.mock.calls[4]).toEqual(["UPDATE tenants SET owner_user_id = $2 WHERE id = $1 RETURNING *", ["tenant-a", "owner-two"]]);
+    });
+
     it("renames only the requested tenant", async () => {
         const timestamp = "2026-08-07T00:00:00.000Z";
         const query = vi.fn().mockResolvedValue(
@@ -340,6 +361,20 @@ describe("TenantRepository", () => {
 
         await expect(repository.listMembers("tenant-a")).resolves.toMatchObject([{ tenantId: "tenant-a", userId: "user-one", permissions: ["tenant.apps.read"] }]);
         expect(query).toHaveBeenCalledWith(expect.stringContaining("WHERE tm.tenant_id = $1"), ["tenant-a"]);
+    });
+
+    it("adds a user to the configured default tenant role", async () => {
+        const timestamp = "2026-08-07T00:00:00.000Z";
+        const query = vi
+            .fn()
+            .mockResolvedValueOnce(queryResult([{ id: "default-member" }]))
+            .mockResolvedValueOnce(queryResult([{ tenant_id: "default", user_id: "user-two" }]))
+            .mockResolvedValueOnce(queryResult([{ tenant_id: "default", user_id: "user-two", role_id: "default-member", role_key: "member", status: "active", permissions: [], joined_at: timestamp, updated_at: timestamp }]));
+        const repository = new TenantRepository({ query } as unknown as QueryExecutor);
+
+        await expect(repository.ensureDefaultMember("user-two")).resolves.toMatchObject({ tenantId: "default", userId: "user-two", roleKey: "member" });
+        expect(query.mock.calls[0]).toEqual([expect.stringContaining("tenant_id = $1 AND key = $2 AND system = true"), ["default", "member"]]);
+        expect(query.mock.calls[1]?.[1]).toEqual(["default", "user-two", "default-member", "active"]);
     });
 
     it("adds a member only through a role owned by the same tenant", async () => {

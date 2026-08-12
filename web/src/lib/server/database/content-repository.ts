@@ -180,7 +180,7 @@ export class PromptsRepository {
 export class GenerationLogsRepository {
     constructor(private readonly db: QueryExecutor) {}
 
-    async list(input: PageInput & { tenantId?: string; userId?: string; kind?: GenerationKind; source?: string; status?: GenerationStatus; keyword?: string; startAt?: string; endAt?: string } = {}): Promise<PageResult<GenerationLogRecord>> {
+    async list(input: PageInput & { tenantId: string | null; userId?: string; kind?: GenerationKind; source?: string; status?: GenerationStatus; keyword?: string; startAt?: string; endAt?: string }): Promise<PageResult<GenerationLogRecord>> {
         const page = normalizePage(input.page);
         const pageSize = normalizePageSize(input.pageSize);
         const keyword = input.keyword?.trim().toLowerCase() || "";
@@ -199,7 +199,7 @@ export class GenerationLogsRepository {
             ORDER BY created_at DESC
             LIMIT $10 OFFSET $11
             `,
-            [input.tenantId || null, input.userId || null, input.kind || null, input.source || null, input.status || null, keyword, `%${keyword}%`, input.startAt || null, input.endAt || null, pageSize, (page - 1) * pageSize],
+            [input.tenantId, input.userId || null, input.kind || null, input.source || null, input.status || null, keyword, `%${keyword}%`, input.startAt || null, input.endAt || null, pageSize, (page - 1) * pageSize],
         );
         const logs = await this.attachAssets(result.rows.map(mapGenerationLog));
         return pageResult(logs, Number(result.rows[0]?.total_count || 0), page, pageSize);
@@ -344,32 +344,48 @@ export class GenerationLogsRepository {
         };
     }
 
-    async getById(id: string, forUpdate = false, tenantId?: string) {
-        const result = await this.db.query(`SELECT * FROM generation_logs WHERE id = $1 AND ($2::text IS NULL OR tenant_id = $2)${forUpdate ? " FOR UPDATE" : ""}`, [id, tenantId || null]);
+    async getById(id: string, tenantId: string, forUpdate = false) {
+        const result = await this.db.query(`SELECT * FROM generation_logs WHERE id = $1 AND tenant_id = $2${forUpdate ? " FOR UPDATE" : ""}`, [id, tenantId]);
         return (await this.attachAssets(result.rows.map(mapGenerationLog)))[0] || null;
     }
 
-    async getByIds(ids: string[], userId?: string, forUpdate = false, tenantId?: string) {
+    async getByIdUnscoped(id: string, forUpdate = false) {
+        const result = await this.db.query(`SELECT * FROM generation_logs WHERE id = $1${forUpdate ? " FOR UPDATE" : ""}`, [id]);
+        return (await this.attachAssets(result.rows.map(mapGenerationLog)))[0] || null;
+    }
+
+    async getByIds(ids: string[], tenantId: string, userId?: string, forUpdate = false) {
         if (!ids.length) return [];
-        const result = await this.db.query(`SELECT * FROM generation_logs WHERE id = ANY($1::text[]) AND ($2::text IS NULL OR user_id = $2) AND ($3::text IS NULL OR tenant_id = $3) ORDER BY created_at DESC${forUpdate ? " FOR UPDATE" : ""}`, [ids, userId || null, tenantId || null]);
+        const result = await this.db.query(`SELECT * FROM generation_logs WHERE id = ANY($1::text[]) AND tenant_id = $2 AND ($3::text IS NULL OR user_id = $3) ORDER BY created_at DESC${forUpdate ? " FOR UPDATE" : ""}`, [ids, tenantId, userId || null]);
         return this.attachAssets(result.rows.map(mapGenerationLog));
     }
 
-    async listByUserId(userId: string, forUpdate = false, tenantId?: string) {
-        const result = await this.db.query(`SELECT * FROM generation_logs WHERE user_id = $1 AND ($2::text IS NULL OR tenant_id = $2) ORDER BY created_at DESC${forUpdate ? " FOR UPDATE" : ""}`, [userId, tenantId || null]);
+    async getByIdsUnscoped(ids: string[], userId?: string, forUpdate = false) {
+        if (!ids.length) return [];
+        const result = await this.db.query(`SELECT * FROM generation_logs WHERE id = ANY($1::text[]) AND ($2::text IS NULL OR user_id = $2) ORDER BY created_at DESC${forUpdate ? " FOR UPDATE" : ""}`, [ids, userId || null]);
         return this.attachAssets(result.rows.map(mapGenerationLog));
     }
 
-    async listByUserAndAssetUrls(userId: string, urls: string[], tenantId?: string) {
+    async listByUserId(userId: string, tenantId: string, forUpdate = false) {
+        const result = await this.db.query(`SELECT * FROM generation_logs WHERE user_id = $1 AND tenant_id = $2 ORDER BY created_at DESC${forUpdate ? " FOR UPDATE" : ""}`, [userId, tenantId]);
+        return this.attachAssets(result.rows.map(mapGenerationLog));
+    }
+
+    async listByUserIdUnscoped(userId: string, forUpdate = false) {
+        const result = await this.db.query(`SELECT * FROM generation_logs WHERE user_id = $1 ORDER BY created_at DESC${forUpdate ? " FOR UPDATE" : ""}`, [userId]);
+        return this.attachAssets(result.rows.map(mapGenerationLog));
+    }
+
+    async listByUserAndAssetUrls(userId: string, urls: string[], tenantId: string) {
         if (!urls.length) return [];
         const result = await this.db.query(
             `SELECT DISTINCT gl.* FROM generation_logs gl
              JOIN generation_log_assets asset ON asset.generation_log_id = gl.id
              WHERE gl.user_id = $1
                AND COALESCE(NULLIF(asset.server_url, ''), asset.url) = ANY($2::text[])
-               AND ($3::text IS NULL OR gl.tenant_id = $3)
+               AND gl.tenant_id = $3
              ORDER BY gl.created_at DESC`,
-            [userId, urls, tenantId || null],
+            [userId, urls, tenantId],
         );
         return this.attachAssets(result.rows.map(mapGenerationLog));
     }
@@ -435,7 +451,13 @@ export class GenerationLogsRepository {
         return { ...mapGenerationLog(result.rows[0]), assets: log.assets };
     }
 
-    async delete(ids: string[]) {
+    async delete(ids: string[], tenantId: string) {
+        if (!ids.length) return 0;
+        const result = await this.db.query("DELETE FROM generation_logs WHERE id = ANY($1::text[]) AND tenant_id = $2", [ids, tenantId]);
+        return result.rowCount || 0;
+    }
+
+    async deleteUnscoped(ids: string[]) {
         if (!ids.length) return 0;
         const result = await this.db.query("DELETE FROM generation_logs WHERE id = ANY($1::text[])", [ids]);
         return result.rowCount || 0;
