@@ -86,15 +86,22 @@ describe("admin models route", () => {
         });
     });
 
-    it("keeps manually configured models when the provider returns a partial catalog", async () => {
+    it("replaces stale configured models when the provider catalog succeeds", async () => {
         vi.stubGlobal(
             "fetch",
             vi.fn(async () => Response.json({ data: [{ id: "video-only", type: "video" }] })),
         );
 
-        const response = await POST(request({ channelId: "saved", configuredModels: ["manual-text"], modelCapabilities: { "manual-text": "text" } }));
+        const response = await POST(
+            request({
+                channelId: "saved",
+                configuredModels: ["manual-text"],
+                modelCapabilities: { "manual-text": "text" },
+                modelConfigs: { "video-only": { capability: "video", enabled: false } },
+            }),
+        );
 
-        expect(await response.json()).toMatchObject({ models: ["manual-text", "video-only"], modelCapabilities: { "manual-text": "text", "video-only": "video" }, discoveredCount: 1, totalCount: 2 });
+        expect(await response.json()).toMatchObject({ models: ["video-only"], modelCapabilities: { "video-only": "video" }, modelConfigs: { "video-only": { enabled: false } }, discoveredCount: 1, totalCount: 1 });
     });
 
     it("merges company-specific text and video catalog paths", async () => {

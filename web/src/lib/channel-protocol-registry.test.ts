@@ -87,6 +87,19 @@ describe("channel protocol registry", () => {
         expect(channelProtocolValidationErrors(configured)).toEqual([]);
     });
 
+    it("accepts legacy Tianyue request templates when saving existing channels", () => {
+        const configured = applyChannelProtocol({ ...channel, models: ["C-sd2-video-mini-15s"] }, "tianyue-video");
+        const key = "c-sd2-video-mini-15s";
+        configured.advancedConfig!.modelConfigs![key] = {
+            ...configured.advancedConfig!.modelConfigs![key],
+            enabled: false,
+            requestTemplate: '{"model":"{{model}}","prompt":"{{prompt}}","duration":1,"video_duration":"{{duration}}","aspect_ratio":"{{aspect_ratio}}","image_urls":"{{images}}"}',
+        };
+
+        expect(channelProtocolValidationErrors(configured)).toEqual([]);
+        expect(applyChannelProtocol(configured, "tianyue-video").advancedConfig!.modelConfigs![key].enabled).toBe(false);
+    });
+
     it("applies the VOZEB recommended preset to frontend channel drafts", () => {
         const configured = applyChannelProtocol({ ...channel, models: ["Seedance 2.0-fast-720p"] }, "vozeb-recommended");
 

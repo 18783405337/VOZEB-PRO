@@ -172,7 +172,7 @@ export async function POST(request: Request) {
 
         const officialCatalog = officialModelCatalog(baseUrl);
         const discovered = mergeModelCatalogEntries(providerCatalog, officialCatalog);
-        const merged = mergeModelCatalogEntries(configuredCatalog, providerCatalog, officialCatalog);
+        const merged = catalogSucceeded ? discovered : mergeModelCatalogEntries(configuredCatalog, officialCatalog);
         if (!merged.length) {
             modelFetchCooldowns.delete(cooldownKey);
             if (!catalogSucceeded) return NextResponse.json({ error: "该上游未提供模型列表接口，请在高级设置的“模型列表”手动填写模型名称；手工模型会在后续拉取时保留。" }, { status: 422 });
@@ -186,7 +186,8 @@ export async function POST(request: Request) {
                 const configuredProtocol = configuredConfigs[normalizeModelId(entry.id)]?.protocol;
                 if (configuredProtocol && configuredProtocol !== protocol) return [];
                 const config = protocolModelConfig(protocol, entry.capability);
-                return config ? [[normalizeModelId(entry.id), config] as const] : [];
+                const enabled = configuredConfigs[normalizeModelId(entry.id)]?.enabled;
+                return config ? [[normalizeModelId(entry.id), { ...config, ...(typeof enabled === "boolean" ? { enabled } : {}) }] as const] : [];
             }),
         );
         const modelConfigs = mergeModelConfigs(merged, configuredConfigs, modelConfigsFromOperations(merged, operationConfigs), providerConfigs, officialModelConfigs(baseUrl), strictConfigs);

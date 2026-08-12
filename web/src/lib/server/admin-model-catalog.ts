@@ -157,7 +157,7 @@ export function normalizeModelConfigs(value: unknown) {
             const capability = raw.capability;
             if (capability !== "text" && capability !== "image" && capability !== "video" && capability !== "audio") return [];
             return [
-                [normalizeModelId(model), { ...modelConfigFromMetadata(raw, capability), ...(["manual", "provider", "official", "health"].includes(String(raw.source || "")) ? { source: raw.source as SystemChannelModelConfig["source"] } : {}) }] as const,
+                [normalizeModelId(model), { ...modelConfigFromMetadata(raw, capability), ...(typeof raw.enabled === "boolean" ? { enabled: raw.enabled } : {}), ...(["manual", "provider", "official", "health"].includes(String(raw.source || "")) ? { source: raw.source as SystemChannelModelConfig["source"] } : {}) }] as const,
             ];
         }),
     ) as Record<string, SystemChannelModelConfig>;

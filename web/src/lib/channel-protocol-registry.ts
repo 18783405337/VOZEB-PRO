@@ -343,7 +343,7 @@ export function applyChannelProtocol(channel: SystemModelChannel, protocol: Syst
         const builtIn = definition.builtInModels?.find((item) => normalizeModelId(item.id) === key);
         const capability = builtIn?.capability || protocolCatalogCapability(protocol) || modelConfigs[key]?.capability || modelCapabilities[key] || inferModelCapability(model);
         const strict = protocolModelConfig(protocol, capability);
-        if (strict) modelConfigs[key] = strict;
+        if (strict) modelConfigs[key] = { ...strict, ...(typeof modelConfigs[key]?.enabled === "boolean" ? { enabled: modelConfigs[key].enabled } : {}) };
         modelCapabilities[key] = capability;
     }
     const primary = definition.capabilities.length === 1 ? definition.operations[definition.capabilities[0]] : undefined;
@@ -432,7 +432,7 @@ export function channelProtocolValidationErrors(channel: SystemModelChannel) {
         if ((config.editPath || "") !== (expected.editPath || "")) errors.push(`${model} 的图生图路径必须为 ${expected.editPath || "空"}`);
         if ((config.imageToVideoPath || "") !== (expected.imageToVideoPath || "")) errors.push(`${model} 的图生视频路径必须为 ${expected.imageToVideoPath || "空"}`);
         if ((config.queryPath || "") !== (expected.queryPath || "")) errors.push(`${model} 的查询路径必须为 ${expected.queryPath || "空"}`);
-        if ((config.requestTemplate || "") !== (expected.requestTemplate || "")) errors.push(`${model} 的请求参数必须使用 ${definition.label} 协议预设`);
+        if (!strictRequestTemplateCompatible(protocol, config.requestTemplate || "", expected.requestTemplate || "")) errors.push(`${model} 的请求参数必须使用 ${definition.label} 协议预设`);
         if ((config.resultField || "") !== (expected.resultField || "")) errors.push(`${model} 的结果字段必须使用 ${definition.label} 协议预设`);
         if ((config.statusField || "") !== (expected.statusField || "")) errors.push(`${model} 的状态字段必须使用 ${definition.label} 协议预设`);
         if (Boolean(config.supportsReferenceImage) !== Boolean(expected.supportsReferenceImage)) errors.push(`${model} 的参考图片能力必须使用 ${definition.label} 协议预设`);
@@ -440,6 +440,13 @@ export function channelProtocolValidationErrors(channel: SystemModelChannel) {
         if (Boolean(config.supportsReferenceAudio) !== Boolean(expected.supportsReferenceAudio)) errors.push(`${model} 的参考音频能力必须使用 ${definition.label} 协议预设`);
     }
     return errors;
+}
+
+function strictRequestTemplateCompatible(protocol: SystemChannelProtocol, actual: string, expected: string) {
+    if (actual === expected) return true;
+    if (protocol !== "tianyue-video") return false;
+    const legacy = '{"model":"{{model}}","prompt":"{{prompt}}","duration":1,"video_duration":"{{duration}}","aspect_ratio":"{{aspect_ratio}}","image_urls":"{{images}}"}';
+    return actual === legacy;
 }
 
 function isSafeAuthHeaderName(value: string | undefined) {
