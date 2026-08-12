@@ -111,7 +111,7 @@ async function mutateOwnedGenerationLog(id: string, tenantId: string | undefined
         await ensurePostgresSchema();
         return withPostgresTransaction(async (client) => {
             const repository = createPostgresRepositories(client).generationLogs;
-            const record = await repository.getById(id, true, tenantId);
+            const record = await repository.getById(id, tenantId || "default", true);
             const current = record ? normalizeStoredLog(record as Partial<StoredGenerationLog>) : undefined;
             if (current && (current.userId !== userId || (tenantId && (current.tenantId || "default") !== tenantId))) throw new GenerationLogOwnershipError();
             const next = await mutate(current);
