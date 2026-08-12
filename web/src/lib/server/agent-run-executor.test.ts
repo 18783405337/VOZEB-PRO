@@ -614,6 +614,33 @@ describe("executeAgentRun backend settings", () => {
         expect(mocks.events.some((event) => event.type === "run.completed")).toBe(false);
     });
 
+    it("uses a fresh planning billing idempotency key when retrying a failed run", async () => {
+        mocks.getAuthSettings.mockResolvedValue(canvasSettings("image-default", "image-default-channel"));
+        mocks.fetchInternalApi.mockResolvedValue(
+            Response.json({
+                output: [
+                    {
+                        type: "function_call",
+                        name: "create_agent_plan",
+                        arguments: JSON.stringify(conversationPlan("image-default", "规划完成。")),
+                    },
+                ],
+            }),
+        );
+        mocks.run = planningRun("你在吗？");
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+        const firstKey = new Headers(mocks.fetchInternalApi.mock.calls[0][1]?.headers as HeadersInit).get("x-vozeb-pro-points-idempotency-key");
+
+        mocks.fetchInternalApi.mockClear();
+        mocks.run = { ...mocks.run!, status: "planning", executionId: undefined, tasks: [] };
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+        const retryKey = new Headers(mocks.fetchInternalApi.mock.calls[0][1]?.headers as HeadersInit).get("x-vozeb-pro-points-idempotency-key");
+
+        expect(firstKey).toMatch(/^agent-plan:/);
+        expect(retryKey).toMatch(/^agent-plan:/);
+        expect(retryKey).not.toBe(firstKey);
+    });
+
     it("does not submit a second planning request when the Responses outcome is unknown", async () => {
         mocks.run = planningRun("你在吗？");
         mocks.getAuthSettings.mockResolvedValue(canvasSettings("image-default", "image-default-channel"));

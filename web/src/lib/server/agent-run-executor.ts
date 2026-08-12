@@ -101,7 +101,7 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
                     run.userId,
                     model,
                     false,
-                    systemAiIdempotencyKey("agent-plan", run.userId, run.id, candidate.channel.id, candidate.upstreamModel),
+                    systemAiIdempotencyKey("agent-plan", run.userId, run.id, executionId, candidate.channel.id, candidate.upstreamModel),
                 );
                 plan = await parseAgentPlanCall(planCall, () => refundFunctionCall(claimed.userId, model, planCall), undefined, {
                     allowProjectHandoff: claimed.surface === "chat" && isExplicitProjectHandoffRequest(claimed.prompt),
