@@ -32,6 +32,7 @@ export function synchronizeLogicalModelsWithChannels(existingModels: LogicalMode
     >();
     channels.forEach((channel, channelIndex) => {
         channel.models.forEach((upstreamModel) => {
+            if (isChannelModelDisabled(channel, upstreamModel)) return;
             const id = rawModelName(upstreamModel);
             if (!id) return;
             const key = normalizeModelName(id);
@@ -220,9 +221,13 @@ export function resolveLogicalModelCapabilityProfile(binding: Pick<LogicalModelB
     };
 }
 
-function channelSupportsModel(channel: Pick<SystemModelChannel, "models">, model: string) {
+function channelSupportsModel(channel: Pick<SystemModelChannel, "advancedConfig" | "models">, model: string) {
     const target = normalizeModelName(model);
-    return Boolean(target && channel.models.some((item) => normalizeModelName(item) === target));
+    return Boolean(target && !isChannelModelDisabled(channel, model) && channel.models.some((item) => normalizeModelName(item) === target));
+}
+
+function isChannelModelDisabled(channel: Pick<SystemModelChannel, "advancedConfig">, model: string) {
+    return channel.advancedConfig?.modelConfigs?.[normalizeModelId(model)]?.enabled === false;
 }
 
 function findStoredBinding(models: LogicalModel[], channelId: string, upstreamModel: string) {

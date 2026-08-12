@@ -11,6 +11,7 @@ export type SpecializedProviderProtocol = (typeof SPECIALIZED_PROVIDER_PROTOCOLS
 
 export type SystemChannelModelConfig = {
     capability: LogicalModelCapability;
+    enabled?: boolean;
     source?: "manual" | "provider" | "official" | "health";
     apiFormat?: ApiCallFormat;
     protocol?: SystemChannelProtocol;

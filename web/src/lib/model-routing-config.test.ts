@@ -73,6 +73,23 @@ describe("model routing config", () => {
         expect(modelRoutingValidationErrors(models, channels, { textModel: "", imageModel: "", videoModel: "", audioModel: "" })).toContain("专项逻辑模型 digital-human 至少需要一个启用的渠道绑定");
     });
 
+    it("hides channel models disabled by model-level configuration", () => {
+        const source = channel("one", ["video-a", "video-b"]);
+        source.advancedConfig = {
+            protocol: "tianyue-video",
+            modelConfigs: {
+                "video-a": { capability: "video", protocol: "tianyue-video", enabled: false },
+                "video-b": { capability: "video", protocol: "tianyue-video", enabled: true },
+            },
+        } as never;
+
+        const models = synchronizeLogicalModelsWithChannels([], [source]);
+
+        expect(models.map((model) => model.id)).toEqual(["video-b"]);
+        expect(isLogicalModelResolvable(models, [source], "video", "video-a")).toBe(false);
+        expect(isLogicalModelResolvable(models, [source], "video", "video-b")).toBe(true);
+    });
+
     it("rebuilds an explicitly empty logical model catalog from channel models", () => {
         const channels = [channel("one", ["writer"])];
 

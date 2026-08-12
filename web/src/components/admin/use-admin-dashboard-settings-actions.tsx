@@ -164,7 +164,7 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
                     models: patch.models ? uniqueList(patch.models) : channel.models,
                 };
             });
-            if (!("models" in patch)) return { ...current, systemChannels };
+            if (!("models" in patch) && !("advancedConfig" in patch)) return { ...current, systemChannels };
             const logicalModels = synchronizeLogicalModelsWithChannels(current.logicalModels, systemChannels);
             return { ...current, systemChannels, logicalModels, defaultModels: normalizeDefaultModelsConfig(current.defaultModels, logicalModels, systemChannels) };
         });

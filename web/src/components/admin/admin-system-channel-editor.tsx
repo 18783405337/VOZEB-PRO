@@ -39,8 +39,22 @@ export function SystemChannelEditor({ channel, fetching, onChange, onDelete, onF
     const capabilitySummary = channelCapabilitySummary(channel);
     const detectedCapabilities = channelDetectedCapabilities(channel);
     const selectedGlobalPresets = resolveGlobalAiOpcPresets(advanced);
+    const videoModels = channel.models.filter((model) => channelModelCapability(channel, model) === "video");
+    const enabledVideoCount = videoModels.filter((model) => !isModelDisabled(advanced, model)).length;
+    const disabledVideoCount = videoModels.length - enabledVideoCount;
     const multipleGlobalPresets = advanced.protocol === "globalaiopc" && selectedGlobalPresets.length > 1;
     const updateAdvanced = (patch: Partial<SystemChannelAdvancedConfig>) => onChange({ advancedConfig: { ...advanced, ...patch } });
+    const updateModelVisibility = (models: string[], enabled: boolean) => {
+        const modelConfigs = { ...(advanced.modelConfigs || {}) };
+        const modelCapabilities = { ...(advanced.modelCapabilities || {}) };
+        for (const model of models) {
+            const key = normalizeModelId(model);
+            const capability = channelModelCapability(channel, model);
+            modelConfigs[key] = { ...(modelConfigs[key] || { capability }), capability, enabled };
+            modelCapabilities[key] = capability;
+        }
+        updateAdvanced({ modelConfigs, modelCapabilities });
+    };
     const applyGlobalAiOpcPresets = (values: string[]) => {
         const requested = values.includes(ALL_GLOBAL_AIOPC_PRESETS)
             ? (resolveGlobalAiOpcCatalogPresets(channel.baseUrl, { protocol: "auto" }).length ? resolveGlobalAiOpcCatalogPresets(channel.baseUrl, { protocol: "auto" }) : GLOBAL_AIOPC_PRESETS).map((preset) => preset.id)
@@ -254,6 +268,38 @@ export function SystemChannelEditor({ channel, fetching, onChange, onDelete, onF
                             onChange={(models) => onChange({ models })}
                         />
                     </LabeledControl>
+                    {videoModels.length ? (
+                        <div className="rounded-lg border border-stone-200 bg-white/70 p-3 md:col-span-2 dark:border-stone-800 dark:bg-stone-950/50">
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                <div>
+                                    <div className="text-sm font-semibold text-stone-800 dark:text-stone-100">视频模型可见性</div>
+                                    <div className="mt-1 text-xs text-stone-500 dark:text-stone-400">
+                                        已启用 {enabledVideoCount} 个，已停用 {disabledVideoCount} 个；停用后仍保留在渠道模型列表中，但不会出现在前台用户模型选择里。
+                                    </div>
+                                </div>
+                                <div className="flex flex-wrap gap-2">
+                                    <Button size="small" onClick={() => updateModelVisibility(videoModels, true)} disabled={!disabledVideoCount}>
+                                        批量启用视频模型
+                                    </Button>
+                                    <Popconfirm title="停用这个渠道的全部视频模型？" description="停用后这些模型不会出现在前台用户模型选择中，仍可在这里批量启用。" okText="停用" cancelText="取消" onConfirm={() => updateModelVisibility(videoModels, false)}>
+                                        <Button size="small" danger disabled={!enabledVideoCount}>
+                                            批量停用视频模型
+                                        </Button>
+                                    </Popconfirm>
+                                </div>
+                            </div>
+                            <div className="mt-3 flex max-h-40 flex-wrap gap-1.5 overflow-y-auto rounded-md bg-stone-50 p-2 dark:bg-stone-900/60">
+                                {videoModels.map((model) => {
+                                    const disabled = isModelDisabled(advanced, model);
+                                    return (
+                                        <Tag key={model} color={disabled ? "default" : "green"} className="m-0 max-w-full cursor-pointer truncate" onClick={() => updateModelVisibility([model], disabled)}>
+                                            {disabled ? "停用" : "启用"} · {model}
+                                        </Tag>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    ) : null}
                     {detectedCapabilities.has("text") ? (
                         <LabeledControl label="文本模型">
                             <Input value={advanced.textModel} placeholder="检测后自动填" onChange={(event) => updateAdvanced({ textModel: event.target.value })} />
@@ -356,6 +402,11 @@ export function SystemChannelEditor({ channel, fetching, onChange, onDelete, onF
         </div>
     );
 }
+
+function isModelDisabled(advanced: SystemChannelAdvancedConfig, model: string) {
+    return advanced.modelConfigs?.[normalizeModelId(model)]?.enabled === false;
+}
+
 
 function SpecializedProviderEditor({ advanced, onChange }: { advanced: SystemChannelAdvancedConfig; onChange: (patch: Partial<SystemChannelAdvancedConfig>) => void }) {
     const options = [

@@ -100,6 +100,7 @@ function normalizeChannelModelConfigs(value: unknown) {
                     key,
                     {
                         capability: config.capability,
+                        ...(typeof config.enabled === "boolean" ? { enabled: config.enabled } : {}),
                         ...(["manual", "provider", "official", "health"].includes(String(config.source || "")) ? { source: config.source as "manual" | "provider" | "official" | "health" } : {}),
                         ...(config.apiFormat === "openai" || config.apiFormat === "gemini" ? { apiFormat: config.apiFormat } : {}),
                         ...(protocol ? { protocol } : {}),
