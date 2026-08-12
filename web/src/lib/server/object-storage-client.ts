@@ -78,7 +78,7 @@ export async function getObjectBytes(config: ObjectStorageRuntimeConfig, key: st
 export async function signObjectRead(config: ObjectStorageRuntimeConfig, input: { key: string; contentType?: string; contentDisposition?: string; expiresIn?: number }) {
     const client = createObjectStorageClient(config);
     try {
-        return await getSignedUrl(client, new GetObjectCommand({ Bucket: config.bucket, Key: input.key, ResponseContentType: input.contentType, ResponseContentDisposition: input.contentDisposition }), {
+        return await getSignedUrl(client, new GetObjectCommand({ Bucket: config.bucket, Key: input.key, ResponseContentDisposition: input.contentDisposition }), {
             expiresIn: Math.max(60, Math.min(3600, input.expiresIn || 600)),
         });
     } finally {
