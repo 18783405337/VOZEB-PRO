@@ -69,8 +69,8 @@ export function readProviderString(value: unknown, configuredPath: string | unde
         .map((item) => item.trim())
         .filter(Boolean)) {
         const configured = readFieldPath(value, path);
-        if (typeof configured === "string" && configured.trim()) return configured.trim();
-        if (typeof configured === "number") return String(configured);
+        const text = providerStringCandidate(configured);
+        if (text) return text;
     }
     return findString(value, new Set(fallbackKeys));
 }
@@ -220,13 +220,21 @@ function findString(value: unknown, keys: Set<string>, depth = 0): string {
     if (typeof value !== "object") return "";
     const record = value as Record<string, unknown>;
     for (const [key, item] of Object.entries(record)) {
-        if (keys.has(key) && (typeof item === "string" || typeof item === "number") && String(item).trim()) return String(item).trim();
+        const text = keys.has(key) ? providerStringCandidate(item) : "";
+        if (text) return text;
     }
     for (const item of Object.values(record)) {
         const found = findString(item, keys, depth + 1);
         if (found) return found;
     }
     return "";
+}
+
+function providerStringCandidate(value: unknown) {
+    if (typeof value !== "string" && typeof value !== "number") return "";
+    const text = String(value).trim();
+    if (!text || /^(?:none|null|nil|undefined|n\/a|na|-|--|暂无|无)$/i.test(text)) return "";
+    return text;
 }
 
 function uniquePaths(paths: string[]) {

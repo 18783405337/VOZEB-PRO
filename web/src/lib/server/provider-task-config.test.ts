@@ -47,6 +47,7 @@ describe("provider task config", () => {
         expect(providerQueryPaths({ queryPath: "/agnesapi?video_id=:task_id" } as never, "video 123", [])).toEqual(["/agnesapi?video_id=video%20123"]);
         expect(readProviderString({ data: { output: { url: "https://cdn.example.com/result.mp3" } } }, "data.output.url", ["url"])).toBe("https://cdn.example.com/result.mp3");
         expect(readProviderString({ result: { data: [{ url: "/api/v1/gen/cached/generated/result.mp4" }] } }, "result.data[0].url / video_url / url", ["video_url", "url"])).toBe("/api/v1/gen/cached/generated/result.mp4");
+        expect(readProviderString({ status: "completed", video_url: "none", url: "https://cdn.example.com/final.mp4" }, "video_url / url / metadata.url", ["video_url", "url"])).toBe("https://cdn.example.com/final.mp4");
     });
 
     it("uses an explicit query path without appending guessed fallbacks", () => {
