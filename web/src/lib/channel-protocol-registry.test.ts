@@ -69,7 +69,7 @@ describe("channel protocol registry", () => {
     });
 
     it("applies the Tianyue video preset to frontend channel drafts", () => {
-        const configured = applyChannelProtocol({ ...channel, models: ["C-sd2-video-mini-15s"] }, "tianyue-video");
+        const configured = applyChannelProtocol({ ...channel, models: ["C-sd2-video-mini-15s", "provider-returned-extra-video"] }, "tianyue-video");
 
         expect(configured).toMatchObject({ baseUrl: "https://api.tianyue.xyz", apiFormat: "openai" });
         expect(configured.advancedConfig).toMatchObject({
@@ -80,8 +80,9 @@ describe("channel protocol registry", () => {
             supportsReferenceImage: true,
             supportsReferenceVideo: false,
             supportsReferenceAudio: false,
-            modelCatalogPaths: [],
+            modelCatalogPaths: ["/v1/models"],
         });
+        expect(configured.models).toEqual(["C-sd2-video-mini-15s", "provider-returned-extra-video"]);
         expect(resolveChannelModelConfig(configured.advancedConfig, "C-sd2-video-mini-15s")).toMatchObject({ maxReferenceImages: 9 });
         expect(channelProtocolValidationErrors(configured)).toEqual([]);
     });

@@ -201,13 +201,9 @@ const definitions: ChannelProtocolDefinition[] = [
         apiFormat: "openai",
         authMode: "bearer",
         defaultBaseUrl: "https://api.tianyue.xyz",
-        modelCatalogPaths: [],
+        modelCatalogPaths: ["/v1/models"],
         capabilities: ["video"],
         operations: { video: tianyueVideoOperation },
-        builtInModels: [
-            { id: "C-sd2-video-fast-10s", label: "C-sd2-video-fast-10s", capability: "video" as const },
-            { id: "C-sd2-video-mini-15s", label: "C-sd2-video-mini-15s", capability: "video" as const },
-        ],
         strict: true,
     },
     {
