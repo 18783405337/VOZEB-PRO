@@ -612,6 +612,23 @@ describe("video generation candidate failover", () => {
         expect(body.prompt).toEqual(expect.stringContaining("A test video"));
     });
 
+    it("uses actual seconds for Tianyue per-second billed video models", async () => {
+        mocks.getAuthSettings.mockResolvedValue(tianyueVideoSettings("P-seedance-n-2.0-1080p-se"));
+        mocks.fetchInternalApi.mockResolvedValue(json({ id: "tianyue-p-task", task_id: "tianyue-p-task", status: "queued" }));
+
+        const response = await POST(request({ model: "video", videoSeconds: "15", size: "16:9" }, []));
+        const [, init] = mocks.fetchInternalApi.mock.calls[0] as [string, RequestInit];
+        const body = JSON.parse(String(init.body));
+
+        expect(response.status).toBe(200);
+        expect(body).toMatchObject({
+            model: "P-seedance-n-2.0-1080p-se",
+            duration: 15,
+            video_duration: 15,
+            aspect_ratio: "16:9",
+        });
+    });
+
     it("rejects Tianyue requests with more than nine reference images before creating a task", async () => {
         mocks.getAuthSettings.mockResolvedValue(tianyueVideoSettings());
         const references = Array.from({ length: 10 }, (_, index) => ({ type: "image", url: `https://cdn.example.com/${index}.jpg` }));
@@ -670,34 +687,35 @@ function request(config: Record<string, unknown> = { model: "video" }, reference
     });
 }
 
-function tianyueVideoSettings() {
+function tianyueVideoSettings(model = "C-sd2-video-mini-15s") {
+    const modelKey = model.toLowerCase();
     return {
         ...settings,
         systemChannels: [
             {
                 ...channels[0],
                 baseUrl: "https://api.tianyue.xyz",
-                models: ["C-sd2-video-mini-15s"],
+                models: [model],
                 advancedConfig: {
                     protocol: "tianyue-video",
                     createPath: "/v1/videos",
                     imageToVideoPath: "/v1/videos",
                     queryPath: "/v1/videos/:task_id",
-                    requestTemplate: '{"model":"{{model}}","prompt":"{{prompt}}","duration":1,"video_duration":"{{duration}}","aspect_ratio":"{{aspect_ratio}}","image_urls":"{{images}}"}',
+                    requestTemplate: '{"model":"{{model}}","prompt":"{{prompt}}","duration":"{{duration}}","video_duration":"{{duration}}","aspect_ratio":"{{aspect_ratio}}","image_urls":"{{images}}"}',
                     resultField: "video_url / url / metadata.url",
                     statusField: "status",
                     supportsReferenceImage: true,
                     supportsReferenceVideo: false,
                     supportsReferenceAudio: false,
                     modelConfigs: {
-                        "c-sd2-video-mini-15s": {
+                        [modelKey]: {
                             capability: "video",
                             protocol: "tianyue-video",
                             apiFormat: "openai",
                             createPath: "/v1/videos",
                             imageToVideoPath: "/v1/videos",
                             queryPath: "/v1/videos/:task_id",
-                            requestTemplate: '{"model":"{{model}}","prompt":"{{prompt}}","duration":1,"video_duration":"{{duration}}","aspect_ratio":"{{aspect_ratio}}","image_urls":"{{images}}"}',
+                            requestTemplate: '{"model":"{{model}}","prompt":"{{prompt}}","duration":"{{duration}}","video_duration":"{{duration}}","aspect_ratio":"{{aspect_ratio}}","image_urls":"{{images}}"}',
                             resultField: "video_url / url / metadata.url",
                             statusField: "status",
                             supportsReferenceImage: true,
@@ -709,7 +727,7 @@ function tianyueVideoSettings() {
                 },
             },
         ],
-        logicalModels: [{ ...settings.logicalModels[0], bindings: [{ ...settings.logicalModels[0].bindings[0], upstreamModel: "C-sd2-video-mini-15s" }] }],
+        logicalModels: [{ ...settings.logicalModels[0], bindings: [{ ...settings.logicalModels[0].bindings[0], upstreamModel: model }] }],
     };
 }
 

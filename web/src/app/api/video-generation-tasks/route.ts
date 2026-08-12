@@ -412,11 +412,15 @@ function buildTianyueVideoRequest(input: { model: string; prompt: string; durati
     return {
         model: input.model,
         prompt: input.prompt,
-        duration: 1,
+        duration: tianyueDurationBillingValue(input.model, input.duration),
         video_duration: input.duration,
         aspect_ratio: input.aspectRatio,
         ...(input.images.length ? { image_urls: input.images.slice(0, 9) } : {}),
     };
+}
+
+function tianyueDurationBillingValue(model: string, duration: number) {
+    return /^C-sd2-video-/i.test(model.trim()) ? 1 : duration;
 }
 
 function globalAiOpcVideoPreset(config: NonNullable<ReturnType<typeof toSystemGenerationChannel>>["advancedConfig"], model: string) {
