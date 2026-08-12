@@ -6,7 +6,7 @@ import { acquireMediaConcurrency, withMediaConcurrency } from "@/lib/server/medi
 import { MediaProxyResponseError, fetchSafeUpstreamMedia } from "@/lib/server/media-proxy-service";
 import { MAX_MEDIA_PROXY_BYTES, MAX_MEDIA_PROXY_RANGE_BYTES, normalizeMediaProxyRange } from "@/lib/server/media-response-limit";
 import { fetchSafeOutbound } from "@/lib/server/safe-outbound-fetch";
-import { checkMediaProxyRateLimit, isSafeOutboundUrl, rateLimitHeaders } from "@/lib/server/security";
+import { checkMediaProxyRateLimit, getClientIp, isSafeOutboundUrl, rateLimitHeaders } from "@/lib/server/security";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,15 +24,15 @@ export async function HEAD(request: Request) {
 
 async function proxyMedia(request: Request, method: "GET" | "HEAD") {
     const currentUser = await getCurrentUser();
-    if (!currentUser) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const rate = await checkMediaProxyRateLimit(currentUser.id, request);
+    const identity = currentUser?.id || `anonymous:${getClientIp(request)}`;
+    const rate = await checkMediaProxyRateLimit(identity, request);
     if (!rate.allowed) return NextResponse.json({ error: "媒体访问过于频繁，请稍后重试" }, { status: 429, headers: rateLimitHeaders(rate) });
 
     const target = await readTargetUrl(request);
     if (!target) return NextResponse.json({ error: "Invalid media url" }, { status: 400 });
     const range = normalizeMediaProxyRange(request.headers.get("range"));
     if (range === "invalid") return NextResponse.json({ error: "Invalid media range" }, { status: 416 });
-    const permit = acquireMediaConcurrency("proxy", `user:${currentUser.id}`);
+    const permit = acquireMediaConcurrency("proxy", `media:${identity}`);
     if (!permit) return NextResponse.json({ error: "媒体并发访问过多，请稍后重试" }, { status: 429, headers: { "Retry-After": "2" } });
 
     const signal = AbortSignal.any([request.signal, AbortSignal.timeout(MEDIA_PROXY_TIMEOUT_MS)]);

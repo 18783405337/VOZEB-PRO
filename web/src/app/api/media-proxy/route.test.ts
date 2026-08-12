@@ -5,11 +5,13 @@ const mocks = vi.hoisted(() => ({
     acquire: vi.fn(),
     wrap: vi.fn(),
     release: vi.fn(),
+    getCurrentUser: vi.fn<() => Promise<{ id: string } | null>>(async () => ({ id: "user-one" })),
 }));
 
-vi.mock("@/lib/auth/session", () => ({ getCurrentUser: vi.fn(async () => ({ id: "user-one" })) }));
+vi.mock("@/lib/auth/session", () => ({ getCurrentUser: mocks.getCurrentUser }));
 vi.mock("@/lib/server/security", () => ({
     checkMediaProxyRateLimit: mocks.checkMediaProxyRateLimit,
+    getClientIp: vi.fn(() => "203.0.113.40"),
     isSafeOutboundUrl: vi.fn(async () => true),
     rateLimitHeaders: vi.fn(() => ({ "Retry-After": "60" })),
 }));
@@ -24,8 +26,20 @@ describe("media proxy", () => {
         vi.restoreAllMocks();
         mocks.checkMediaProxyRateLimit.mockResolvedValue({ allowed: true, remaining: 119, resetAt: Date.now() + 60_000 });
         mocks.release.mockReset();
+        mocks.getCurrentUser.mockResolvedValue({ id: "user-one" });
         mocks.acquire.mockReturnValue({ release: mocks.release });
         mocks.wrap.mockImplementation((response: Response) => response);
+    });
+
+    it("allows anonymous reads for browser-rendered generated media", async () => {
+        mocks.getCurrentUser.mockResolvedValue(null);
+        vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(pngBytes(), { headers: { "content-type": "image/png" } }));
+
+        const response = await GET(request({ "x-forwarded-for": "203.0.113.40" }));
+
+        expect(response.status).toBe(200);
+        expect(response.headers.get("content-type")).toBe("image/png");
+        expect(mocks.checkMediaProxyRateLimit).toHaveBeenCalledWith("anonymous:203.0.113.40", expect.any(Request));
     });
 
     it("blocks excess concurrent proxy reads before fetching upstream", async () => {
