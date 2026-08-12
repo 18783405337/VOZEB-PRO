@@ -21,6 +21,10 @@ describe("system channel model capabilities", () => {
         expect(normalizeSystemChannelAdvancedConfig({ protocol: "vozeb-recommended" } as never)?.protocol).toBe("vozeb-recommended");
     });
 
+    it("persists the Tianyue video protocol after a settings round-trip", () => {
+        expect(normalizeSystemChannelAdvancedConfig({ protocol: "tianyue-video" } as never)?.protocol).toBe("tianyue-video");
+    });
+
     it("normalizes per-model routes for mixed company APIs", () => {
         const normalized = normalizeSystemChannelAdvancedConfig({
             protocol: "auto",

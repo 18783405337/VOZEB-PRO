@@ -319,6 +319,14 @@ export async function createUpstream(
                 videos,
                 audios,
             })
+          : channel.advancedConfig?.protocol === "tianyue-video"
+            ? buildTianyueVideoRequest({
+                  model: channel.model,
+                  prompt,
+                  duration: values.duration as number,
+                  aspectRatio: values.aspect_ratio as string,
+                  images,
+              })
           : channel.advancedConfig?.protocol === "seedance-special"
             ? buildSeedanceSpecialRequest({
                   model: channel.model,
@@ -398,6 +406,17 @@ export async function createUpstream(
         };
     }
     throw new SafeCandidateFailure(lastError || "没有可用的视频创建接口");
+}
+
+function buildTianyueVideoRequest(input: { model: string; prompt: string; duration: number; aspectRatio: string; images: string[] }) {
+    return {
+        model: input.model,
+        prompt: input.prompt,
+        duration: 1,
+        video_duration: input.duration,
+        aspect_ratio: input.aspectRatio,
+        ...(input.images.length ? { image_urls: input.images.slice(0, 9) } : {}),
+    };
 }
 
 function globalAiOpcVideoPreset(config: NonNullable<ReturnType<typeof toSystemGenerationChannel>>["advancedConfig"], model: string) {

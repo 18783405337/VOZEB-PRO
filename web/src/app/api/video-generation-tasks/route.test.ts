@@ -564,6 +564,66 @@ describe("video generation candidate failover", () => {
         expect(mocks.fetchInternalApi).not.toHaveBeenCalled();
     });
 
+    it("marks deterministic local submission validation failures as failed instead of needs review", async () => {
+        mocks.fetchInternalApi.mockReset();
+
+        const response = await POST(
+            request(
+                { model: "video" },
+                [
+                    { type: "image", url: "https://cdn.example.com/one.jpg" },
+                    { type: "image", url: "https://cdn.example.com/two.jpg" },
+                ],
+            ),
+        );
+
+        expect(response.status).toBe(400);
+        expect((await response.json()).error).toContain("参考图");
+        expect(mocks.createVideoTask).not.toHaveBeenCalled();
+        expect(mocks.fetchInternalApi).not.toHaveBeenCalled();
+    });
+
+    it("creates Tianyue video tasks with JSON image_urls and documented duration fields", async () => {
+        mocks.getAuthSettings.mockResolvedValue(tianyueVideoSettings());
+        mocks.fetchInternalApi.mockResolvedValue(json({ id: "tianyue-task", task_id: "tianyue-task", status: "queued" }));
+
+        const response = await POST(
+            request(
+                { model: "video", videoSeconds: "15", size: "16:9" },
+                [
+                    { type: "image", url: "https://cdn.example.com/one.jpg" },
+                    { type: "image", url: "https://cdn.example.com/two.jpg" },
+                ],
+            ),
+        );
+        const [url, init] = mocks.fetchInternalApi.mock.calls[0] as [string, RequestInit];
+        const body = JSON.parse(String(init.body));
+
+        expect(response.status).toBe(200);
+        expect(url).toContain("/api/ai/system/one/v1/videos");
+        expect(new Headers(init.headers).get("Content-Type")).toBe("application/json");
+        expect(body).toMatchObject({
+            model: "C-sd2-video-mini-15s",
+            duration: 1,
+            video_duration: 15,
+            aspect_ratio: "16:9",
+            image_urls: ["https://cdn.example.com/one.jpg", "https://cdn.example.com/two.jpg"],
+        });
+        expect(body.prompt).toEqual(expect.stringContaining("A test video"));
+    });
+
+    it("rejects Tianyue requests with more than nine reference images before creating a task", async () => {
+        mocks.getAuthSettings.mockResolvedValue(tianyueVideoSettings());
+        const references = Array.from({ length: 10 }, (_, index) => ({ type: "image", url: `https://cdn.example.com/${index}.jpg` }));
+
+        const response = await POST(request({ model: "video", videoSeconds: "15", size: "16:9" }, references));
+
+        expect(response.status).toBe(400);
+        expect((await response.json()).error).toContain("最多支持 9 张参考图");
+        expect(mocks.createVideoTask).not.toHaveBeenCalled();
+        expect(mocks.fetchInternalApi).not.toHaveBeenCalled();
+    });
+
     it("returns 400 for malformed JSON", async () => {
         const response = await POST(new Request("http://localhost/api/video-generation-tasks", { method: "POST", body: "{" }));
 
@@ -608,6 +668,49 @@ function request(config: Record<string, unknown> = { model: "video" }, reference
         },
         body: JSON.stringify({ ...(appKey ? { appKey } : {}), config, prompt: "A test video", references, context }),
     });
+}
+
+function tianyueVideoSettings() {
+    return {
+        ...settings,
+        systemChannels: [
+            {
+                ...channels[0],
+                baseUrl: "https://api.tianyue.xyz",
+                models: ["C-sd2-video-mini-15s"],
+                advancedConfig: {
+                    protocol: "tianyue-video",
+                    createPath: "/v1/videos",
+                    imageToVideoPath: "/v1/videos",
+                    queryPath: "/v1/videos/:task_id",
+                    requestTemplate: '{"model":"{{model}}","prompt":"{{prompt}}","duration":1,"video_duration":"{{duration}}","aspect_ratio":"{{aspect_ratio}}","image_urls":"{{images}}"}',
+                    resultField: "video_url / url / metadata.url",
+                    statusField: "status",
+                    supportsReferenceImage: true,
+                    supportsReferenceVideo: false,
+                    supportsReferenceAudio: false,
+                    modelConfigs: {
+                        "c-sd2-video-mini-15s": {
+                            capability: "video",
+                            protocol: "tianyue-video",
+                            apiFormat: "openai",
+                            createPath: "/v1/videos",
+                            imageToVideoPath: "/v1/videos",
+                            queryPath: "/v1/videos/:task_id",
+                            requestTemplate: '{"model":"{{model}}","prompt":"{{prompt}}","duration":1,"video_duration":"{{duration}}","aspect_ratio":"{{aspect_ratio}}","image_urls":"{{images}}"}',
+                            resultField: "video_url / url / metadata.url",
+                            statusField: "status",
+                            supportsReferenceImage: true,
+                            maxReferenceImages: 9,
+                        },
+                    },
+                    modelCapabilities: { "c-sd2-video-mini-15s": "video" as const },
+                    operationConfigs: {},
+                },
+            },
+        ],
+        logicalModels: [{ ...settings.logicalModels[0], bindings: [{ ...settings.logicalModels[0].bindings[0], upstreamModel: "C-sd2-video-mini-15s" }] }],
+    };
 }
 
 function publicUrlCompatibleSettings() {

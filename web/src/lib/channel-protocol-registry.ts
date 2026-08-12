@@ -76,6 +76,22 @@ const seedanceSpecialOperation: ProtocolOperation = {
     supportsReferenceAudio: true,
 };
 
+const tianyueVideoOperation: ProtocolOperation = {
+    capability: "video",
+    createPath: "/v1/videos",
+    imageToVideoPath: "/v1/videos",
+    queryPath: "/v1/videos/:task_id",
+    requestTemplate: '{"model":"{{model}}","prompt":"{{prompt}}","duration":1,"video_duration":"{{duration}}","aspect_ratio":"{{aspect_ratio}}","image_urls":"{{images}}"}',
+    resultField: "video_url / url / metadata.url",
+    statusField: "status",
+    durationRange: "10 或 15 秒，按文档固定时长传 video_duration；duration 固定传 1。",
+    referenceRule: "使用 application/json；参考图片写入 image_urls 字符串数组，最多 9 张，必须是公开 http/https URL。",
+    supportsReferenceImage: true,
+    supportsReferenceVideo: false,
+    supportsReferenceAudio: false,
+    maxReferenceImages: 9,
+};
+
 const vozebRecommendedVideoOperation: ProtocolOperation = {
     capability: "video",
     createPath: "/v1/videos/generations",
@@ -176,6 +192,22 @@ const definitions: ChannelProtocolDefinition[] = [
         modelCatalogPaths: ["/v1/models"],
         capabilities: ["text", "image", "video", "audio"],
         operations: openAiOperations,
+        strict: true,
+    },
+    {
+        id: "tianyue-video",
+        label: "天悦视频",
+        description: "天悦 C/B/P/L/Q 版视频 JSON 协议：POST /v1/videos，最多 9 张公开参考图，GET /v1/videos/{task_id} 轮询。",
+        apiFormat: "openai",
+        authMode: "bearer",
+        defaultBaseUrl: "https://api.tianyue.xyz",
+        modelCatalogPaths: [],
+        capabilities: ["video"],
+        operations: { video: tianyueVideoOperation },
+        builtInModels: [
+            { id: "C-sd2-video-fast-10s", label: "C-sd2-video-fast-10s", capability: "video" as const },
+            { id: "C-sd2-video-mini-15s", label: "C-sd2-video-mini-15s", capability: "video" as const },
+        ],
         strict: true,
     },
     {

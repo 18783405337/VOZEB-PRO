@@ -4,7 +4,7 @@ import type { GlobalAiOpcPresetId } from "@/lib/globalaiopc-catalog";
 import { VOZEB_QQ_GROUP_URL } from "@/constant/community";
 
 export type ApiCallFormat = "openai" | "gemini";
-export type SystemChannelProtocol = "auto" | "openai" | "sub2api" | "newapi" | "vozeb-recommended" | "globalaiopc" | "seedance" | "stable-diffusion" | "volcengine-video" | "seedance-special" | "custom" | "compatible";
+export type SystemChannelProtocol = "auto" | "openai" | "sub2api" | "newapi" | "vozeb-recommended" | "globalaiopc" | "seedance" | "stable-diffusion" | "volcengine-video" | "seedance-special" | "tianyue-video" | "custom" | "compatible";
 export type SystemChannelAuthMode = "none" | "bearer" | "x-api-key" | "custom-header";
 export const SPECIALIZED_PROVIDER_PROTOCOLS = ["xhadmin-digital-human-v1", "kling-avatar-v1", "xhadmin-image-human-v1", "xhadmin-action-transfer-v1"] as const;
 export type SpecializedProviderProtocol = (typeof SPECIALIZED_PROVIDER_PROTOCOLS)[number];

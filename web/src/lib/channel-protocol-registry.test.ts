@@ -26,7 +26,7 @@ const channel = {
 describe("channel protocol registry", () => {
     it("exposes SD2 video and Stable Diffusion image as separate protocols", () => {
         const protocols = channelProtocolOptions().map((item) => item.value);
-        expect(protocols).toEqual(expect.arrayContaining(["openai", "seedance", "stable-diffusion", "volcengine-video", "sub2api", "newapi", "vozeb-recommended", "seedance-special", "custom"]));
+        expect(protocols).toEqual(expect.arrayContaining(["openai", "seedance", "stable-diffusion", "volcengine-video", "sub2api", "newapi", "vozeb-recommended", "seedance-special", "tianyue-video", "custom"]));
         expect(channelProtocolDefinition("openai").modelCatalogPaths).toEqual(["/v1/models"]);
         expect(channelProtocolDefinition("sub2api").modelCatalogPaths).toEqual(["/v1/models"]);
         expect(channelProtocolDefinition("newapi").modelCatalogPaths).toEqual(["/v1/models"]);
@@ -49,6 +49,16 @@ describe("channel protocol registry", () => {
         expect(channelProtocolDefinition("volcengine-video").operations.video).toEqual(channelProtocolDefinition("seedance").operations.video);
         expect(channelProtocolDefinition("stable-diffusion").operations.image).toMatchObject({ createPath: "/sdapi/v1/txt2img", editPath: "/sdapi/v1/img2img", resultField: "images[0]" });
         expect(channelProtocolDefinition("seedance-special").operations.video).toMatchObject({ createPath: "/v1/seedance-special/videos", queryPath: "/v1/videos/:task_id" });
+        expect(channelProtocolDefinition("tianyue-video").operations.video).toMatchObject({
+            createPath: "/v1/videos",
+            imageToVideoPath: "/v1/videos",
+            queryPath: "/v1/videos/:task_id",
+            requestTemplate: expect.stringContaining("image_urls"),
+            resultField: "video_url / url / metadata.url",
+            statusField: "status",
+            supportsReferenceImage: true,
+            maxReferenceImages: 9,
+        });
         expect(channelProtocolDefinition("vozeb-recommended").operations.video).toMatchObject({
             createPath: "/v1/videos/generations",
             imageToVideoPath: "/v1/videos/generations",
@@ -56,6 +66,24 @@ describe("channel protocol registry", () => {
             resultField: "metadata.url",
             statusField: "status",
         });
+    });
+
+    it("applies the Tianyue video preset to frontend channel drafts", () => {
+        const configured = applyChannelProtocol({ ...channel, models: ["C-sd2-video-mini-15s"] }, "tianyue-video");
+
+        expect(configured).toMatchObject({ baseUrl: "https://api.tianyue.xyz", apiFormat: "openai" });
+        expect(configured.advancedConfig).toMatchObject({
+            protocol: "tianyue-video",
+            createPath: "/v1/videos",
+            imageToVideoPath: "/v1/videos",
+            queryPath: "/v1/videos/:task_id",
+            supportsReferenceImage: true,
+            supportsReferenceVideo: false,
+            supportsReferenceAudio: false,
+            modelCatalogPaths: [],
+        });
+        expect(resolveChannelModelConfig(configured.advancedConfig, "C-sd2-video-mini-15s")).toMatchObject({ maxReferenceImages: 9 });
+        expect(channelProtocolValidationErrors(configured)).toEqual([]);
     });
 
     it("applies the VOZEB recommended preset to frontend channel drafts", () => {
