@@ -6,7 +6,7 @@ import type { TableColumnsType } from "antd";
 import { Blocks, Plus, RefreshCw, Route, Search, Settings2, Trash2 } from "lucide-react";
 
 import { AdminLogicalModelManager } from "@/components/admin/admin-logical-model-manager";
-import type { SystemChannelProtocol, SystemModelChannel } from "@/lib/auth/store";
+import type { SpecializedProviderProtocol, SystemChannelProtocol, SystemModelChannel } from "@/lib/auth/store";
 import { channelProtocolDefinitions } from "@/lib/channel-protocol-registry";
 import { capabilityLabel, isLogicalModelResolvable } from "@/lib/model-routing-config";
 
@@ -34,6 +34,7 @@ export function AdminChannelWorkspace({ settings, fetchingModelId, saving, onCha
     const [protocolFilter, setProtocolFilter] = useState<SystemChannelProtocol | "all">("all");
     const [wizardOpen, setWizardOpen] = useState(false);
     const [wizardProtocol, setWizardProtocol] = useState<SystemChannelProtocol | undefined>();
+    const [wizardSpecializedProtocol, setWizardSpecializedProtocol] = useState<SpecializedProviderProtocol | undefined>();
     const [wizardKind, setWizardKind] = useState<ChannelWorkspaceKind>("general");
     const [detailId, setDetailId] = useState("");
     const deferredQuery = useDeferredValue(query.trim().toLowerCase());
@@ -53,8 +54,9 @@ export function AdminChannelWorkspace({ settings, fetchingModelId, saving, onCha
         const key = capability === "text" ? "textModel" : capability === "image" ? "imageModel" : capability === "video" ? "videoModel" : "audioModel";
         return isLogicalModelResolvable(settings.logicalModels, settings.systemChannels, capability, settings.defaultModels[key]);
     }).length;
-    const openWizard = (protocol?: SystemChannelProtocol, kind: ChannelWorkspaceKind = activeKind) => {
+    const openWizard = (protocol?: SystemChannelProtocol, kind: ChannelWorkspaceKind = activeKind, specializedProtocol?: SpecializedProviderProtocol) => {
         setWizardProtocol(protocol);
+        setWizardSpecializedProtocol(specializedProtocol);
         setWizardKind(kind);
         setWizardOpen(true);
     };
@@ -141,11 +143,13 @@ export function AdminChannelWorkspace({ settings, fetchingModelId, saving, onCha
                                 protocolFilter={protocolFilter}
                                 fetchingModelId={fetchingModelId}
                                 settings={settings}
+                                activeKind={activeKind}
                                 onQuery={setQuery}
                                 onStatus={setStatusFilter}
                                 onProtocol={setProtocolFilter}
                                 onOpen={setDetailId}
                                 onCreate={() => openWizard()}
+                                onCreateSpecialized={(protocol) => openWizard(undefined, activeKind, protocol)}
                                 onFetchAll={() => void onFetchAll()}
                                 onFetch={(channel) => void onFetchModels(channel)}
                             />
@@ -170,7 +174,7 @@ export function AdminChannelWorkspace({ settings, fetchingModelId, saving, onCha
             <AdminChannelOnboardingDrawer
                 open={wizardOpen}
                 initialProtocol={wizardProtocol}
-                initialSpecializedProtocol={wizardKind === "general" ? undefined : specializedProtocolForWorkspaceKind(wizardKind)}
+                initialSpecializedProtocol={wizardSpecializedProtocol || (wizardKind === "general" ? undefined : specializedProtocolForWorkspaceKind(wizardKind))}
                 settings={settings}
                 fetchingModelId={fetchingModelId}
                 saving={saving}
@@ -221,11 +225,13 @@ function ChannelList({
     protocolFilter,
     fetchingModelId,
     settings,
+    activeKind,
     onQuery,
     onStatus,
     onProtocol,
     onOpen,
     onCreate,
+    onCreateSpecialized,
     onFetchAll,
     onFetch,
 }: {
@@ -237,16 +243,19 @@ function ChannelList({
     protocolFilter: SystemChannelProtocol | "all";
     fetchingModelId: string;
     settings: ChannelWorkspaceSettings;
+    activeKind: ChannelWorkspaceKind;
     onQuery: (value: string) => void;
     onStatus: (value: ChannelWorkspaceStatus | "all") => void;
     onProtocol: (value: SystemChannelProtocol | "all") => void;
     onOpen: (id: string) => void;
     onCreate: () => void;
+    onCreateSpecialized: (protocol: SpecializedProviderProtocol) => void;
     onFetchAll: () => void;
     onFetch: (channel: SystemModelChannel) => void;
 }) {
     return (
         <div>
+            {activeKind === "digital-human" ? <DigitalHumanProviderQuickStart onCreate={onCreateSpecialized} /> : null}
             <div className="mb-3 flex min-w-0 flex-col gap-2 md:flex-row">
                 <Input allowClear className="min-w-0 flex-1" prefix={<Search className="size-4 text-stone-400" />} value={query} placeholder="搜索渠道、地址、协议或模型" onChange={(event) => onQuery(event.target.value)} />
                 <div className="grid grid-cols-2 gap-2 md:flex md:shrink-0">
@@ -307,6 +316,31 @@ function ChannelList({
                 ))}
                 {!channels.length ? <ChannelEmpty hasChannels={Boolean(allChannels.length)} onCreate={onCreate} /> : null}
             </div>
+        </div>
+    );
+}
+
+function DigitalHumanProviderQuickStart({ onCreate }: { onCreate: (protocol: SpecializedProviderProtocol) => void }) {
+    const providers: Array<{ protocol: SpecializedProviderProtocol; title: string; detail: string }> = [
+        { protocol: "xhadmin-digital-human-v1", title: "Xhadmin 数字人", detail: "两段式 TTS + 形象视频流程，适合已有 Xhadmin Provider。" },
+        { protocol: "kling-avatar-v1", title: "可灵数字人", detail: "对接 Kling Avatar image2video，使用形象图和音频直接生成数字人视频。" },
+    ];
+    return (
+        <div className="mb-3 grid gap-2 lg:grid-cols-2">
+            {providers.map((provider) => (
+                <div key={provider.protocol} className="rounded-md border border-cyan-200 bg-cyan-50/60 p-3 dark:border-cyan-900/70 dark:bg-cyan-950/20">
+                    <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                            <div className="text-sm font-semibold text-cyan-950 dark:text-cyan-100">{provider.title}</div>
+                            <div className="mt-1 text-xs leading-5 text-cyan-800/80 dark:text-cyan-200/80">{provider.detail}</div>
+                            <Tag className="mt-2">{provider.protocol}</Tag>
+                        </div>
+                        <Button size="small" type="primary" onClick={() => onCreate(provider.protocol)}>
+                            接入
+                        </Button>
+                    </div>
+                </div>
+            ))}
         </div>
     );
 }
