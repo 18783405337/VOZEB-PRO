@@ -131,6 +131,24 @@ describe("video task upstream reconciliation", () => {
         expect(mocks.normalize).not.toHaveBeenCalled();
     });
 
+    it("treats a failed provider response with error text in url as failed instead of persisting it", async () => {
+        const task = videoTask({
+            config: {
+                ...videoTask().config,
+                advancedConfig: { protocol: "tianyue-video", queryPath: "/v1/videos/:task_id", statusField: "status", resultField: "video_url / url / metadata.url" } as NonNullable<VideoTask["config"]["advancedConfig"]>,
+            },
+        });
+        const failed = { ...task, status: "error", error: "服务器忙" };
+        mocks.claim.mockResolvedValue(task);
+        mocks.fetchInternalApi.mockResolvedValue(json({ id: task.upstream.id, status: "failed", url: "服务器忙" }));
+        mocks.fail.mockResolvedValue(failed);
+
+        await expect(refreshVideoTaskFromUpstream(task, "http://localhost", "session=test")).resolves.toEqual(failed);
+        expect(mocks.fail).toHaveBeenCalledWith(task.id, "服务器忙", true, task.tenantId);
+        expect(mocks.normalize).not.toHaveBeenCalled();
+        expect(mocks.complete).not.toHaveBeenCalled();
+    });
+
     it("keeps a queued provider task pending without settling or refunding it", async () => {
         const task = videoTask();
         mocks.claim.mockResolvedValue(task);

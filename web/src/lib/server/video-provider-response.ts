@@ -31,7 +31,21 @@ export function readVideoProviderStatus(value: unknown, configuredPath?: string)
 }
 
 export function readVideoProviderUrl(value: unknown, configuredPath?: string) {
-    return readProviderString(value, configuredPath, VIDEO_PROVIDER_MEDIA_KEYS);
+    const candidate = readProviderString(value, configuredPath, VIDEO_PROVIDER_MEDIA_KEYS);
+    return isVideoProviderMediaUrl(candidate) ? candidate : "";
+}
+
+function isVideoProviderMediaUrl(value: string) {
+    return /^https?:\/\//i.test(value) || /^\/[^/]/.test(value);
+}
+
+export function readVideoProviderError(value: unknown) {
+    return readProviderError(value) || nonMediaProviderUrlText(value);
+}
+
+function nonMediaProviderUrlText(value: unknown) {
+    const candidate = readProviderString(value, undefined, VIDEO_PROVIDER_MEDIA_KEYS);
+    return candidate && !isVideoProviderMediaUrl(candidate) ? candidate : "";
 }
 
 export function videoProviderMediaUrl(baseUrl: string, url: string) {

@@ -4,10 +4,10 @@ import { generationMediaProxyHeaders } from "@/lib/server/generation-media-autho
 import { finishGenerationAttempt } from "@/lib/server/generation-attempt";
 import { fetchInternalApi } from "@/lib/server/internal-origin";
 import { resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy";
-import { isProviderBusinessError, providerQueryPaths, readProviderError, videoPollingPolicy } from "@/lib/server/provider-task-config";
+import { isProviderBusinessError, providerQueryPaths, videoPollingPolicy } from "@/lib/server/provider-task-config";
 import { registerGenerationTaskAssetsForUser } from "@/lib/server/creative-runtime-service";
 import { normalizeVideoResult } from "@/lib/server/video-result-normalizer";
-import { VIDEO_PROVIDER_FAILED, VIDEO_PROVIDER_SUCCESS, parseVideoProviderJson, readVideoProviderHttpError, readVideoProviderStatus, readVideoProviderUrl, videoProviderMediaUrl } from "@/lib/server/video-provider-response";
+import { VIDEO_PROVIDER_FAILED, VIDEO_PROVIDER_SUCCESS, parseVideoProviderJson, readVideoProviderError, readVideoProviderHttpError, readVideoProviderStatus, readVideoProviderUrl, videoProviderMediaUrl } from "@/lib/server/video-provider-response";
 import { claimVideoTaskPoll, completeReconciledVideoTask, failReconciledVideoTask, getVideoTask, updateVideoTask, type VideoTask } from "@/lib/server/video-task-store";
 import { writeVideoGenerationLog } from "@/lib/server/video-task-log";
 import { maintenanceWorkerHeaders } from "@/lib/server/maintenance-auth";
@@ -31,11 +31,11 @@ export async function queryVideoTaskUpstream(task: VideoTask, origin: string, co
     if (task.upstream.resultUrl) return { state: "result_ready", status: "completed", resultUrl: task.upstream.resultUrl };
     const data = await queryVideoUpstream(task, origin, cookie, workerUserId);
     const status = readVideoProviderStatus(data, task.config.advancedConfig?.statusField);
+    if (isProviderBusinessError(data) || VIDEO_PROVIDER_FAILED.has(status)) return { state: "failed", status: status || "failed", error: readVideoProviderError(data) || "视频生成失败" };
     const resultUrl = readVideoProviderUrl(data, task.config.advancedConfig?.resultField);
     if (resultUrl || VIDEO_PROVIDER_SUCCESS.has(status)) {
         return resultUrl ? { state: "result_ready", status: status || "completed", resultUrl } : { state: "failed", status: status || "completed", error: "视频任务已完成但没有返回视频地址" };
     }
-    if (isProviderBusinessError(data) || VIDEO_PROVIDER_FAILED.has(status)) return { state: "failed", status: status || "failed", error: readProviderError(data) || "视频生成失败" };
     return { state: "pending", status: status || "processing" };
 }
 
