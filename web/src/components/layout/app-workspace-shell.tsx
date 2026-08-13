@@ -21,7 +21,7 @@ const PAGE_TITLES: Record<string, string> = {
 export function AppWorkspaceShell({ children }: { children: ReactNode }) {
     const pathname = usePathname();
     const [mobileNavOpen, setMobileNavOpen] = useState(false);
-    const [sidebarExpanded, setSidebarExpanded] = useState(false);
+    const [sidebarExpanded, setSidebarExpanded] = useState(() => pathname === "/create");
     const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: "VOZEB PRO", logoUrl: "/logo.svg" };
     const tool = navigationToolForPathname(pathname);
     const fullscreen = /^\/canvas\/[^/]+/.test(pathname);
