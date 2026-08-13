@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ArrowLeft, ReceiptText } from "lucide-react";
 
+import { TenantAdminAccessDenied } from "@/components/tenant-admin/tenant-admin-access-denied";
 import { TenantAdminShell } from "@/components/tenant-admin/tenant-admin-shell";
 import { UserStatusActions } from "@/components/layout/user-status-actions";
 import { getCurrentUser } from "@/lib/auth/session";
@@ -16,10 +17,13 @@ export default async function TenantAdminPage() {
     try {
         context = await getTenantPageContext("/tenant-admin");
     } catch (error) {
-        if (error instanceof TenantContextError) redirect("/");
+        if (error instanceof TenantContextError && error.code === "tenant.membership_required") {
+            return <TenantAdminAccessDenied user={currentUser} />;
+        }
+        if (error instanceof TenantContextError && error.code === "tenant.not_found") redirect("/");
         throw error;
     }
-    if (!context.member) redirect("/");
+    if (!context.member) return <TenantAdminAccessDenied user={currentUser} />;
 
     return (
         <main data-glass-tenant-admin className="min-h-dvh bg-white text-zinc-950 dark:bg-zinc-950 dark:text-zinc-100">

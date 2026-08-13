@@ -9,6 +9,9 @@ describe("platform tenant admin section", () => {
         expect(source).toContain("listPlatformTenants");
         expect(source).toContain("createPlatformTenant");
         expect(source).toContain("updatePlatformTenant");
+        expect(source).toContain("DNSPod 主机记录");
+        expect(source).toContain("dnsHostRecord(domain.hostname)");
+        expect(source).toContain("完整 TXT 记录名");
         expect(source).not.toContain("/api/tenant/members");
         expect(source).not.toContain("/api/tenant/roles");
     });

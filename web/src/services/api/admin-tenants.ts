@@ -1,4 +1,4 @@
-import type { TenantListResult, TenantRecord, TenantStatus } from "@/lib/server/tenant/tenant-types";
+import type { TenantDomainRecord, TenantListResult, TenantRecord, TenantStatus } from "@/lib/server/tenant/tenant-types";
 
 import { requestApiData } from "./api-envelope";
 
@@ -42,4 +42,30 @@ export async function updatePlatformTenant(tenantId: string, patch: { name?: str
         method: "PATCH",
         body: JSON.stringify(patch),
     })).tenant;
+}
+
+export async function listPlatformTenantDomains(tenantId: string) {
+    return (await requestApiData<{ domains: TenantDomainRecord[] }>(`/api/admin/tenants/${encodeURIComponent(tenantId)}/domains`, { cache: "no-store" })).domains;
+}
+
+export async function createPlatformTenantDomain(tenantId: string, input: { hostname: string; kind: "custom" | "subdomain" }) {
+    return (await requestApiData<{ domain: TenantDomainRecord }>(`/api/admin/tenants/${encodeURIComponent(tenantId)}/domains`, {
+        method: "POST",
+        body: JSON.stringify(input),
+    })).domain;
+}
+
+export async function verifyPlatformTenantDomain(tenantId: string, domainId: string) {
+    return (await requestApiData<{ domain: TenantDomainRecord }>(`/api/admin/tenants/${encodeURIComponent(tenantId)}/domains/${encodeURIComponent(domainId)}/verify`, { method: "POST" })).domain;
+}
+
+export async function updatePlatformTenantDomain(tenantId: string, domainId: string, status: "pending" | "disabled") {
+    return (await requestApiData<{ domain: TenantDomainRecord }>(`/api/admin/tenants/${encodeURIComponent(tenantId)}/domains/${encodeURIComponent(domainId)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status }),
+    })).domain;
+}
+
+export async function deletePlatformTenantDomain(tenantId: string, domainId: string) {
+    await requestApiData<{ deleted: boolean }>(`/api/admin/tenants/${encodeURIComponent(tenantId)}/domains/${encodeURIComponent(domainId)}`, { method: "DELETE" });
 }

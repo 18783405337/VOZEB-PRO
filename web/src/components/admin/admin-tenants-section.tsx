@@ -3,11 +3,11 @@
 import { useEffect, useState } from "react";
 import { App, Button, Form, Input, Modal, Pagination, Select, Switch, Table, Tag } from "antd";
 import type { TableColumnsType } from "antd";
-import { Building2, Plus, RefreshCw } from "lucide-react";
+import { Building2, Check, Copy, Globe2, Plus, RefreshCw, Trash2 } from "lucide-react";
 
-import type { TenantListResult, TenantRecord, TenantStatus } from "@/lib/server/tenant/tenant-types";
+import type { TenantDomainRecord, TenantListResult, TenantRecord, TenantStatus } from "@/lib/server/tenant/tenant-types";
 import { AdminUserIdentity, AdminUserSearchSelect } from "./admin-user-identity";
-import { createPlatformTenant, listPlatformTenants, updatePlatformTenant, updatePlatformTenantSettings } from "@/services/api/admin-tenants";
+import { createPlatformTenant, createPlatformTenantDomain, deletePlatformTenantDomain, listPlatformTenantDomains, listPlatformTenants, updatePlatformTenant, updatePlatformTenantDomain, updatePlatformTenantSettings, verifyPlatformTenantDomain } from "@/services/api/admin-tenants";
 
 type TenantFormValue = {
     slug: string;
@@ -16,6 +16,12 @@ type TenantFormValue = {
 };
 
 const PAGE_SIZE = 20;
+
+function dnsHostRecord(hostname: string) {
+    const labels = hostname.trim().toLowerCase().replace(/\.$/, "").split(".").filter(Boolean);
+    const relative = labels.length > 2 ? labels.slice(0, -2).join(".") : "@";
+    return relative === "@" ? "_vozeb-verification" : `_vozeb-verification.${relative}`;
+}
 
 export function AdminTenantsSection() {
     const { message } = App.useApp();
@@ -28,6 +34,12 @@ export function AdminTenantsSection() {
     const [submitting, setSubmitting] = useState(false);
     const [editingTenant, setEditingTenant] = useState<TenantRecord>();
     const [settingsForm] = Form.useForm<Record<string, unknown>>();
+    const [domainTenant, setDomainTenant] = useState<TenantRecord>();
+    const [domains, setDomains] = useState<TenantDomainRecord[]>([]);
+    const [domainLoading, setDomainLoading] = useState(false);
+    const [domainSubmitting, setDomainSubmitting] = useState(false);
+    const [domainHostname, setDomainHostname] = useState("");
+    const [domainKind, setDomainKind] = useState<"custom" | "subdomain">("custom");
 
     const load = async (page = result.page) => {
         setLoading(true);
@@ -87,6 +99,83 @@ export function AdminTenantsSection() {
         }
     }
 
+    async function openDomains(tenant: TenantRecord) {
+        setDomainTenant(tenant);
+        setDomainLoading(true);
+        try {
+            setDomains(await listPlatformTenantDomains(tenant.id));
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "域名加载失败");
+        } finally {
+            setDomainLoading(false);
+        }
+    }
+
+    async function addDomain() {
+        if (!domainTenant || !domainHostname.trim()) return;
+        setDomainSubmitting(true);
+        try {
+            const domain = await createPlatformTenantDomain(domainTenant.id, { hostname: domainHostname.trim(), kind: domainKind });
+            setDomains((current) => [...current, domain]);
+            setDomainHostname("");
+            message.success("域名已添加，请完成 TXT 验证");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "域名添加失败");
+        } finally {
+            setDomainSubmitting(false);
+        }
+    }
+
+    async function verifyDomain(domain: TenantDomainRecord) {
+        if (!domainTenant) return;
+        setDomainSubmitting(true);
+        try {
+            const updated = await verifyPlatformTenantDomain(domainTenant.id, domain.id);
+            setDomains((current) => current.map((item) => item.id === updated.id ? updated : item));
+            message.success("域名验证成功");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "域名验证失败");
+        } finally {
+            setDomainSubmitting(false);
+        }
+    }
+
+    async function changeDomainStatus(domain: TenantDomainRecord, status: "pending" | "disabled") {
+        if (!domainTenant) return;
+        setDomainSubmitting(true);
+        try {
+            const updated = await updatePlatformTenantDomain(domainTenant.id, domain.id, status);
+            setDomains((current) => current.map((item) => item.id === updated.id ? updated : item));
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "域名状态更新失败");
+        } finally {
+            setDomainSubmitting(false);
+        }
+    }
+
+    async function removeDomain(domain: TenantDomainRecord) {
+        if (!domainTenant) return;
+        setDomainSubmitting(true);
+        try {
+            await deletePlatformTenantDomain(domainTenant.id, domain.id);
+            setDomains((current) => current.filter((item) => item.id !== domain.id));
+            message.success("域名已删除");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "域名删除失败");
+        } finally {
+            setDomainSubmitting(false);
+        }
+    }
+
+    async function copyText(value: string) {
+        try {
+            await navigator.clipboard.writeText(value);
+            message.success("已复制");
+        } catch {
+            message.error("复制失败，请手动复制");
+        }
+    }
+
     const columns: TableColumnsType<TenantRecord> = [
         {
             title: "租户",
@@ -119,10 +208,11 @@ export function AdminTenantsSection() {
         {
             title: "操作",
             key: "actions",
-            width: 110,
+            width: 180,
             render: (_, record) => (
                 <div className="flex items-center gap-1">
                     <Button type="link" onClick={() => void toggleStatus(record)}>{record.status === "active" ? "停用" : "启用"}</Button>
+                    <Button type="link" icon={<Globe2 className="size-3.5" />} onClick={() => void openDomains(record)}>域名</Button>
                     <Button type="link" onClick={() => { setEditingTenant(record); settingsForm.setFieldsValue(record.settings); }}>基础信息</Button>
                 </div>
             ),
@@ -163,6 +253,36 @@ export function AdminTenantsSection() {
                     <Form.Item name="allowCustomStorage" label="允许自定义存储" valuePropName="checked"><Switch /></Form.Item>
                     <Form.Item name="allowLocalStorage" label="允许本地存储" valuePropName="checked"><Switch /></Form.Item>
                 </Form>
+            </Modal>
+            <Modal title={`域名管理 · ${domainTenant?.name || ""}`} open={Boolean(domainTenant)} footer={null} width={720} onCancel={() => setDomainTenant(undefined)} destroyOnHidden>
+                <div className="space-y-4 pt-3">
+                    <div className="flex flex-wrap gap-2">
+                        <Input value={domainHostname} onChange={(event) => setDomainHostname(event.target.value)} placeholder="例如 tent.example.com" className="min-w-64 flex-1" onPressEnter={() => void addDomain()} />
+                        <Select value={domainKind} onChange={setDomainKind} options={[{ label: "自定义域名", value: "custom" }, { label: "子域名", value: "subdomain" }]} />
+                        <Button type="primary" icon={<Plus className="size-4" />} loading={domainSubmitting} onClick={() => void addDomain()}>添加</Button>
+                    </div>
+                    <div className="space-y-2">
+                        {domainLoading ? <div className="py-6 text-center text-sm text-zinc-500">加载中...</div> : null}
+                        {!domainLoading && !domains.length ? <div className="py-6 text-center text-sm text-zinc-500">暂无域名，请先添加</div> : null}
+                        {domains.map((domain) => <div key={domain.id} className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div><div className="font-mono text-sm">{domain.hostname}</div><Tag className="mt-2" color={domain.status === "verified" ? "green" : domain.status === "disabled" ? "default" : "gold"}>{domain.status === "verified" ? "已验证" : domain.status === "disabled" ? "已停用" : "待验证"}</Tag></div>
+                                <div className="flex flex-wrap gap-1">
+                                    {domain.status === "pending" ? <Button size="small" icon={<Check className="size-3.5" />} loading={domainSubmitting} onClick={() => void verifyDomain(domain)}>验证 TXT</Button> : null}
+                                    {domain.status === "verified" ? <Button size="small" onClick={() => void changeDomainStatus(domain, "disabled")}>停用</Button> : null}
+                                    {domain.status === "disabled" ? <Button size="small" onClick={() => void changeDomainStatus(domain, "pending")}>启用</Button> : null}
+                                    {domain.status !== "verified" ? <Button danger size="small" icon={<Trash2 className="size-3.5" />} loading={domainSubmitting} onClick={() => void removeDomain(domain)}>删除</Button> : null}
+                                </div>
+                            </div>
+                            {domain.status === "pending" ? <div className="mt-3 space-y-2 rounded-md bg-zinc-50 p-3 text-xs dark:bg-zinc-900">
+                                <div className="text-zinc-600 dark:text-zinc-300">DNSPod 等 DNS 控制台会自动追加主域名，请优先填写下面的“主机记录”，不要把完整域名粘贴到主机记录栏。</div>
+                                <div className="flex items-center justify-between gap-2"><span>DNSPod 主机记录：<code>{dnsHostRecord(domain.hostname)}</code></span><Button type="text" size="small" icon={<Copy className="size-3.5" />} onClick={() => void copyText(dnsHostRecord(domain.hostname))} /></div>
+                                <div className="flex items-center justify-between gap-2"><span>完整 TXT 记录名：<code>{`_vozeb-verification.${domain.hostname}`}</code></span><Button type="text" size="small" icon={<Copy className="size-3.5" />} onClick={() => void copyText(`_vozeb-verification.${domain.hostname}`)} /></div>
+                                <div className="flex items-center justify-between gap-2"><span>TXT 记录值：<code>{domain.verificationToken}</code></span><Button type="text" size="small" icon={<Copy className="size-3.5" />} onClick={() => void copyText(domain.verificationToken)} /></div>
+                            </div> : null}
+                        </div>)}
+                    </div>
+                </div>
             </Modal>
             <Modal title="新建租户" open={open} okText="创建" cancelText="取消" confirmLoading={submitting} onCancel={() => setOpen(false)} onOk={() => void form.submit()} destroyOnHidden>
                 <Form form={form} layout="vertical" className="pt-3" onFinish={submit}>

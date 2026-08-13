@@ -9,6 +9,7 @@ describe("tenant admin page", () => {
         expect(source).toContain("getCurrentUser");
         expect(source).toContain("getTenantPageContext");
         expect(source).toContain("/login?next=/tenant-admin");
-        expect(source).toContain('redirect("/")');
+        expect(source).toContain("TenantAdminAccessDenied");
+        expect(source).toContain('error.code === "tenant.membership_required"');
     });
 });
