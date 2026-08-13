@@ -5,7 +5,7 @@ import { App, Button, Form, Input, Modal, Pagination, Select, Switch, Table, Tag
 import type { TableColumnsType } from "antd";
 import { Building2, Check, Copy, Globe2, Plus, RefreshCw, Trash2 } from "lucide-react";
 
-import type { TenantDomainRecord, TenantListResult, TenantRecord, TenantStatus } from "@/lib/server/tenant/tenant-types";
+import type { TenantDomainRecord, TenantRecord, TenantStatus } from "@/lib/server/tenant/tenant-types";
 import { AdminUserIdentity, AdminUserSearchSelect } from "./admin-user-identity";
 import { createPlatformTenant, createPlatformTenantDomain, deletePlatformTenantDomain, listPlatformTenantDomains, listPlatformTenants, updatePlatformTenant, updatePlatformTenantDomain, updatePlatformTenantSettings, verifyPlatformTenantDomain } from "@/services/api/admin-tenants";
 
@@ -13,6 +13,13 @@ type TenantFormValue = {
     slug: string;
     name: string;
     ownerUserId?: string;
+};
+
+type PlatformTenantRecord = TenantRecord & {
+    ownerUsername?: string;
+    ownerDisplayName?: string;
+    ownerAccountId?: string;
+    ownerAvatarUrl?: string;
 };
 
 const PAGE_SIZE = 20;
@@ -26,7 +33,7 @@ function dnsHostRecord(hostname: string) {
 export function AdminTenantsSection() {
     const { message } = App.useApp();
     const [form] = Form.useForm<TenantFormValue>();
-    const [result, setResult] = useState<TenantListResult>({ items: [], total: 0, page: 1, pageSize: PAGE_SIZE });
+    const [result, setResult] = useState<{ items: PlatformTenantRecord[]; total: number; page: number; pageSize: number }>({ items: [], total: 0, page: 1, pageSize: PAGE_SIZE });
     const [keyword, setKeyword] = useState("");
     const [status, setStatus] = useState<TenantStatus>();
     const [loading, setLoading] = useState(true);
@@ -90,7 +97,10 @@ export function AdminTenantsSection() {
     async function saveSettings(value: Record<string, unknown>) {
         if (!editingTenant) return;
         try {
-            await updatePlatformTenantSettings(editingTenant.id, value);
+            const ownerUserId = typeof value.ownerUserId === "string" ? value.ownerUserId : "";
+            const { ownerUserId: _ownerUserId, ...settings } = value;
+            if (ownerUserId && ownerUserId !== editingTenant.ownerUserId) await updatePlatformTenant(editingTenant.id, { ownerUserId });
+            await updatePlatformTenantSettings(editingTenant.id, settings);
             message.success("租户基础信息已保存");
             setEditingTenant(undefined);
             await load();
@@ -196,8 +206,8 @@ export function AdminTenantsSection() {
         {
             title: "所有者",
             dataIndex: "ownerUserId",
-            width: 220,
-            render: (value?: string) => value ? <AdminUserIdentity username={value} accountId={value} fallback={value} /> : <span className="text-zinc-500">未设置</span>,
+            width: 260,
+            render: (_value: string | undefined, record: PlatformTenantRecord) => record.ownerUserId ? <AdminUserIdentity displayName={record.ownerDisplayName} username={record.ownerUsername} accountId={record.ownerAccountId} avatarUrl={record.ownerAvatarUrl} fallback={record.ownerUserId} /> : <span className="text-zinc-500">未设置</span>,
         },
         {
             title: "创建时间",
@@ -213,7 +223,7 @@ export function AdminTenantsSection() {
                 <div className="flex items-center gap-1">
                     <Button type="link" onClick={() => void toggleStatus(record)}>{record.status === "active" ? "停用" : "启用"}</Button>
                     <Button type="link" icon={<Globe2 className="size-3.5" />} onClick={() => void openDomains(record)}>域名</Button>
-                    <Button type="link" onClick={() => { setEditingTenant(record); settingsForm.setFieldsValue(record.settings); }}>基础信息</Button>
+                    <Button type="link" onClick={() => { setEditingTenant(record); settingsForm.setFieldsValue({ ...record.settings, ownerUserId: record.ownerUserId }); }}>基础信息</Button>
                 </div>
             ),
         },
@@ -244,6 +254,7 @@ export function AdminTenantsSection() {
             </div>
             <Modal title="租户基础信息" open={Boolean(editingTenant)} okText="保存" cancelText="取消" onCancel={() => setEditingTenant(undefined)} onOk={() => void settingsForm.submit()} destroyOnHidden>
                 <Form form={settingsForm} layout="vertical" onFinish={saveSettings} className="pt-3">
+                    <Form.Item name="ownerUserId" label="租户所有者"><AdminUserSearchSelect activeOnly /></Form.Item>
                     <Form.Item name="title" label="站点标题"><Input /></Form.Item>
                     <Form.Item name="logoUrl" label="Logo 地址"><Input placeholder="https://..." /></Form.Item>
                     <Form.Item name="iconUrl" label="站点图标地址"><Input placeholder="https://..." /></Form.Item>

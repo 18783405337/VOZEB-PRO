@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
     auditActorFromRequest: vi.fn(() => ({ id: "admin-one" })),
     createWithOwner: vi.fn(),
     getById: vi.fn(),
+    getPublicUsersByIds: vi.fn(),
     list: vi.fn(),
     requirePlatformPermission: vi.fn(),
 }));
@@ -12,6 +13,10 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/server/authorization/authorization-service", () => ({
     AuthorizationError: class AuthorizationError extends Error {},
     requirePlatformPermission: mocks.requirePlatformPermission,
+}));
+
+vi.mock("@/lib/auth/store", () => ({
+    getPublicUsersByIds: mocks.getPublicUsersByIds,
 }));
 
 vi.mock("@/lib/server/database", () => ({
@@ -40,6 +45,7 @@ describe("platform tenant collection API", () => {
         process.env.VOZEB_PRO_SAAS_ENABLED = "1";
         mocks.requirePlatformPermission.mockResolvedValue({ user: { id: "admin-one", username: "admin", role: "admin" } });
         mocks.list.mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 20 });
+        mocks.getPublicUsersByIds.mockResolvedValue([]);
         mocks.createWithOwner.mockResolvedValue({ id: "tenant-a", slug: "tenant-a", name: "Tenant A", status: "active" });
         mocks.getById.mockResolvedValue({ id: "admin-one", status: "active" });
     });
@@ -66,6 +72,17 @@ describe("platform tenant collection API", () => {
         await expect(response.json()).resolves.toEqual({ code: 0, data: { items: [], total: 0, page: 1, pageSize: 20 }, msg: "" });
         expect(mocks.requirePlatformPermission).toHaveBeenCalledWith(expect.any(Request), "platform.tenants.read");
         expect(mocks.list).toHaveBeenCalledWith({ page: 2, pageSize: 50, keyword: "Studio", status: "disabled" });
+    });
+
+    it("includes the public identity of each tenant owner", async () => {
+        mocks.list.mockResolvedValue({ items: [{ id: "tenant-a", ownerUserId: "owner-one" }], total: 1, page: 1, pageSize: 20 });
+        mocks.getPublicUsersByIds.mockResolvedValue([{ id: "owner-one", username: "owner", displayName: "Owner Name", accountId: "0006" }]);
+
+        const response = await GET(new Request("http://localhost/api/admin/tenants"));
+
+        await expect(response.json()).resolves.toMatchObject({
+            data: { items: [{ id: "tenant-a", ownerUserId: "owner-one", ownerUsername: "owner", ownerDisplayName: "Owner Name", ownerAccountId: "0006" }] },
+        });
     });
 
     it("creates a tenant through the platform manage permission", async () => {

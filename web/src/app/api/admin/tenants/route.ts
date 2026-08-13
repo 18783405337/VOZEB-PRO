@@ -1,3 +1,4 @@
+import { getPublicUsersByIds } from "@/lib/auth/store";
 import { apiError, apiOk } from "@/app/api/_shared/api-response";
 import { readJsonBodyResult } from "@/lib/auth/request";
 import { auditActorFromRequest, safeRecordAuditLog } from "@/lib/server/audit-log-store";
@@ -22,7 +23,23 @@ export async function GET(request: Request) {
             keyword: params.get("keyword")?.trim() || "",
             ...(status ? { status } : {}),
         });
-        return apiOk(result);
+        const ownerIds = result.items.map((item) => item.ownerUserId).filter((value): value is string => Boolean(value));
+        const owners = new Map((await getPublicUsersByIds(ownerIds)).map((user) => [user.id, user]));
+        return apiOk({
+            ...result,
+            items: result.items.map((item) => {
+                const owner = item.ownerUserId ? owners.get(item.ownerUserId) : undefined;
+                return {
+                    ...item,
+                    ...(owner ? {
+                        ownerUsername: owner.username,
+                        ownerDisplayName: owner.displayName,
+                        ownerAccountId: owner.accountId,
+                        ...(owner.avatarUrl ? { ownerAvatarUrl: owner.avatarUrl } : {}),
+                    } : {}),
+                };
+            }),
+        });
     } catch (error) {
         return apiError(error, "获取租户列表失败", "platform.tenant.list");
     }
