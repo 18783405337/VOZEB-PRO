@@ -38,12 +38,14 @@ export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData
         .map((input) => input.text)
         .filter(Boolean)
         .join("\n\n");
-    const referenceImages = inputs.map((input) => input.image).filter((image): image is ReferenceImage => Boolean(image));
+    const allImages = inputs.map((input) => input.image).filter((image): image is ReferenceImage => Boolean(image));
+    const mentionedImageIndexes = mentionedReferenceIndexes(prompt, "image");
+    const referenceImages = mentionedImageIndexes.length ? mentionedImageIndexes.flatMap((index) => allImages[index] ? [allImages[index]] : []) : allImages;
     const referenceVideos = inputs.map((input) => input.video).filter((video): video is ReferenceVideo => Boolean(video));
     const referenceAudios = inputs.map((input) => input.audio).filter((audio): audio is ReferenceAudio => Boolean(audio));
 
     return {
-        prompt: upstreamText ? `${prompt}\n\n${upstreamText}` : prompt,
+        prompt: replaceMentionedReferences(upstreamText ? `${prompt}\n\n${upstreamText}` : prompt, mentionedImageIndexes),
         referenceImages,
         referenceVideos,
         referenceAudios,
@@ -111,6 +113,21 @@ function buildComposerGenerationContext(inputs: NodeGenerationInput[], prompt: s
         videoCount: referenceVideos.length,
         audioCount: referenceAudios.length,
     };
+}
+
+export function mentionedReferenceIndexes(prompt: string, kind: "image" | "video" | "audio") {
+    const prefix = kind === "image" ? "图片" : kind === "video" ? "视频" : "音频";
+    const indexes: number[] = [];
+    const pattern = new RegExp(`@${prefix}(\\d+)`, "g");
+    for (const match of prompt.matchAll(pattern)) {
+        const index = Number(match[1]) - 1;
+        if (Number.isInteger(index) && index >= 0 && !indexes.includes(index)) indexes.push(index);
+    }
+    return indexes;
+}
+
+export function replaceMentionedReferences(prompt: string, indexes: number[]) {
+    return indexes.length ? prompt.replace(/@图片\d+/g, (value) => value.replace("@", "")) : prompt;
 }
 
 export function buildNodeGenerationInputs(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]): NodeGenerationInput[] {

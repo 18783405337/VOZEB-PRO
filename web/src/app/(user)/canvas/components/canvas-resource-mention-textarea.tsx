@@ -61,7 +61,7 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
 
     const syncMention = (nextValue: string, cursor: number) => {
         const prefix = nextValue.slice(0, cursor);
-        const match = /(^|\s)@([^\s@]*)$/.exec(prefix);
+        const match = /(^|[^\w@])@([^\s@]*)$/u.exec(prefix);
         if (!match || !references.some((item) => item.active)) {
             closeMention();
             return;
@@ -74,7 +74,7 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
         if (!mention) return;
         const textarea = textareaRef.current;
         const end = textarea?.selectionStart ?? value.length;
-        const insertText = `${reference.label} `;
+        const insertText = `@${reference.label} `;
         const next = `${value.slice(0, mention.start)}${insertText}${value.slice(end)}`;
         closeMention();
         updateValue(next, mention.start + insertText.length);
