@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { BriefcaseBusiness, ChevronRight, CircleCheck, CircleX, Globe2, Image as ImageIcon, ListChecks, Music2, Palette, RefreshCw, Star, Video, PenTool } from "lucide-react";
+import { BriefcaseBusiness, ChevronRight, CircleCheck, CircleX, Globe2, Image as ImageIcon, LayoutGrid, ListChecks, Music2, Palette, RefreshCw, Star, Video, PenTool, Wand2 } from "lucide-react";
 import dynamic from "next/dynamic";
 
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -58,6 +58,8 @@ export const nodeContentRenderers = {
     [CanvasNodeType.Task]: TaskNodeContent,
     [CanvasNodeType.BrandKit]: BrandKitNodeContent,
     [CanvasNodeType.Drawing]: DrawingNodeContent,
+    [CanvasNodeType.Skill]: SkillNodeContent,
+    [CanvasNodeType.Frame]: FrameNodeContent,
 } satisfies Record<CanvasNodeType, (props: NodeContentRendererProps) => ReactNode>;
 
 export function BriefNodeContent({ node, theme }: NodeContentRendererProps) {
@@ -178,6 +180,44 @@ export function DrawingNodeContent({ node, theme }: NodeContentRendererProps) {
             }
         >
             <CanvasDrawingNodeWrapper node={node} theme={theme} />
+        </React.Suspense>
+    );
+}
+
+export function SkillNodeContent({ node, theme }: NodeContentRendererProps) {
+    // 使用包装器组件，它会从 URL 参数获取 projectId
+    const CanvasSkillNodeWrapper = React.lazy(() =>
+        import("./canvas-skill-node-wrapper").then((mod) => ({ default: mod.CanvasSkillNodeWrapper }))
+    );
+
+    return (
+        <React.Suspense
+            fallback={
+                <div className="flex h-full w-full items-center justify-center">
+                    <Wand2 className="size-8 text-gray-400" />
+                </div>
+            }
+        >
+            <CanvasSkillNodeWrapper node={node} theme={theme} />
+        </React.Suspense>
+    );
+}
+
+export function FrameNodeContent({ node, theme }: NodeContentRendererProps) {
+    // 使用包装器组件渲染 Frame 节点
+    const CanvasFrameNodeWrapper = React.lazy(() =>
+        import("./canvas-frame-node-wrapper").then((mod) => ({ default: mod.CanvasFrameNodeWrapper }))
+    );
+
+    return (
+        <React.Suspense
+            fallback={
+                <div className="flex h-full w-full items-center justify-center">
+                    <LayoutGrid className="size-8 text-gray-400" />
+                </div>
+            }
+        >
+            <CanvasFrameNodeWrapper node={node} theme={theme} />
         </React.Suspense>
     );
 }

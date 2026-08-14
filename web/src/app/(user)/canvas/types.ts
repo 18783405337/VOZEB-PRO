@@ -20,6 +20,9 @@ export enum CanvasNodeType {
     Task = "task",
     BrandKit = "brand-kit",
     Drawing = "drawing",
+    Skill = "skill",
+    Script = "script",
+    Frame = "frame",
 }
 
 export function isCanvasImageNodeType(type: CanvasNodeType | null | undefined) {
@@ -137,6 +140,23 @@ export type CanvasNodeMetadata = {
     drawingShapeCount?: number;
     drawingPageCount?: number;
     drawingPreviewUrl?: string;
+    skillId?: string;
+    skillTemplateId?: string;
+    skillStatus?: "idle" | "running" | "success" | "error";
+    skillProgress?: number;
+    skillParameters?: Record<string, unknown>;
+    skillOutput?: any;
+    skillError?: string;
+    skillLastExecutedAt?: string;
+    scriptId?: string;
+    scriptRevision?: number;
+    scriptCharacterCount?: number;
+    scriptWordCount?: number;
+    frameId?: string;
+    frameColor?: string;
+    frameBackgroundOpacity?: number;
+    frameShowTitle?: boolean;
+    frameChildNodeIds?: string[];
 };
 
 export type CanvasNodeData = {

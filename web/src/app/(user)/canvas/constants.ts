@@ -20,6 +20,8 @@ export const NODE_DEFAULT_SIZE = {
     [CanvasNodeType.Task]: { width: 340, height: 210, title: "Agent 任务" },
     [CanvasNodeType.BrandKit]: { width: 340, height: 240, title: "品牌规范" },
     [CanvasNodeType.Drawing]: { width: 480, height: 360, title: "绘图画板" },
+    [CanvasNodeType.Skill]: { width: 400, height: 320, title: "技能节点" },
+    [CanvasNodeType.Frame]: { width: 600, height: 400, title: "新框架" },
 } satisfies Record<CanvasNodeType, { width: number; height: number; title: string }>;
 
 const NODE_SPECS = {
@@ -59,6 +61,28 @@ const NODE_SPECS = {
             drawingRevision: 0,
             drawingShapeCount: 0,
             drawingPageCount: 1,
+        },
+    },
+    [CanvasNodeType.Skill]: {
+        ...NODE_DEFAULT_SIZE[CanvasNodeType.Skill],
+        metadata: {
+            status: "idle",
+            skillId: `skill-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            skillTemplateId: "",
+            skillStatus: "idle",
+            skillProgress: 0,
+            skillParameters: {},
+        },
+    },
+    [CanvasNodeType.Frame]: {
+        ...NODE_DEFAULT_SIZE[CanvasNodeType.Frame],
+        metadata: {
+            status: "idle",
+            frameId: `frame-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            frameColor: "blue",
+            frameBackgroundOpacity: 0.05,
+            frameShowTitle: true,
+            frameChildNodeIds: [],
         },
     },
 } satisfies Record<CanvasNodeType, CanvasNodeSpec>;

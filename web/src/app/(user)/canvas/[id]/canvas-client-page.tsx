@@ -533,6 +533,8 @@ function VozebProCanvasPage() {
                     onAddAudio={() => createNode(CanvasNodeType.Audio)}
                     onAddText={() => createNode(CanvasNodeType.Text)}
                     onAddConfig={() => createNode(CanvasNodeType.Config)}
+                    onAddDrawing={() => createNode(CanvasNodeType.Drawing)}
+                    onAddFrame={() => createNode(CanvasNodeType.Frame)}
                     onUndo={undoCanvas}
                     onRedo={redoCanvas}
                     onUpload={() => handleUploadRequest()}
