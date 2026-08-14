@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { BriefcaseBusiness, ChevronRight, CircleCheck, CircleX, Globe2, Image as ImageIcon, LayoutGrid, ListChecks, Music2, Palette, RefreshCw, Star, Video, PenTool, Wand2 } from "lucide-react";
+import { BriefcaseBusiness, ChevronRight, CircleCheck, CircleX, Globe2, Image as ImageIcon, LayoutGrid, ListChecks, Music2, Palette, RefreshCw, Star, Video, PenTool, Wand2, Film } from "lucide-react";
 import dynamic from "next/dynamic";
 
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -60,6 +60,7 @@ export const nodeContentRenderers = {
     [CanvasNodeType.Drawing]: DrawingNodeContent,
     [CanvasNodeType.Skill]: SkillNodeContent,
     [CanvasNodeType.Frame]: FrameNodeContent,
+    [CanvasNodeType.Storyboard]: StoryboardNodeContent,
 } satisfies Record<CanvasNodeType, (props: NodeContentRendererProps) => ReactNode>;
 
 export function BriefNodeContent({ node, theme }: NodeContentRendererProps) {
@@ -218,6 +219,25 @@ export function FrameNodeContent({ node, theme }: NodeContentRendererProps) {
             }
         >
             <CanvasFrameNodeWrapper node={node} theme={theme} />
+        </React.Suspense>
+    );
+}
+
+export function StoryboardNodeContent({ node, theme }: NodeContentRendererProps) {
+    // 使用包装器组件渲染 Storyboard 节点
+    const CanvasStoryboardNodeWrapper = React.lazy(() =>
+        import("./storyboard/canvas-storyboard-node-wrapper").then((mod) => ({ default: mod.CanvasStoryboardNodeWrapper }))
+    );
+
+    return (
+        <React.Suspense
+            fallback={
+                <div className="flex h-full w-full items-center justify-center">
+                    <Film className="size-8 text-gray-400" />
+                </div>
+            }
+        >
+            <CanvasStoryboardNodeWrapper node={node} theme={theme} />
         </React.Suspense>
     );
 }

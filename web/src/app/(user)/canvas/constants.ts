@@ -22,6 +22,7 @@ export const NODE_DEFAULT_SIZE = {
     [CanvasNodeType.Drawing]: { width: 480, height: 360, title: "绘图画板" },
     [CanvasNodeType.Skill]: { width: 400, height: 320, title: "技能节点" },
     [CanvasNodeType.Frame]: { width: 600, height: 400, title: "新框架" },
+    [CanvasNodeType.Storyboard]: { width: 800, height: 600, title: "分镜脚本" },
 } satisfies Record<CanvasNodeType, { width: number; height: number; title: string }>;
 
 const NODE_SPECS = {
@@ -83,6 +84,17 @@ const NODE_SPECS = {
             frameBackgroundOpacity: 0.05,
             frameShowTitle: true,
             frameChildNodeIds: [],
+        },
+    },
+    [CanvasNodeType.Storyboard]: {
+        ...NODE_DEFAULT_SIZE[CanvasNodeType.Storyboard],
+        metadata: {
+            status: "idle",
+            storyboardId: `storyboard-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            storyboardRevision: 0,
+            storyboardShotCount: 0,
+            storyboardSceneCount: 0,
+            storyboardTotalDuration: 0,
         },
     },
 } satisfies Record<CanvasNodeType, CanvasNodeSpec>;
