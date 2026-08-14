@@ -25,6 +25,7 @@ export enum CanvasNodeType {
     Frame = "frame",
     Storyboard = "storyboard",
     Character = "character",
+    Director3D = "director-3d",
 }
 
 export function isCanvasImageNodeType(type: CanvasNodeType | null | undefined) {
@@ -170,6 +171,45 @@ export type CanvasNodeMetadata = {
     characterType?: "human" | "creature" | "object" | "other";
     characterTags?: string[];
     characterConsistencyScore?: number;
+    director3DId?: string;
+    director3DRevision?: number;
+    director3DCameraCount?: number;
+    director3DLightCount?: number;
+    director3DModelCount?: number;
+    director3DSceneData?: {
+        cameras?: Array<{
+            id: string;
+            name: string;
+            position: [number, number, number];
+            target: [number, number, number];
+            fov: number;
+            aspect: number;
+            near: number;
+            far: number;
+        }>;
+        lights?: Array<{
+            id: string;
+            name: string;
+            type: "ambient" | "directional" | "point" | "spot";
+            color: string;
+            intensity: number;
+            position?: [number, number, number];
+            direction?: [number, number, number];
+        }>;
+        models?: Array<{
+            id: string;
+            name: string;
+            url: string;
+            position: [number, number, number];
+            rotation: [number, number, number];
+            scale: [number, number, number];
+        }>;
+        environment?: {
+            backgroundColor: string;
+            gridVisible: boolean;
+            axesVisible: boolean;
+        };
+    };
 };
 
 export type CanvasNodeData = {

@@ -23,6 +23,7 @@ export const NODE_DEFAULT_SIZE = {
     [CanvasNodeType.Skill]: { width: 400, height: 320, title: "技能节点" },
     [CanvasNodeType.Frame]: { width: 600, height: 400, title: "新框架" },
     [CanvasNodeType.Storyboard]: { width: 800, height: 600, title: "分镜脚本" },
+    [CanvasNodeType.Director3D]: { width: 640, height: 480, title: "3D导演台" },
 } satisfies Record<CanvasNodeType, { width: number; height: number; title: string }>;
 
 const NODE_SPECS = {
@@ -95,6 +96,55 @@ const NODE_SPECS = {
             storyboardShotCount: 0,
             storyboardSceneCount: 0,
             storyboardTotalDuration: 0,
+        },
+    },
+    [CanvasNodeType.Director3D]: {
+        ...NODE_DEFAULT_SIZE[CanvasNodeType.Director3D],
+        metadata: {
+            status: "idle",
+            director3DId: `director3d-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            director3DRevision: 0,
+            director3DCameraCount: 1,
+            director3DLightCount: 2,
+            director3DModelCount: 0,
+            director3DSceneData: {
+                cameras: [
+                    {
+                        id: "main-camera",
+                        name: "主相机",
+                        position: [5, 5, 5],
+                        target: [0, 0, 0],
+                        fov: 75,
+                        aspect: 4 / 3,
+                        near: 0.1,
+                        far: 1000,
+                    },
+                ],
+                lights: [
+                    {
+                        id: "ambient-light",
+                        name: "环境光",
+                        type: "ambient",
+                        color: "#404040",
+                        intensity: 0.5,
+                    },
+                    {
+                        id: "directional-light",
+                        name: "主光源",
+                        type: "directional",
+                        color: "#ffffff",
+                        intensity: 1.0,
+                        position: [10, 10, 10],
+                        direction: [-1, -1, -1],
+                    },
+                ],
+                models: [],
+                environment: {
+                    backgroundColor: "#1a1a1a",
+                    gridVisible: true,
+                    axesVisible: true,
+                },
+            },
         },
     },
 } satisfies Record<CanvasNodeType, CanvasNodeSpec>;
