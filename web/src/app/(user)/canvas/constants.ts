@@ -19,6 +19,7 @@ export const NODE_DEFAULT_SIZE = {
     [CanvasNodeType.Brief]: { width: 380, height: 280, title: "创作简报" },
     [CanvasNodeType.Task]: { width: 340, height: 210, title: "Agent 任务" },
     [CanvasNodeType.BrandKit]: { width: 340, height: 240, title: "品牌规范" },
+    [CanvasNodeType.Drawing]: { width: 480, height: 360, title: "绘图画板" },
 } satisfies Record<CanvasNodeType, { width: number; height: number; title: string }>;
 
 const NODE_SPECS = {
@@ -49,6 +50,17 @@ const NODE_SPECS = {
     [CanvasNodeType.Brief]: { ...NODE_DEFAULT_SIZE[CanvasNodeType.Brief], metadata: { status: "idle" } },
     [CanvasNodeType.Task]: { ...NODE_DEFAULT_SIZE[CanvasNodeType.Task], metadata: { status: "idle", agentTaskStatus: "pending", agentTaskAttempts: 0 } },
     [CanvasNodeType.BrandKit]: { ...NODE_DEFAULT_SIZE[CanvasNodeType.BrandKit], metadata: { status: "idle" } },
+    [CanvasNodeType.Drawing]: {
+        ...NODE_DEFAULT_SIZE[CanvasNodeType.Drawing],
+        metadata: {
+            status: "idle",
+            drawingId: `drawing-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            drawingEngine: "tldraw",
+            drawingRevision: 0,
+            drawingShapeCount: 0,
+            drawingPageCount: 1,
+        },
+    },
 } satisfies Record<CanvasNodeType, CanvasNodeSpec>;
 
 export function getNodeSpec(type: CanvasNodeType) {

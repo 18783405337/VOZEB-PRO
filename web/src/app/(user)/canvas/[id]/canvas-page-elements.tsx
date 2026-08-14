@@ -1,6 +1,6 @@
 "use client";
 
-import { Globe2, ImageIcon, List, Music2, Settings2, Video } from "lucide-react";
+import { Globe2, ImageIcon, List, Music2, Settings2, Video, PenTool } from "lucide-react";
 import dynamic from "next/dynamic";
 
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
@@ -27,7 +27,7 @@ export type ConnectionDropTarget = {
     isNearNode: boolean;
 };
 
-export type CanvasCreatableNodeType = CanvasNodeType.Image | CanvasNodeType.Panorama | CanvasNodeType.Text | CanvasNodeType.Config | CanvasNodeType.Video | CanvasNodeType.Audio;
+export type CanvasCreatableNodeType = CanvasNodeType.Image | CanvasNodeType.Panorama | CanvasNodeType.Text | CanvasNodeType.Config | CanvasNodeType.Video | CanvasNodeType.Audio | CanvasNodeType.Drawing;
 
 export type CanvasHistoryEntry = Pick<CanvasClipboard, "nodes" | "connections"> & {
     chatSessions: CanvasAssistantSession[];
@@ -144,6 +144,7 @@ export function NodeCreateMenu({ position, onCreate, onClose }: { position: Posi
                 <ConnectionCreateOption theme={theme} icon={<Globe2 className="size-5" />} title="全景图" description="生成 2:1 环境全景" onClick={() => onCreate(CanvasNodeType.Panorama)} />
                 <ConnectionCreateOption theme={theme} icon={<Video className="size-5" />} title="视频" onClick={() => onCreate(CanvasNodeType.Video)} />
                 <ConnectionCreateOption theme={theme} icon={<Music2 className="size-5" />} title="音频" onClick={() => onCreate(CanvasNodeType.Audio)} />
+                <ConnectionCreateOption theme={theme} icon={<PenTool className="size-5" />} title="绘图画板" description="Excalidraw 或 Tldraw 绘图" onClick={() => onCreate(CanvasNodeType.Drawing)} />
                 <ConnectionCreateOption theme={theme} icon={<Settings2 className="size-5" />} title="生成配置" description="模型、尺寸、数量和输入顺序" onClick={() => onCreate(CanvasNodeType.Config)} />
             </div>
         </div>
