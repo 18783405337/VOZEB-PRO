@@ -43,6 +43,7 @@ export default function nextConfig(phase: string): NextConfig {
         turbopack: { root: webDir },
         typescript: { ignoreBuildErrors: skipBuildTypeCheck },
         allowedDevOrigins: isDev ? ["*.*.*.*"] : [],
+        transpilePackages: ["@excalidraw/excalidraw", "tldraw"],
         env: {
             NEXT_PUBLIC_APP_VERSION: localVersion,
             NEXT_PUBLIC_APP_RELEASES: JSON.stringify(releases),
