@@ -20,8 +20,12 @@ export const NODE_DEFAULT_SIZE = {
     [CanvasNodeType.Task]: { width: 340, height: 210, title: "Agent 任务" },
     [CanvasNodeType.BrandKit]: { width: 340, height: 240, title: "品牌规范" },
     [CanvasNodeType.Drawing]: { width: 480, height: 360, title: "绘图画板" },
+    [CanvasNodeType.Script]: { width: 500, height: 400, title: "脚本编辑器" },
     [CanvasNodeType.Skill]: { width: 400, height: 320, title: "技能节点" },
     [CanvasNodeType.Frame]: { width: 600, height: 400, title: "新框架" },
+    [CanvasNodeType.Storyboard]: { width: 800, height: 600, title: "分镜表" },
+    [CanvasNodeType.Character]: { width: 360, height: 480, title: "角色资产" },
+    [CanvasNodeType.Director3D]: { width: 600, height: 450, title: "3D场景" },
     [CanvasNodeType.Storyboard]: { width: 800, height: 600, title: "分镜脚本" },
     [CanvasNodeType.Director3D]: { width: 640, height: 480, title: "3D导演台" },
 } satisfies Record<CanvasNodeType, { width: number; height: number; title: string }>;

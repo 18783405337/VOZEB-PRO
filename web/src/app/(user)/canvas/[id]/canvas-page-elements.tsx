@@ -27,7 +27,20 @@ export type ConnectionDropTarget = {
     isNearNode: boolean;
 };
 
-export type CanvasCreatableNodeType = CanvasNodeType.Image | CanvasNodeType.Panorama | CanvasNodeType.Text | CanvasNodeType.Config | CanvasNodeType.Video | CanvasNodeType.Audio | CanvasNodeType.Drawing;
+export type CanvasCreatableNodeType =
+    | CanvasNodeType.Image
+    | CanvasNodeType.Panorama
+    | CanvasNodeType.Text
+    | CanvasNodeType.Config
+    | CanvasNodeType.Video
+    | CanvasNodeType.Audio
+    | CanvasNodeType.Drawing
+    | CanvasNodeType.Script
+    | CanvasNodeType.Skill
+    | CanvasNodeType.Frame
+    | CanvasNodeType.Storyboard
+    | CanvasNodeType.Character
+    | CanvasNodeType.Director3D;
 
 export type CanvasHistoryEntry = Pick<CanvasClipboard, "nodes" | "connections"> & {
     chatSessions: CanvasAssistantSession[];
