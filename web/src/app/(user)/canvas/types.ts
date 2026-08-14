@@ -19,6 +19,7 @@ export enum CanvasNodeType {
     Brief = "brief",
     Task = "task",
     BrandKit = "brand-kit",
+    Drawing = "drawing",
 }
 
 export function isCanvasImageNodeType(type: CanvasNodeType | null | undefined) {
@@ -28,6 +29,7 @@ export function isCanvasImageNodeType(type: CanvasNodeType | null | undefined) {
 type CanvasNodeStatus = "idle" | "success" | "loading" | "error" | "cancelled";
 export type CanvasGenerationMode = "text" | "image" | "video" | "audio";
 export type CanvasImageGenerationType = "generation" | "edit";
+export type CanvasDrawingEngine = "excalidraw" | "tldraw";
 
 export type CameraControlOptions = {
     enabled: boolean;
@@ -129,6 +131,12 @@ export type CanvasNodeMetadata = {
         id: string;
         model: string;
     };
+    drawingId?: string;
+    drawingEngine?: CanvasDrawingEngine;
+    drawingRevision?: number;
+    drawingShapeCount?: number;
+    drawingPageCount?: number;
+    drawingPreviewUrl?: string;
 };
 
 export type CanvasNodeData = {
