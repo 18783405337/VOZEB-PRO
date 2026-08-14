@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { LoaderCircle, Square } from "lucide-react";
 import { Button } from "antd";
 
@@ -8,6 +8,7 @@ import { ModelPicker } from "@/components/model-picker";
 import { CreditSymbol, formatCreditAmount, requestCreditCost } from "@/constant/credits";
 import { defaultConfig, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { imagePreviewUrl } from "@/lib/media-image-url";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
 import { CanvasPromptLibrary } from "./canvas-prompt-library";
@@ -44,6 +45,8 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const isPanorama = node.type === CanvasNodeType.Panorama;
     const isEditingExistingContent = hasTextContent || hasImageContent;
     const [prompt, setPrompt] = useState(isEditingExistingContent ? "" : node.metadata?.prompt || "");
+    const promptRef = useRef<HTMLTextAreaElement>(null);
+    const connectedImages = mode === "video" ? mentionReferences.filter((reference) => reference.active && reference.kind === "image") : [];
     const credits = requestCreditCost({
         apiSource: config.apiSource,
         modelPointCosts: config.modelPointCosts,
@@ -72,6 +75,23 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
         setPrompt("");
     };
 
+    const insertImageMention = (label: string) => {
+        const textarea = promptRef.current;
+        const start = textarea?.selectionStart ?? prompt.length;
+        const end = textarea?.selectionEnd ?? start;
+        const mention = `@${label}`;
+        const needsLeadingSpace = start > 0 && /[\w@]$/u.test(prompt.slice(0, start));
+        const needsTrailingSpace = end < prompt.length && /^\S/u.test(prompt.slice(end));
+        const insert = `${needsLeadingSpace ? " " : ""}${mention}${needsTrailingSpace ? " " : ""}`;
+        const next = `${prompt.slice(0, start)}${insert}${prompt.slice(end)}`;
+        updatePrompt(next);
+        requestAnimationFrame(() => {
+            const cursor = start + insert.length;
+            textarea?.focus();
+            textarea?.setSelectionRange(cursor, cursor);
+        });
+    };
+
     return (
         <div
             className="rounded-2xl border p-3 shadow-2xl backdrop-blur"
@@ -81,6 +101,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
             onWheel={(event) => event.stopPropagation()}
         >
             <CanvasResourceMentionTextarea
+                ref={promptRef}
                 value={prompt}
                 references={mentionReferences}
                 onChange={updatePrompt}
@@ -89,6 +110,30 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                 style={{ background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text }}
                 placeholder={promptPlaceholder(mode, hasImageContent, hasTextContent, isPanorama)}
             />
+
+            {connectedImages.length ? (
+                <div className="mt-2 border-t pt-2" style={{ borderColor: theme.toolbar.border }}>
+                    <div className="mb-1.5 text-[11px] font-medium opacity-65">已连接图片 · 点击插入引用</div>
+                    <div className="thin-scrollbar flex max-w-full gap-2 overflow-x-auto pb-1">
+                        {connectedImages.map((reference) => (
+                            <button
+                                key={reference.id}
+                                type="button"
+                                className="flex w-32 shrink-0 items-center gap-2 rounded-lg border p-1.5 text-left transition hover:border-[#2f80ff]"
+                                style={{ borderColor: theme.toolbar.border, background: theme.node.fill }}
+                                title={`插入 @${reference.label}`}
+                                onClick={() => insertImageMention(reference.label)}
+                            >
+                                {reference.previewUrl ? <img src={imagePreviewUrl(reference.previewUrl, 96)} alt="" className="size-10 shrink-0 rounded-md object-cover" /> : <span className="size-10 shrink-0 rounded-md bg-black/10" />}
+                                <span className="min-w-0">
+                                    <span className="block text-xs font-semibold text-[#2f80ff]">@{reference.label}</span>
+                                    <span className="block truncate text-[11px] opacity-60">{reference.title}</span>
+                                </span>
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            ) : null}
 
             <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2">
                 <div className="canvas-composer-tools flex min-w-0 flex-1 flex-wrap items-center gap-2">

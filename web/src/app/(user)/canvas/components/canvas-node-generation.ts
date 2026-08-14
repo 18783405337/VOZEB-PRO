@@ -39,13 +39,21 @@ export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData
         .filter(Boolean)
         .join("\n\n");
     const allImages = inputs.map((input) => input.image).filter((image): image is ReferenceImage => Boolean(image));
+    const allVideos = inputs.map((input) => input.video).filter((video): video is ReferenceVideo => Boolean(video));
+    const allAudios = inputs.map((input) => input.audio).filter((audio): audio is ReferenceAudio => Boolean(audio));
     const mentionedImageIndexes = mentionedReferenceIndexes(prompt, "image");
-    const referenceImages = mentionedImageIndexes.length ? mentionedImageIndexes.flatMap((index) => allImages[index] ? [allImages[index]] : []) : allImages;
-    const referenceVideos = inputs.map((input) => input.video).filter((video): video is ReferenceVideo => Boolean(video));
-    const referenceAudios = inputs.map((input) => input.audio).filter((audio): audio is ReferenceAudio => Boolean(audio));
+    const mentionedVideoIndexes = mentionedReferenceIndexes(prompt, "video");
+    const mentionedAudioIndexes = mentionedReferenceIndexes(prompt, "audio");
+    const referenceImages = selectMentionedReferences(allImages, mentionedImageIndexes);
+    const referenceVideos = selectMentionedReferences(allVideos, mentionedVideoIndexes);
+    const referenceAudios = selectMentionedReferences(allAudios, mentionedAudioIndexes);
 
     return {
-        prompt: replaceMentionedReferences(upstreamText ? `${prompt}\n\n${upstreamText}` : prompt, mentionedImageIndexes),
+        prompt: replaceMentionedReferences(upstreamText ? `${prompt}\n\n${upstreamText}` : prompt, {
+            image: mentionedImageIndexes,
+            video: mentionedVideoIndexes,
+            audio: mentionedAudioIndexes,
+        }),
         referenceImages,
         referenceVideos,
         referenceAudios,
@@ -126,8 +134,24 @@ export function mentionedReferenceIndexes(prompt: string, kind: "image" | "video
     return indexes;
 }
 
-export function replaceMentionedReferences(prompt: string, indexes: number[]) {
-    return indexes.length ? prompt.replace(/@图片\d+/g, (value) => value.replace("@", "")) : prompt;
+export function selectMentionedReferences<T>(references: T[], indexes: number[]) {
+    return indexes.length ? indexes.flatMap((index) => references[index] ? [references[index]] : []) : references;
+}
+
+export function replaceMentionedReferences(prompt: string, indexes: { image: number[]; video: number[]; audio: number[] }) {
+    return ([
+        ["image", "图片"],
+        ["video", "视频"],
+        ["audio", "音频"],
+    ] as const).reduce((text, [kind, prefix]) => {
+        const kindIndexes = indexes[kind];
+        if (!kindIndexes.length) return text;
+        const providerIndexByCanvasIndex = new Map(kindIndexes.map((canvasIndex, providerIndex) => [canvasIndex, providerIndex]));
+        return text.replace(new RegExp(`@${prefix}(\\d+)`, "g"), (value, number: string) => {
+            const providerIndex = providerIndexByCanvasIndex.get(Number(number) - 1);
+            return providerIndex === undefined ? value : seedanceReferenceLabel(kind, providerIndex);
+        });
+    }, prompt);
 }
 
 export function buildNodeGenerationInputs(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]): NodeGenerationInput[] {
