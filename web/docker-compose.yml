@@ -1,0 +1,67 @@
+version: '3.8'
+
+services:
+  # PostgreSQL 数据库
+  postgres:
+    image: postgres:15-alpine
+    container_name: canvas-postgres
+    environment:
+      POSTGRES_USER: canvas_user
+      POSTGRES_PASSWORD: canvas_password
+      POSTGRES_DB: canvas_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sh:/docker-entrypoint-initdb.d/init-db.sh
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U canvas_user -d canvas_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - canvas-network
+
+  # Next.js Web 应用
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: canvas-web
+    environment:
+      - DATABASE_URL=postgresql://canvas_user:canvas_password@postgres:5432/canvas_db
+      - NEXT_PUBLIC_API_URL=http://localhost:3000
+      - NODE_ENV=production
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - canvas-network
+    restart: unless-stopped
+
+  # 数据库迁移服务（一次性运行）
+  migration:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: canvas-migration
+    environment:
+      - DATABASE_URL=postgresql://canvas_user:canvas_password@postgres:5432/canvas_db
+    command: sh -c "npm run migrate"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - canvas-network
+    profiles:
+      - migration
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  canvas-network:
+    driver: bridge
