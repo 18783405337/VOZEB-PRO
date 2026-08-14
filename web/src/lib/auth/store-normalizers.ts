@@ -436,6 +436,8 @@ export function normalizeSiteSettings(settings: Partial<SiteSettings> | undefine
         footerCopyright: normalizeText(settings?.footerCopyright, DEFAULT_SITE_SETTINGS.footerCopyright, 120),
         termsUrl: normalizeLinkUrl(settings?.termsUrl, DEFAULT_SITE_SETTINGS.termsUrl),
         privacyUrl: normalizeLinkUrl(settings?.privacyUrl, DEFAULT_SITE_SETTINGS.privacyUrl),
+        termsContent: normalizeText(settings?.termsContent, "", 50_000),
+        privacyContent: normalizeText(settings?.privacyContent, "", 50_000),
         homeShowcaseMode: settings?.homeShowcaseMode === "custom" ? "custom" : "random",
         homeShowcaseItems: normalizeSiteShowcaseItems(settings?.homeShowcaseItems),
         friendLinks: normalizeSiteFriendLinks(settings?.friendLinks),

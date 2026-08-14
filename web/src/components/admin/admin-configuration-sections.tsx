@@ -20,6 +20,7 @@ import {
     generationStatusLabel,
 } from "@/components/admin/admin-generation-log";
 import { GenerationConcurrencyPanel, GenerationDefaultsPanel, localAgentReadiness } from "@/components/admin/admin-generation-settings";
+import { AgentMarkdown } from "@/components/agent/agent-markdown";
 import type { AgentReadiness } from "@/components/admin/admin-generation-settings";
 import { AdminLocalMediaStorage } from "@/components/admin/admin-local-media-storage";
 import { AdminOverview, buildOperationsSummary } from "@/components/admin/admin-overview";
@@ -268,6 +269,22 @@ export function AdminSiteSection({ controller }: { controller: AdminDashboardCon
                                     <Input value={settings.site.privacyUrl} maxLength={2000} placeholder="/privacy 或 https://..." onChange={(event) => updateSiteSetting("privacyUrl", event.target.value)} />
                                 </LabeledControl>
                             </div>
+                            <div className="space-y-4 border-t border-stone-200 pt-4 dark:border-stone-800">
+                                <div>
+                                    <div className="text-sm font-semibold text-stone-950 dark:text-stone-100">协议正文 · Markdown 富文本</div>
+                                    <div className="mt-1 text-xs leading-5 text-stone-500 dark:text-stone-400">支持标题、粗体、列表、链接、引用、表格和代码块；保存后 `/terms`、`/privacy` 优先显示这里的正文，留空则使用系统默认内容。</div>
+                                </div>
+                                <LegalMarkdownEditor
+                                    title="服务条款"
+                                    value={settings.site.termsContent}
+                                    onChange={(value) => updateSiteSetting("termsContent", value)}
+                                />
+                                <LegalMarkdownEditor
+                                    title="隐私协议"
+                                    value={settings.site.privacyContent}
+                                    onChange={(value) => updateSiteSetting("privacyContent", value)}
+                                />
+                            </div>
                             <div className="grid gap-3">
                                 {siteSocialItems.map((item) => {
                                     const social = settings.site.socials[item.key];
@@ -343,6 +360,26 @@ export function AdminSiteSection({ controller }: { controller: AdminDashboardCon
                 </div>
             </div>
         </Panel>
+    );
+}
+
+function LegalMarkdownEditor({ title, value, onChange }: { title: string; value: string; onChange: (value: string) => void }) {
+    return (
+        <div className="overflow-hidden rounded-lg border border-stone-200 bg-white dark:border-stone-800 dark:bg-stone-950/60">
+            <div className="border-b border-stone-200 px-3 py-2 text-sm font-semibold text-stone-950 dark:border-stone-800 dark:text-stone-100">{title}</div>
+            <div className="grid lg:grid-cols-2">
+                <div className="p-3 lg:border-r lg:border-stone-200 dark:lg:border-stone-800">
+                    <div className="mb-2 text-xs font-medium text-stone-500 dark:text-stone-400">Markdown 编辑</div>
+                    <Input.TextArea value={value} rows={14} maxLength={50_000} showCount placeholder={`# ${title}\n\n请填写协议正文...`} onChange={(event) => onChange(event.target.value)} />
+                </div>
+                <div className="border-t border-stone-200 p-3 lg:border-t-0 dark:border-stone-800">
+                    <div className="mb-2 text-xs font-medium text-stone-500 dark:text-stone-400">实时预览</div>
+                    <div className="thin-scrollbar max-h-[328px] min-h-[280px] overflow-y-auto rounded-md border border-stone-200 bg-stone-50 p-4 text-sm leading-7 dark:border-stone-800 dark:bg-stone-900/60">
+                        {value.trim() ? <AgentMarkdown>{value}</AgentMarkdown> : <span className="text-stone-400">填写后将在这里预览排版。</span>}
+                    </div>
+                </div>
+            </div>
+        </div>
     );
 }
 

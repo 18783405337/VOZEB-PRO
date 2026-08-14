@@ -91,6 +91,8 @@ export const DEFAULT_SITE_SETTINGS: SiteSettings = {
     footerCopyright: "© 2026 VOZEB PRO. All rights reserved.",
     termsUrl: "/terms",
     privacyUrl: "/privacy",
+    termsContent: "",
+    privacyContent: "",
     homeShowcaseMode: "random",
     homeShowcaseItems: [],
     friendLinks: DEFAULT_SITE_FRIEND_LINKS,

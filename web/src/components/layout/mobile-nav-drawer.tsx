@@ -1,10 +1,10 @@
 "use client";
 
 import { Drawer } from "antd";
-import { CircleHelp } from "lucide-react";
+import { ChevronDown, CircleHelp, FileText, Scale, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { SiteLogo } from "@/components/layout/site-logo";
 import { navigationGroups, navigationTools, type NavigationToolSlug } from "@/constant/navigation-tools";
@@ -21,8 +21,10 @@ export function MobileNavDrawer({ open, activeToolSlug, onClose }: MobileNavDraw
     const pathname = usePathname();
     const router = useRouter();
     const previousPathnameRef = useRef(pathname);
-    const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: "VOZEB PRO", logoUrl: "/logo.svg" };
+    const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: "VOZEB PRO", logoUrl: "/logo.svg", termsUrl: "/terms", privacyUrl: "/privacy" };
     const helpActive = pathname.startsWith("/help");
+    const legalActive = pathname.startsWith("/terms") || pathname.startsWith("/privacy");
+    const [legalOpen, setLegalOpen] = useState(legalActive);
 
     useEffect(() => {
         if (previousPathnameRef.current === pathname) return;
@@ -82,6 +84,31 @@ export function MobileNavDrawer({ open, activeToolSlug, onClose }: MobileNavDraw
                 </div>
             ))}
             <div className="mt-5 border-t border-[var(--glass-border)] pt-4">
+                <button
+                    type="button"
+                    className={cn(
+                        "glass-focus-ring flex min-h-11 w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition",
+                        legalActive ? "glass-surface-muted font-medium text-[#1d2127] dark:text-[#f3f5f7]" : "text-[#697381] hover:bg-[var(--glass-bg-hover)] hover:text-[#20242a] dark:text-[#9aa3af] dark:hover:bg-white/8 dark:hover:text-[#f3f5f7]",
+                    )}
+                    aria-expanded={legalOpen}
+                    onClick={() => setLegalOpen((value) => !value)}
+                >
+                    <Scale className="size-[18px] shrink-0" />
+                    <span className="min-w-0 flex-1 text-left">协议与政策</span>
+                    <ChevronDown className={cn("size-4 transition-transform", legalOpen && "rotate-180")} />
+                </button>
+                {legalOpen ? (
+                    <div className="ml-4 space-y-1 border-l border-[var(--glass-border)] pl-3">
+                        <Link href={site.termsUrl || "/terms"} onClick={onClose} className="glass-focus-ring flex min-h-10 items-center gap-2 rounded-lg px-3 py-2 text-sm text-[#697381] hover:bg-[var(--glass-bg-hover)] dark:text-[#9aa3af] dark:hover:bg-white/8">
+                            <FileText className="size-4" />
+                            <span>服务条款</span>
+                        </Link>
+                        <Link href={site.privacyUrl || "/privacy"} onClick={onClose} className="glass-focus-ring flex min-h-10 items-center gap-2 rounded-lg px-3 py-2 text-sm text-[#697381] hover:bg-[var(--glass-bg-hover)] dark:text-[#9aa3af] dark:hover:bg-white/8">
+                            <ShieldCheck className="size-4" />
+                            <span>隐私协议</span>
+                        </Link>
+                    </div>
+                ) : null}
                 <Link
                     href="/help"
                     prefetch

@@ -298,6 +298,8 @@ export type SiteSettings = {
     footerCopyright: string;
     termsUrl: string;
     privacyUrl: string;
+    termsContent: string;
+    privacyContent: string;
     homeShowcaseMode: SiteShowcaseMode;
     homeShowcaseItems: SiteShowcaseItem[];
     friendLinks: SiteFriendLink[];

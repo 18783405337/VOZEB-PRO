@@ -50,4 +50,14 @@ describe("site settings", () => {
             },
         });
     });
+
+    it("preserves bounded markdown content for legal documents", () => {
+        const settings = normalizeSiteSettings({
+            termsContent: "# 服务条款\n\n**请遵守规则。**",
+            privacyContent: "# 隐私协议\n\n- 仅收集必要数据",
+        });
+
+        expect(settings.termsContent).toContain("**请遵守规则。**");
+        expect(settings.privacyContent).toContain("- 仅收集必要数据");
+    });
 });

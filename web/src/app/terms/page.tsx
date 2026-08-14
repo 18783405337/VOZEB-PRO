@@ -2,6 +2,9 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowLeft, CheckCircle2, CloudCog, DatabaseBackup, Scale } from "lucide-react";
 
+import { LegalMarkdownPage } from "@/components/legal/legal-markdown-page";
+import { getPublicSiteSettings } from "@/lib/server/site-metadata";
+
 const terms = [
     {
         title: "开源协议与致谢",
@@ -31,7 +34,9 @@ export const metadata: Metadata = {
     alternates: { canonical: "/terms" },
 };
 
-export default function TermsPage() {
+export default async function TermsPage() {
+    const site = await getPublicSiteSettings();
+    if (site.termsContent.trim()) return <LegalMarkdownPage kind="terms" content={site.termsContent} />;
     return (
         <main className="app-scroll-page bg-[radial-gradient(circle_at_top_left,rgba(14,165,233,0.14),transparent_32%),linear-gradient(180deg,#ffffff_0%,#f8fafc_58%,#eef2f7_100%)] text-stone-800 dark:bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.12),transparent_34%),linear-gradient(180deg,#0a0a0a_0%,#101010_58%,#171717_100%)] dark:text-stone-200">
             <div className="mx-auto flex min-h-full w-full max-w-5xl flex-col px-5 py-8 sm:px-8 sm:py-10">

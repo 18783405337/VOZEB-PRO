@@ -29,11 +29,11 @@ describe("installation page routing", () => {
         expect(mocks.redirect).toHaveBeenCalledWith("/install");
     });
 
-    it("renders the homepage after setup is complete", async () => {
+    it("redirects the homepage to the create workbench after setup is complete", async () => {
         mocks.getInstallStatus.mockResolvedValue({ ready: true });
 
-        await expect(HomePage()).resolves.toBeTruthy();
-        expect(mocks.redirect).not.toHaveBeenCalled();
+        await expect(HomePage()).rejects.toThrow("redirect:/create");
+        expect(mocks.redirect).toHaveBeenCalledWith("/create");
     });
 
     it("keeps the installation page until setup is complete", async () => {

@@ -32,7 +32,7 @@ export function AppWorkspaceShell({ children }: { children: ReactNode }) {
 
     return (
         <div data-glass-shell className="workspace-shell app-workspace-shell flex h-dvh min-h-0 overflow-hidden text-foreground">
-            <AppSidebar activeToolSlug={tool?.slug} expanded={sidebarExpanded} />
+            <AppSidebar activeToolSlug={tool?.slug} expanded={sidebarExpanded} onRequestExpand={() => setSidebarExpanded(true)} />
             <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
                 <header data-glass-header className="app-shell-header glass-surface-strong flex h-[60px] shrink-0 items-center justify-between gap-3 px-3 sm:px-4 lg:px-5">
                     <div className="flex min-w-0 items-center gap-2.5">
