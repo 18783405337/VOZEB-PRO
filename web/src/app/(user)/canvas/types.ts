@@ -24,6 +24,7 @@ export enum CanvasNodeType {
     Script = "script",
     Frame = "frame",
     Storyboard = "storyboard",
+    Character = "character",
 }
 
 export function isCanvasImageNodeType(type: CanvasNodeType | null | undefined) {
@@ -163,6 +164,12 @@ export type CanvasNodeMetadata = {
     storyboardShotCount?: number;
     storyboardSceneCount?: number;
     storyboardTotalDuration?: number;
+    characterId?: string;
+    characterRevision?: number;
+    characterReferenceImageCount?: number;
+    characterType?: "human" | "creature" | "object" | "other";
+    characterTags?: string[];
+    characterConsistencyScore?: number;
 };
 
 export type CanvasNodeData = {
