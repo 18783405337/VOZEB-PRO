@@ -163,32 +163,22 @@ export function BrandKitNodeContent({ node, theme }: NodeContentRendererProps) {
     );
 }
 
-// 动态导入 Drawing 节点组件避免 SSR 问题
-const CanvasDrawingNodeLazy = dynamic(
-    () => import("./canvas-drawing-node").then((mod) => ({ default: mod.CanvasDrawingNode })),
-    {
-        ssr: false,
-        loading: () => (
-            <div className="flex h-full w-full items-center justify-center">
-                <PenTool className="size-8 text-gray-400" />
-            </div>
-        )
-    }
-);
-
 export function DrawingNodeContent({ node, theme }: NodeContentRendererProps) {
-    // 从最近的父组件获取 projectId
-    // 这里暂时使用节点 ID 的前缀作为 projectId
-    // 实际使用时应该从上下文传递真实的 projectId
-    const projectId = "canvas-project"; // TODO: 从上下文获取
+    // 使用包装器组件，它会从 URL 参数获取 projectId
+    const CanvasDrawingNodeWrapper = React.lazy(() =>
+        import("./canvas-drawing-node-wrapper").then((mod) => ({ default: mod.CanvasDrawingNodeWrapper }))
+    );
 
     return (
-        <div className="h-full w-full">
-            <CanvasDrawingNodeLazy
-                node={node}
-                projectId={projectId}
-            />
-        </div>
+        <React.Suspense
+            fallback={
+                <div className="flex h-full w-full items-center justify-center">
+                    <PenTool className="size-8 text-gray-400" />
+                </div>
+            }
+        >
+            <CanvasDrawingNodeWrapper node={node} theme={theme} />
+        </React.Suspense>
     );
 }
 
