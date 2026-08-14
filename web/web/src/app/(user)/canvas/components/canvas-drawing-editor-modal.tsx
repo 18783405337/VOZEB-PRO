@@ -96,6 +96,19 @@ export function CanvasDrawingEditorModal({
             const updated = await updateDrawingDocument(projectId, drawingId, currentSnapshot);
             setDocument(updated);
             setHasChanges(false);
+
+            // 生成预览图
+            try {
+                const { generateAndSavePreview } = await import("../utils/canvas-drawing-preview");
+                await generateAndSavePreview(projectId, drawingId, engine, currentSnapshot, {
+                    width: 300,
+                    height: 225,
+                });
+            } catch (previewError) {
+                console.error("Failed to generate preview:", previewError);
+                // 预览图生成失败不影响保存
+            }
+
             message.success("保存成功");
         } catch (error) {
             console.error("Failed to save drawing:", error);
@@ -103,7 +116,7 @@ export function CanvasDrawingEditorModal({
         } finally {
             setSaving(false);
         }
-    }, [projectId, drawingId, currentSnapshot, readOnly]);
+    }, [projectId, drawingId, currentSnapshot, readOnly, engine]);
 
     // 处理数据变化
     const handleChange = useCallback((snapshot: unknown) => {

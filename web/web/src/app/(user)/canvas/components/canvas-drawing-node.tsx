@@ -30,9 +30,18 @@ export function CanvasDrawingNode({ node, projectId, selected, onEdit }: CanvasD
         const loadPreview = async () => {
             setLoading(true);
             try {
-                const doc = await getDrawingDocument(projectId, drawingId);
-                if (doc?.previewUrl) {
-                    setPreviewUrl(doc.previewUrl);
+                // 先尝试从 LocalForage 获取预览图
+                const { getPreviewFromStorage } = await import("../utils/canvas-drawing-preview");
+                const cachedPreview = await getPreviewFromStorage(projectId, drawingId);
+
+                if (cachedPreview) {
+                    setPreviewUrl(cachedPreview);
+                } else {
+                    // 如果没有缓存，尝试从文档获取
+                    const doc = await getDrawingDocument(projectId, drawingId);
+                    if (doc?.previewUrl) {
+                        setPreviewUrl(doc.previewUrl);
+                    }
                 }
             } catch (error) {
                 console.error("Failed to load drawing preview:", error);
