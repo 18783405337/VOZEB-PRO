@@ -10,7 +10,7 @@ services:
       POSTGRES_PASSWORD: canvas_password
       POSTGRES_DB: canvas_db
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init-db.sh:/docker-entrypoint-initdb.d/init-db.sh
@@ -30,10 +30,10 @@ services:
     container_name: canvas-web
     environment:
       - DATABASE_URL=postgresql://canvas_user:canvas_password@postgres:5432/canvas_db
-      - NEXT_PUBLIC_API_URL=http://localhost:3000
+      - NEXT_PUBLIC_API_URL=http://localhost:3001
       - NODE_ENV=production
     ports:
-      - "3000:3000"
+      - "3001:3000"
     depends_on:
       postgres:
         condition: service_healthy

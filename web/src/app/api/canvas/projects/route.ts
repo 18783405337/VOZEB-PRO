@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth/session";
-import { requireTenantMembership } from "@/lib/server/authorization/authorization-service";
 import { canvasProjectError, createCanvasProjectForUser, deleteCanvasProjectsForUser, listCanvasProjectsForUser } from "@/lib/server/canvas-project-service";
+import { getTrustedTenantId } from "@/lib/server/tenant/tenant-context";
 
 export async function GET(request: Request) {
     const user = await getCurrentUser();
@@ -15,8 +15,8 @@ export async function POST(request: Request) {
     const user = await getCurrentUser();
     if (!user) return NextResponse.json({ code: 401, data: null, msg: "请先登录" }, { status: 401 });
     try {
-        const authorization = await requireTenantMembership(request);
-        const project = await createCanvasProjectForUser(authorization.user.id, await request.json().catch(() => ({})), authorization.tenant.id);
+        const tenantId = await getTrustedTenantId(request, user);
+        const project = await createCanvasProjectForUser(user.id, await request.json().catch(() => ({})), tenantId);
         return NextResponse.json({ code: 0, data: { project }, msg: "画布项目已创建" });
     } catch (error) {
         const known = canvasProjectError(error);

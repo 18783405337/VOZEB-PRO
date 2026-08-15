@@ -7,6 +7,8 @@ description: VOZEB PRO 当前版本需要人工或真实环境确认的事项
 
 ## SaaS 租户内核
 
+- 单租户模式下新建 Canvas 不再无条件进入 SaaS 成员校验：`VOZEB_PRO_SAAS_ENABLED=0` 时创建接口沿用默认租户 `default`，启用 SaaS 后仍通过可信租户上下文校验成员关系。路由回归测试已覆盖默认租户参数，真实登录态已成功创建空画布并写入 PostgreSQL；仍需在启用 SaaS 的双租户环境验证 Host、成员关系与项目隔离。
+
 - PostgreSQL 初始化 DDL 已新增租户、域名、租户角色、租户角色权限和成员关系表，并初始化默认租户、默认角色及现有用户成员关系；Schema 自动化测试已通过。仍需使用真实 PostgreSQL 分别验证全新数据库初始化和已有数据库增量初始化，核对表、索引、触发器、默认数据及重复执行幂等性。Tenant Repository、可信上下文解析和运行时租户隔离不在本项完成范围内。
 
 - SaaS 租户内核已补齐核心安全链路：所有者转移会在单事务中同步新旧成员角色，SaaS 模式下新注册和后台创建用户会在用户事务中加入默认租户，未知 Host 不再静默进入默认租户，只有 `NEXT_PUBLIC_SITE_URL`、localhost 或 `VOZEB_PRO_PLATFORM_HOSTS` 明确配置的 Host 可回退；生成记录 Repository 的租户级访问改为强制 `tenantId`，平台无作用域操作使用显式方法；核心资源增加以 `tenant_id` 为首列的复合索引。仍需在真实 PostgreSQL 验证所有者转移回滚、并发转移、新注册用户立即生成、两个租户同用户隔离、未知 Host 404、索引执行计划和 Worker 跨租户恢复；本地 Shell 工作区本轮启动超时，自动化、TypeScript 与 ESLint 尚未实际运行。
