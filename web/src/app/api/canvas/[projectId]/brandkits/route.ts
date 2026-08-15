@@ -18,10 +18,10 @@ import {
 import { getCanvasProject } from "@/lib/server/canvas-project-store";
 import type { CreateCanvasBrandKitInput, UpdateCanvasBrandKitInput } from "@/lib/canvas-project-resources-contract";
 
-export async function GET(request: NextRequest, context: { params: { projectId: string; nodeId: string } }) {
+export async function GET(request: NextRequest, context: { params: Promise<{ projectId: string; nodeId: string }> }) {
     try {
         const session = await requireSession(request);
-        const { projectId, nodeId } = context.params;
+        const { projectId, nodeId } = await context.params;
 
         const project = await getCanvasProject(projectId, session.userId);
         if (!project) {
@@ -43,10 +43,10 @@ export async function GET(request: NextRequest, context: { params: { projectId: 
     }
 }
 
-export async function POST(request: NextRequest, context: { params: { projectId: string } }) {
+export async function POST(request: NextRequest, context: { params: Promise<{ projectId: string }> }) {
     try {
         const session = await requireSession(request);
-        const { projectId } = context.params;
+        const { projectId } = await context.params;
 
         const project = await getCanvasProject(projectId, session.userId);
         if (!project) {
@@ -80,10 +80,10 @@ export async function POST(request: NextRequest, context: { params: { projectId:
     }
 }
 
-export async function PATCH(request: NextRequest, context: { params: { projectId: string; nodeId: string } }) {
+export async function PATCH(request: NextRequest, context: { params: Promise<{ projectId: string; nodeId: string }> }) {
     try {
         const session = await requireSession(request);
-        const { projectId, nodeId } = context.params;
+        const { projectId, nodeId } = await context.params;
 
         const project = await getCanvasProject(projectId, session.userId);
         if (!project) {
@@ -104,10 +104,10 @@ export async function PATCH(request: NextRequest, context: { params: { projectId
     }
 }
 
-export async function DELETE(request: NextRequest, context: { params: { projectId: string; nodeId: string } }) {
+export async function DELETE(request: NextRequest, context: { params: Promise<{ projectId: string; nodeId: string }> }) {
     try {
         const session = await requireSession(request);
-        const { projectId, nodeId } = context.params;
+        const { projectId, nodeId } = await context.params;
 
         const project = await getCanvasProject(projectId, session.userId);
         if (!project) {

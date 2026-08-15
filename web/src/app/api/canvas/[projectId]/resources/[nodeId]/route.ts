@@ -9,10 +9,10 @@ import { requireSession } from "@/lib/server/session";
 import { deleteProjectResource } from "@/lib/server/canvas-project-resources-store";
 import { getCanvasProject } from "@/lib/server/canvas-project-store";
 
-export async function DELETE(request: NextRequest, context: { params: { projectId: string; nodeId: string } }) {
+export async function DELETE(request: NextRequest, context: { params: Promise<{ projectId: string; nodeId: string }> }) {
     try {
         const session = await requireSession(request);
-        const { projectId, nodeId } = context.params;
+        const { projectId, nodeId } = await context.params;
 
         // 验证项目访问权限
         const project = await getCanvasProject(projectId, session.userId);
