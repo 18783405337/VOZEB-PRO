@@ -25,7 +25,7 @@ export async function GET(request: Request, { params }: RouteContext) {
     }
 
     try {
-        const { projectId } = params;
+        const { projectId } = await params;
         const url = new URL(request.url);
         const page = parseInt(url.searchParams.get("page") || "1");
         const limit = parseInt(url.searchParams.get("limit") || "20");
@@ -75,7 +75,7 @@ export async function POST(request: Request, { params }: RouteContext) {
     }
 
     try {
-        const { projectId } = params;
+        const { projectId } = await params;
         const body = await request.json();
 
         // 验证必填字段

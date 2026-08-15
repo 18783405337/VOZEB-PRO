@@ -26,7 +26,7 @@ export async function GET(request: Request, { params }: RouteContext) {
     }
 
     try {
-        const { projectId, scriptId } = params;
+        const { projectId, scriptId } = await params;
         const url = new URL(request.url);
         const includeContent = url.searchParams.get("includeContent") !== "false";
 
@@ -72,7 +72,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
     }
 
     try {
-        const { projectId, scriptId } = params;
+        const { projectId, scriptId } = await params;
         const body = await request.json();
 
         if (!body.content) {
@@ -133,7 +133,7 @@ export async function DELETE(request: Request, { params }: RouteContext) {
     }
 
     try {
-        const { projectId, scriptId } = params;
+        const { projectId, scriptId } = await params;
 
         const deleted = await deleteScriptDocument(user.id, projectId, scriptId);
 

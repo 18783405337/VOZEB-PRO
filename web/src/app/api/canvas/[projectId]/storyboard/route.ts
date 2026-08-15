@@ -10,7 +10,7 @@ export async function POST(
     { params }: { params: { projectId: string } }
 ) {
     try {
-        const { projectId } = params;
+        const { projectId } = await params;
         const body = await request.json();
 
         const {

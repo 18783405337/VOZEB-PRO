@@ -26,7 +26,7 @@ export async function GET(request: Request, { params }: RouteContext) {
     }
 
     try {
-        const { projectId, characterId } = params;
+        const { projectId, characterId } = await params;
         const url = new URL(request.url);
         const includeImages = url.searchParams.get("includeImages") !== "false";
 
@@ -72,7 +72,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
     }
 
     try {
-        const { projectId, characterId } = params;
+        const { projectId, characterId } = await params;
         const body = await request.json();
 
         const document = await updateCharacterDocument(
@@ -125,7 +125,7 @@ export async function DELETE(request: Request, { params }: RouteContext) {
     }
 
     try {
-        const { projectId, characterId } = params;
+        const { projectId, characterId } = await params;
 
         const deleted = await deleteCharacterDocument(user.id, projectId, characterId);
 

@@ -26,7 +26,7 @@ export async function GET(request: Request, { params }: RouteContext) {
     }
 
     try {
-        const { projectId, drawingId } = params;
+        const { projectId, drawingId } = await params;
         const url = new URL(request.url);
         const includeSnapshot = url.searchParams.get("includeSnapshot") !== "false";
 
@@ -72,7 +72,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
     }
 
     try {
-        const { projectId, drawingId } = params;
+        const { projectId, drawingId } = await params;
         const body = await request.json();
 
         if (!body.snapshot) {
@@ -130,7 +130,7 @@ export async function DELETE(request: Request, { params }: RouteContext) {
     }
 
     try {
-        const { projectId, drawingId } = params;
+        const { projectId, drawingId } = await params;
 
         const deleted = await deleteDrawingDocument(user.id, projectId, drawingId);
 

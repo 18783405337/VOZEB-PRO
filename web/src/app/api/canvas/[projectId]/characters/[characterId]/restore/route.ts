@@ -24,7 +24,7 @@ export async function POST(request: Request, { params }: RouteContext) {
     }
 
     try {
-        const { projectId, characterId } = params;
+        const { projectId, characterId } = await params;
         const body = await request.json();
 
         if (!body.revision || typeof body.revision !== "number") {

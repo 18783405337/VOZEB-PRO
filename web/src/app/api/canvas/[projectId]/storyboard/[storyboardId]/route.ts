@@ -10,7 +10,7 @@ export async function GET(
     { params }: { params: { projectId: string; storyboardId: string } }
 ) {
     try {
-        const { projectId, storyboardId } = params;
+        const { projectId, storyboardId } = await params;
 
         // TODO: 验证用户权限
 
@@ -49,7 +49,7 @@ export async function PUT(
     { params }: { params: { projectId: string; storyboardId: string } }
 ) {
     try {
-        const { projectId, storyboardId } = params;
+        const { projectId, storyboardId } = await params;
         const body = await request.json();
 
         const {
@@ -109,7 +109,7 @@ export async function DELETE(
     { params }: { params: { projectId: string; storyboardId: string } }
 ) {
     try {
-        const { projectId, storyboardId } = params;
+        const { projectId, storyboardId } = await params;
 
         // TODO: 验证用户权限
 
