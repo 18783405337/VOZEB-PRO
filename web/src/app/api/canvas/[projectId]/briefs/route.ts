@@ -18,7 +18,7 @@ import {
 import { getCanvasProject } from "@/lib/server/canvas-project-store";
 import type { CreateCanvasBriefInput, UpdateCanvasBriefInput } from "@/lib/canvas-project-resources-contract";
 
-export async function GET(request: NextRequest, context: { params: Promise<{ projectId: string; nodeId: string }> }) {
+export async function GET(request: NextRequest, context: { params: Promise<{ projectId: string }> }) {
     try {
         const session = await requireSession(request);
         const { projectId, nodeId } = await context.params;
@@ -78,7 +78,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pr
     }
 }
 
-export async function PATCH(request: NextRequest, context: { params: Promise<{ projectId: string; nodeId: string }> }) {
+export async function PATCH(request: NextRequest, context: { params: Promise<{ projectId: string }> }) {
     try {
         const session = await requireSession(request);
         const { projectId, nodeId } = await context.params;
@@ -102,7 +102,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ p
     }
 }
 
-export async function DELETE(request: NextRequest, context: { params: Promise<{ projectId: string; nodeId: string }> }) {
+export async function DELETE(request: NextRequest, context: { params: Promise<{ projectId: string }> }) {
     try {
         const session = await requireSession(request);
         const { projectId, nodeId } = await context.params;

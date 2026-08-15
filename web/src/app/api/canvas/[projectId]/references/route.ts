@@ -17,7 +17,7 @@ import {
 import { getCanvasProject } from "@/lib/server/canvas-project-store";
 import type { CreateCanvasNodeReferenceInput } from "@/lib/canvas-project-resources-contract";
 
-export async function GET(request: NextRequest, context: { params: Promise<{ projectId: string; nodeId: string }> }) {
+export async function GET(request: NextRequest, context: { params: Promise<{ projectId: string }> }) {
     try {
         const session = await requireSession(request);
         const { projectId, nodeId } = await context.params;

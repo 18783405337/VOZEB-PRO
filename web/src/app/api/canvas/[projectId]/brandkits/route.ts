@@ -18,10 +18,16 @@ import {
 import { getCanvasProject } from "@/lib/server/canvas-project-store";
 import type { CreateCanvasBrandKitInput, UpdateCanvasBrandKitInput } from "@/lib/canvas-project-resources-contract";
 
-export async function GET(request: NextRequest, context: { params: Promise<{ projectId: string; nodeId: string }> }) {
+export async function GET(request: NextRequest, context: { params: Promise<{ projectId: string }> }) {
     try {
         const session = await requireSession(request);
-        const { projectId, nodeId } = await context.params;
+        const { projectId } = await context.params;
+        const url = new URL(request.url);
+        const nodeId = url.searchParams.get("nodeId");
+
+        if (!nodeId) {
+            return NextResponse.json({ error: "nodeId 参数必填" }, { status: 400 });
+        }
 
         const project = await getCanvasProject(projectId, session.userId);
         if (!project) {
@@ -80,10 +86,16 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pr
     }
 }
 
-export async function PATCH(request: NextRequest, context: { params: Promise<{ projectId: string; nodeId: string }> }) {
+export async function PATCH(request: NextRequest, context: { params: Promise<{ projectId: string }> }) {
     try {
         const session = await requireSession(request);
-        const { projectId, nodeId } = await context.params;
+        const { projectId } = await context.params;
+        const url = new URL(request.url);
+        const nodeId = url.searchParams.get("nodeId");
+
+        if (!nodeId) {
+            return NextResponse.json({ error: "nodeId 参数必填" }, { status: 400 });
+        }
 
         const project = await getCanvasProject(projectId, session.userId);
         if (!project) {
@@ -104,10 +116,16 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ p
     }
 }
 
-export async function DELETE(request: NextRequest, context: { params: Promise<{ projectId: string; nodeId: string }> }) {
+export async function DELETE(request: NextRequest, context: { params: Promise<{ projectId: string }> }) {
     try {
         const session = await requireSession(request);
-        const { projectId, nodeId } = await context.params;
+        const { projectId } = await context.params;
+        const url = new URL(request.url);
+        const nodeId = url.searchParams.get("nodeId");
+
+        if (!nodeId) {
+            return NextResponse.json({ error: "nodeId 参数必填" }, { status: 400 });
+        }
 
         const project = await getCanvasProject(projectId, session.userId);
         if (!project) {
